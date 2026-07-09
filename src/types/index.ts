@@ -218,6 +218,43 @@ export const DAMAGE_SEVERITY_COLORS: Record<DamageSeverity, string> = {
   severe: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 };
 
+export type KavlingStatus = 'Menunggu' | 'Terverifikasi' | 'Ditolak';
+
+export interface Kavling {
+  id: string;
+  nama: string;
+  kelas_unit: string;
+  tanggal: string;
+  file_url: string;
+  file_name: string;
+  status_verifikasi: KavlingStatus;
+  catatan: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const KAVLING_STATUS_LABELS: Record<KavlingStatus, string> = {
+  Menunggu: 'Menunggu',
+  Terverifikasi: 'Terverifikasi',
+  Ditolak: 'Ditolak',
+};
+
+export const KAVLING_STATUS_COLORS: Record<KavlingStatus, string> = {
+  Menunggu: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  Terverifikasi: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  Ditolak: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+};
+
+export const KELAS_UNIT_OPTIONS = [
+  'X TKJ 1', 'X TKJ 2', 'X TKJ 3', 'X TKJ 4',
+  'X RPL 1', 'X RPL 2', 'X RPL 3',
+  'XI TKJ 1', 'XI TKJ 2', 'XI TKJ 3', 'XI TKJ 4',
+  'XI RPL 1', 'XI RPL 2', 'XI RPL 3',
+  'XII TKJ 1', 'XII TKJ 2', 'XII TKJ 3', 'XII TKJ 4',
+  'XII RPL 1', 'XII RPL 2', 'XII RPL 3',
+  'Guru', 'Staff', 'Lainnya'
+] as const;
+
 export const ACHIEVEMENT_LEVELS = ['sekolah', 'kota', 'provinsi', 'nasional', 'internasional'] as const;
 export const ACHIEVEMENT_CATEGORIES = ['akademik', 'non_akademik'] as const;
 export const AGENDA_CATEGORIES = ['sekolah', 'osis', 'mpk', 'ekstrakurikuler', 'sarpras'] as const;

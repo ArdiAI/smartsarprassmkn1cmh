@@ -20,6 +20,8 @@ import AgendaPage from './pages/AgendaPage';
 import OrganizationsPage from './pages/OrganizationsPage';
 import ProposalPage from './pages/ProposalPage';
 import AchievementsPage from './pages/AchievementsPage';
+import KavlingListPage from './pages/KavlingListPage';
+import KavlingInputPage from './pages/KavlingInputPage';
 
 // Admin pages
 import LoginPage from './pages/admin/LoginPage';
@@ -105,6 +107,8 @@ function AppRoutes() {
       <Route path="/organizations" element={<ProtectedRoute><OrganizationsPage /></ProtectedRoute>} />
       <Route path="/proposals" element={<ProtectedRoute><ProposalPage /></ProtectedRoute>} />
       <Route path="/achievements" element={<ProtectedRoute><AchievementsPage /></ProtectedRoute>} />
+      <Route path="/kavling" element={<ProtectedRoute><KavlingListPage /></ProtectedRoute>} />
+      <Route path="/kavling/input" element={<ProtectedRoute><KavlingInputPage /></ProtectedRoute>} />
       <Route path="/about" element={<ProtectedRoute><AboutPage /></ProtectedRoute>} />
       <Route path="/team" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
 

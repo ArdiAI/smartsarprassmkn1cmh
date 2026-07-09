@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
-import { Package, ClipboardList, AlertTriangle, CheckCircle, Building2, TrendingUp, Clock, Zap, Users, Calendar, RefreshCw, XCircle, RotateCcw, BarChart3 } from 'lucide-react';
+import { Package, ClipboardList, AlertTriangle, CheckCircle, Building2, TrendingUp, Clock, Zap, Users, Calendar, RefreshCw, XCircle, RotateCcw, BarChart3, FileBox } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import AnnouncementFeed from '../../components/AnnouncementFeed';
 import AnimatedStats from '../../components/AnimatedStats';
@@ -15,11 +15,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const [inv, bor, rep, fac] = await Promise.all([
+      const [inv, bor, rep, fac, kav] = await Promise.all([
         supabase.from('inventory').select('id, quantity, condition, name'),
         supabase.from('borrowings').select('id, status, created_at, item_type, inventory_id, facility_id, inventory(name), facilities(name)'),
         supabase.from('damage_reports').select('id, status, severity, created_at'),
         supabase.from('facilities').select('id'),
+        supabase.from('kavling').select('id'),
       ]);
 
       const totalItems = (inv.data || []).reduce((sum: number, i: any) => sum + i.quantity, 0);
@@ -49,6 +50,7 @@ export default function DashboardPage() {
         inUseBorrowings,
         pendingReports,
         facilities: (fac.data || []).length,
+        kavling: (kav.data || []).length,
         health: totalItems > 0 ? Math.round((goodItems / (inv.data || []).length) * 100) : 100,
       });
 
@@ -102,11 +104,12 @@ export default function DashboardPage() {
       </div>
 
       {/* Second Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <AnimatedStats value={stats?.rejectedBorrowings || 0} label="Ditolak" icon={XCircle} color="orange" delay={0.1} />
         <AnimatedStats value={stats?.completedBorrowings || 0} label="Selesai" icon={CheckCircle} color="blue" delay={0.2} />
         <AnimatedStats value={stats?.pendingReports || 0} label="Laporan Pending" icon={AlertTriangle} color="orange" delay={0.3} />
         <AnimatedStats value={stats?.facilities || 0} label="Total Fasilitas" icon={Building2} color="green" delay={0.4} />
+        <AnimatedStats value={stats?.kavling || 0} label="Total Data Kavling" icon={FileBox} color="purple" delay={0.5} />
       </div>
 
       {/* Main Content */}
