@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Package, ClipboardList, AlertTriangle, Building2, BarChart3, Users, Menu, X, Sun, Moon, LogOut, Megaphone } from 'lucide-react';
+import { LayoutDashboard, Package, ClipboardList, AlertTriangle, Building2, BarChart3, Users, Menu, X, Sun, Moon, LogOut, Megaphone, MessageSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/admin' },
   { icon: Megaphone, label: 'Pengumuman', path: '/admin/announcements' },
+  { icon: MessageSquare, label: 'Aspirasi', path: '/admin/aspirasi' },
   { icon: Package, label: 'Inventaris', path: '/admin/inventory' },
   { icon: ClipboardList, label: 'Peminjaman', path: '/admin/borrowings' },
   { icon: AlertTriangle, label: 'Laporan', path: '/admin/reports' },

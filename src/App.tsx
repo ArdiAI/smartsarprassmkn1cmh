@@ -22,6 +22,7 @@ import ProposalPage from './pages/ProposalPage';
 import AchievementsPage from './pages/AchievementsPage';
 import KavlingListPage from './pages/KavlingListPage';
 import KavlingInputPage from './pages/KavlingInputPage';
+import AspirasiPage from './pages/AspirasiPage';
 
 // Admin pages
 import LoginPage from './pages/admin/LoginPage';
@@ -33,6 +34,7 @@ import FacilitiesAdminPage from './pages/admin/FacilitiesAdminPage';
 import StatisticsPage from './pages/admin/StatisticsPage';
 import TeamAdminPage from './pages/admin/TeamAdminPage';
 import AnnouncementsAdminPage from './pages/admin/AnnouncementsAdminPage';
+import AspirasiAdminPage from './pages/admin/AspirasiAdminPage';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
@@ -109,6 +111,7 @@ function AppRoutes() {
       <Route path="/achievements" element={<ProtectedRoute><AchievementsPage /></ProtectedRoute>} />
       <Route path="/kavling" element={<ProtectedRoute><KavlingListPage /></ProtectedRoute>} />
       <Route path="/kavling/input" element={<ProtectedRoute><KavlingInputPage /></ProtectedRoute>} />
+      <Route path="/aspirasi" element={<ProtectedRoute><AspirasiPage /></ProtectedRoute>} />
       <Route path="/about" element={<ProtectedRoute><AboutPage /></ProtectedRoute>} />
       <Route path="/team" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
 
@@ -123,6 +126,7 @@ function AppRoutes() {
         <Route path="statistics" element={<StatisticsPage />} />
         <Route path="team" element={<TeamAdminPage />} />
         <Route path="announcements" element={<AnnouncementsAdminPage />} />
+        <Route path="aspirasi" element={<AspirasiAdminPage />} />
       </Route>
 
       {/* Catch all - redirect to auth */}

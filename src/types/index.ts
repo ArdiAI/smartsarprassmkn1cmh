@@ -70,7 +70,11 @@ export interface DamageReport {
   id: string;
   inventory_id: string;
   reporter_name: string;
+  reporter_unit: string;
+  reporter_email: string;
+  reporter_phone: string;
   description: string;
+  location: string;
   image_url: string;
   severity: DamageSeverity;
   status: DamageStatus;
@@ -258,3 +262,37 @@ export const KELAS_UNIT_OPTIONS = [
 export const ACHIEVEMENT_LEVELS = ['sekolah', 'kota', 'provinsi', 'nasional', 'internasional'] as const;
 export const ACHIEVEMENT_CATEGORIES = ['akademik', 'non_akademik'] as const;
 export const AGENDA_CATEGORIES = ['sekolah', 'osis', 'mpk', 'ekstrakurikuler', 'sarpras'] as const;
+
+// Aspirasi types
+export type AspirasiStatus = 'Menunggu' | 'Dibaca' | 'Diproses' | 'Selesai';
+export type AspirasiKategori = 'Sarana' | 'Prasarana' | 'Kebersihan' | 'Keamanan' | 'Lainnya';
+
+export interface Aspirasi {
+  id: string;
+  nama: string;
+  kelas_unit: string;
+  email: string;
+  kategori: AspirasiKategori;
+  judul: string;
+  isi: string;
+  status: AspirasiStatus;
+  tanggapan: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const ASPIRASI_STATUS_LABELS: Record<AspirasiStatus, string> = {
+  Menunggu: 'Menunggu',
+  Dibaca: 'Dibaca',
+  Diproses: 'Diproses',
+  Selesai: 'Selesai',
+};
+
+export const ASPIRASI_STATUS_COLORS: Record<AspirasiStatus, string> = {
+  Menunggu: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  Dibaca: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  Diproses: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
+  Selesai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+};
+
+export const ASPIRASI_KATEGORI_OPTIONS: AspirasiKategori[] = ['Sarana', 'Prasarana', 'Kebersihan', 'Keamanan', 'Lainnya'];

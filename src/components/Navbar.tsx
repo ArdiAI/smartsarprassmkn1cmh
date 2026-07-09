@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, Building2, Sun, Moon, Users, Trophy, LogOut, List, FilePlus } from 'lucide-react';
+import { Menu, X, Building2, Sun, Moon, Users, Trophy, LogOut, List, FilePlus, MessageSquare } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { brandConfig } from '../brand/config';
@@ -40,6 +40,7 @@ export default function Navbar() {
   const moreLinks = [
     { label: 'Daftar Kavling', path: '/kavling', icon: List },
     { label: 'Input Kavling', path: '/kavling/input', icon: FilePlus },
+    { label: 'Aspirasi', path: '/aspirasi', icon: MessageSquare },
     { label: 'Prestasi', path: '/achievements', icon: Trophy },
     { label: 'Tim', path: '/team', icon: Users },
   ];
