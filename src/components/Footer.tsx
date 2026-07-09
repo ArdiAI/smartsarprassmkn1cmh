@@ -33,7 +33,7 @@ export default function Footer() {
             <h3 className="font-semibold mb-4">Kontak</h3>
             <ul className="space-y-3 text-sm text-slate-400">
               <li className="flex items-center gap-2"><MapPin className="w-4 h-4" />Jl. Mahar Martanegara No.48, Kelurahan Utama, Kecamatan Cimahi Selatan, Kota Cimahi, Jawa Barat</li>
-              <li className="flex items-center gap-2"><Phone className="w-4 h-4" />(021) 1234-5678</li>
+              <li className="flex items-center gap-2"><Phone className="w-4 h-4" />(022) 6629683</li>
               <li className="flex items-center gap-2"><Mail className="w-4 h-4" />sarpras@smkn1cmh.sch.id</li>
             </ul>
           </div>
