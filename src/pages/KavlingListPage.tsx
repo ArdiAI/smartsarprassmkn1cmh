@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
 import type { Kavling } from '../types';
-import { KAVLING_STATUS_LABELS, KAVLING_STATUS_COLORS, KELAS_UNIT_OPTIONS } from '../types';
+import { KAVLING_STATUS_LABELS, KAVLING_STATUS_COLORS } from '../types';
 import {
   Search, FileBox, Eye, Trash2, X, ChevronLeft, ChevronRight, FileText, Download,
   Calendar, ExternalLink, Filter, Loader2, RefreshCw, File, Image, Edit
@@ -60,7 +60,7 @@ export default function KavlingListPage() {
         k.kelas_unit.toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesStatus = statusFilter === 'all' || k.status_verifikasi === statusFilter;
-      const matchesKelas = kelasFilter === 'all' || k.kelas_unit === kelasFilter;
+      const matchesKelas = kelasFilter === 'all' || k.kelas_unit.toLowerCase().includes(kelasFilter.toLowerCase());
 
       const matchesDateFrom = !dateFrom || new Date(k.tanggal) >= new Date(dateFrom);
       const matchesDateTo = !dateTo || new Date(k.tanggal) <= new Date(dateTo + 'T23:59:59');
@@ -297,16 +297,13 @@ export default function KavlingListPage() {
                 <option value="Terverifikasi">Terverifikasi</option>
                 <option value="Ditolak">Ditolak</option>
               </select>
-              <select
-                value={kelasFilter}
-                onChange={e => { setKelasFilter(e.target.value); setCurrentPage(1); }}
+              <input
+                type="text"
+                placeholder="Filter Kelas/Unit..."
+                value={kelasFilter === 'all' ? '' : kelasFilter}
+                onChange={e => { setKelasFilter(e.target.value || 'all'); setCurrentPage(1); }}
                 className="px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white"
-              >
-                <option value="all">Semua Kelas/Unit</option>
-                {KELAS_UNIT_OPTIONS.map(kelas => (
-                  <option key={kelas} value={kelas}>{kelas}</option>
-                ))}
-              </select>
+              />
             </div>
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex items-center gap-2">

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../lib/supabase';
-import { KELAS_UNIT_OPTIONS } from '../types';
 import { FileBox, Upload, Check, AlertCircle, Loader2, File, Image, X } from 'lucide-react';
 import { cn } from '../utils/cn';
 import Navbar from '../components/Navbar';
@@ -286,7 +285,8 @@ export default function KavlingInputPage() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   Kelas/Unit <span className="text-red-500">*</span>
                 </label>
-                <select
+                <input
+                  type="text"
                   value={formData.kelas_unit}
                   onChange={e => setFormData({ ...formData, kelas_unit: e.target.value })}
                   className={cn(
@@ -295,12 +295,8 @@ export default function KavlingInputPage() {
                       ? 'border-red-300 dark:border-red-600'
                       : 'border-slate-300 dark:border-slate-600'
                   )}
-                >
-                  <option value="">-- Pilih Kelas/Unit --</option>
-                  {KELAS_UNIT_OPTIONS.map(kelas => (
-                    <option key={kelas} value={kelas}>{kelas}</option>
-                  ))}
-                </select>
+                  placeholder="Contoh: X TKJ 1, XII RPL 2, Guru, Staff"
+                />
                 {errors.kelas_unit && (
                   <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
                     <AlertCircle className="w-4 h-4" />
