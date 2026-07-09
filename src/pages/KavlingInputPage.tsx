@@ -295,7 +295,7 @@ export default function KavlingInputPage() {
                       ? 'border-red-300 dark:border-red-600'
                       : 'border-slate-300 dark:border-slate-600'
                   )}
-                  placeholder="Contoh: X TKJ 1, XII RPL 2, Guru, Staff"
+                  placeholder="Contoh: X Mekatronika A 1, XII RPL B, Guru, Staff"
                 />
                 {errors.kelas_unit && (
                   <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
