@@ -13,7 +13,7 @@ export default function Footer() {
               </div>
               <span className="text-xl font-bold">SMART SARPRAS</span>
             </div>
-            <p className="text-slate-400 text-sm">Sistem manajemen sarana dan prasarana sekolah modern.</p>
+            <p className="text-slate-400 text-sm">Sistem Manajemen Administrasi Ruang Tata Sarana Prasarana SMKN 1 Cimahi</p>
           </div>
           <div>
             <h3 className="font-semibold mb-4">Menu</h3>
