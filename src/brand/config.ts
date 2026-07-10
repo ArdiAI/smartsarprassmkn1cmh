@@ -6,7 +6,7 @@ export const brandConfig = {
     name: 'SMART SARPRAS SMKN1CIMAHI',                    // Nama sistem (ubah sesuai kebutuhan)
     fullName: 'Smart Sarana Prasarana SMKN 1 CIMAHI',       // Nama lengkap
     tagline: 'Platform Sistem Manajemen Administrasi Ruang Tata Sarana Prasarana SMKN 1 Cimahi',  // Tagline
-    description: 'Platform Sistem Manajemen Administrasi Ruang Tata Sarana Prasarana Sekolah SMKN 1 Cimahi',
+    description: 'Platform Sistem Manajemen Administrasi Ruang Tata Sarana Prasarana SMKN 1 Cimahi',
     version: '2.0',
   },
 
