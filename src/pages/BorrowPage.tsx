@@ -502,7 +502,7 @@ export default function BorrowPage() {
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                         <Upload className="w-4 h-4 inline mr-1" /> Dokumen Pendukung (opsional)
                       </label>
-                      <p className="text-xs text-slate-500 mb-2">Surat permohonan, proposal, atau dokumen pendukung lainnya (PDF, DOC, JPG, PNG)</p>
+                      <p className="text-xs text-slate-500 mb-2">Surat Peminjaman atau dokumen pendukung lainnya (PDF, DOC, JPG, PNG)</p>
                       <div className="flex items-center gap-3">
                         <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                           onChange={e => setSelectedDocument(e.target.files?.[0] || null)}
