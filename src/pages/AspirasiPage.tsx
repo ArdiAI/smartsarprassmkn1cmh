@@ -172,7 +172,7 @@ export default function AspirasiPage() {
                       'w-full px-4 py-3 rounded-xl border bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent',
                       errors.kelas_unit ? 'border-red-300 dark:border-red-600' : 'border-slate-300 dark:border-slate-600'
                     )}
-                    placeholder="Contoh: X TKJ 1, Guru, Staff"
+                    placeholder="Contoh: X IOP A, Guru, Staff"
                   />
                   {errors.kelas_unit && <p className="mt-1 text-sm text-red-500">{errors.kelas_unit}</p>}
                 </div>
