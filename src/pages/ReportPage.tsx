@@ -387,7 +387,7 @@ export default function ReportPage() {
                       'w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent',
                       errors.location ? 'border-red-300 dark:border-red-600' : 'border-slate-300 dark:border-slate-600'
                     )}
-                    placeholder="Contoh: Lab Komputer Lt.2, Ruang Kelas X TKJ 1"
+                    placeholder="Contoh: Lab Komputer Lt.2, Ruang Kelas XII Mekatronika A"
                   />
                 </div>
                 {errors.location && <p className="mt-1 text-sm text-red-500">{errors.location}</p>}
