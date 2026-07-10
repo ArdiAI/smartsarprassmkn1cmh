@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, Building2, Sun, Moon, Users, Trophy, LogOut, List, FilePlus, MessageSquare } from 'lucide-react';
+import { Menu, X, Building2, Sun, Moon, Users, LogOut, MessageSquare } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { brandConfig } from '../brand/config';
@@ -38,10 +38,7 @@ export default function Navbar() {
   ];
 
   const moreLinks = [
-    { label: 'Daftar Kavling', path: '/kavling', icon: List },
-    { label: 'Input Kavling', path: '/kavling/input', icon: FilePlus },
     { label: 'Aspirasi', path: '/aspirasi', icon: MessageSquare },
-    { label: 'Prestasi', path: '/achievements', icon: Trophy },
     { label: 'Tim', path: '/team', icon: Users },
   ];
 
@@ -63,7 +60,6 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo */}
           <Link to="/" className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
               <Building2 className="w-5 h-5 text-white" />
@@ -73,7 +69,6 @@ export default function Navbar() {
             </div>
           </Link>
 
-          {/* Desktop Nav */}
           <div className="hidden lg:flex items-center gap-1">
             {navLinks.map((link) => (
               <Link key={link.path} to={link.path}
@@ -84,7 +79,6 @@ export default function Navbar() {
                 )}>{link.label}</Link>
             ))}
 
-            {/* More Dropdown */}
             <div className="relative group">
               <button className="px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1">
                 Lainnya
@@ -107,13 +101,11 @@ export default function Navbar() {
             </div>
           </div>
 
-          {/* Right Actions */}
           <div className="flex items-center gap-3">
             <button onClick={toggle} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" aria-label="Toggle theme">
               {isDark ? <Sun className="w-5 h-5 text-slate-400" /> : <Moon className="w-5 h-5 text-slate-600" />}
             </button>
 
-            {/* User Menu */}
             {user && (
               <div className="relative">
                 <button onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -149,7 +141,6 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Mobile Menu */}
         <AnimatePresence>
           {isMenuOpen && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
@@ -161,7 +152,6 @@ export default function Navbar() {
                       isActive(link.path) ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400'
                     )}>{link.label}</Link>
                 ))}
-
                 <div className="border-t border-slate-200 dark:border-slate-700 my-2" />
                 {moreLinks.map((link) => (
                   <Link key={link.path} to={link.path} onClick={() => setIsMenuOpen(false)}
@@ -171,7 +161,6 @@ export default function Navbar() {
                     <link.icon className="w-4 h-4" />{link.label}
                   </Link>
                 ))}
-
                 {user && (
                   <>
                     <div className="border-t border-slate-200 dark:border-slate-700 my-2" />

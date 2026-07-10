@@ -32,6 +32,7 @@ export default function UserManagementPage() {
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [formData, setFormData] = useState({ email: '', password: '', name: '' });
   const [error, setError] = useState('');
@@ -138,6 +139,14 @@ export default function UserManagementPage() {
     }
   }
 
+  async function handleToggleActive(user: AdminUser) {
+    setTogglingId(user.id);
+    const currentActive = (user as any).is_active !== false;
+    await supabase.from('admin_users').update({ is_active: !currentActive }).eq('id', user.id);
+    setTogglingId(null);
+    fetchData();
+  }
+
   async function handleDelete(id: string) {
     await supabase.from('admin_users').delete().eq('id', id);
     setDeleteId(null);
@@ -231,6 +240,14 @@ export default function UserManagementPage() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => handleToggleActive(user)} disabled={togglingId === user.id}
+                        className={cn('px-2.5 py-1 rounded-lg text-xs font-medium transition-colors',
+                          (user as any).is_active !== false
+                            ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100'
+                            : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100'
+                        )}>
+                        {togglingId === user.id ? '...' : (user as any).is_active !== false ? 'Nonaktifkan' : 'Aktifkan'}
+                      </button>
                       <button onClick={() => openEdit(user)}
                         className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 transition-colors">
                         <Edit className="w-4 h-4" />

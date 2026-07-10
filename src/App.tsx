@@ -19,9 +19,6 @@ import AuthPage from './pages/AuthPage';
 import AgendaPage from './pages/AgendaPage';
 import OrganizationsPage from './pages/OrganizationsPage';
 import ProposalPage from './pages/ProposalPage';
-import AchievementsPage from './pages/AchievementsPage';
-import KavlingListPage from './pages/KavlingListPage';
-import KavlingInputPage from './pages/KavlingInputPage';
 import AspirasiPage from './pages/AspirasiPage';
 
 // Admin pages
@@ -46,7 +43,6 @@ import SystemConfigPage from './pages/admin/superadmin/SystemConfigPage';
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
 
-// Protected Route for regular users
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return (
@@ -58,7 +54,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Admin Route - separate authentication for admin panel
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -67,7 +62,6 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     const checkAdmin = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        // Check if user is in admin_users table
         const { data } = await supabase
           .from('admin_users')
           .select('id')
@@ -78,10 +72,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
       setChecking(false);
     };
     checkAdmin();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      checkAdmin();
-    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => { checkAdmin(); });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -93,7 +84,6 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   );
-
   if (!isAdmin) return <Navigate to="/admin/login" replace />;
   return <>{children}</>;
 }
@@ -101,10 +91,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 function AppRoutes() {
   return (
     <Routes>
-      {/* Auth - public route */}
       <Route path="/auth" element={<AuthPage />} />
 
-      {/* Protected routes - requires user login */}
       <Route path="/" element={<ProtectedRoute><LandingPage /></ProtectedRoute>} />
       <Route path="/facilities" element={<ProtectedRoute><FacilitiesPage /></ProtectedRoute>} />
       <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
@@ -115,14 +103,10 @@ function AppRoutes() {
       <Route path="/agenda" element={<ProtectedRoute><AgendaPage /></ProtectedRoute>} />
       <Route path="/organizations" element={<ProtectedRoute><OrganizationsPage /></ProtectedRoute>} />
       <Route path="/proposals" element={<ProtectedRoute><ProposalPage /></ProtectedRoute>} />
-      <Route path="/achievements" element={<ProtectedRoute><AchievementsPage /></ProtectedRoute>} />
-      <Route path="/kavling" element={<ProtectedRoute><KavlingListPage /></ProtectedRoute>} />
-      <Route path="/kavling/input" element={<ProtectedRoute><KavlingInputPage /></ProtectedRoute>} />
       <Route path="/aspirasi" element={<ProtectedRoute><AspirasiPage /></ProtectedRoute>} />
       <Route path="/about" element={<ProtectedRoute><AboutPage /></ProtectedRoute>} />
       <Route path="/team" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
 
-      {/* Admin routes - separate authentication */}
       <Route path="/admin/login" element={<LoginPage />} />
       <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
         <Route index element={<DashboardPage />} />
@@ -134,7 +118,6 @@ function AppRoutes() {
         <Route path="team" element={<TeamAdminPage />} />
         <Route path="announcements" element={<AnnouncementsAdminPage />} />
         <Route path="aspirasi" element={<AspirasiAdminPage />} />
-        {/* Super Admin routes */}
         <Route path="super/users" element={<UserManagementPage />} />
         <Route path="super/roles" element={<RolesPermissionsPage />} />
         <Route path="super/facility-managers" element={<FacilityManagersPage />} />
@@ -142,7 +125,6 @@ function AppRoutes() {
         <Route path="super/config" element={<SystemConfigPage />} />
       </Route>
 
-      {/* Catch all - redirect to auth */}
       <Route path="*" element={<Navigate to="/auth" replace />} />
     </Routes>
   );

@@ -1,11 +1,26 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Send, User, Package, Calendar, Mail, Phone, Building2, FileText, MessageSquare, AlertCircle, CheckCircle2, Clock, Upload, X, Download } from 'lucide-react';
+import {
+  Search, Send, User, Package, Calendar, Mail, Phone, Building2,
+  FileText, MessageSquare, AlertCircle, CheckCircle2, Clock, Upload, X,
+  Download, GitBranch, ChevronDown, ChevronUp, Info
+} from 'lucide-react';
 import { Inventory, Facility, Borrowing, BORROWING_STATUS_LABELS, BORROWING_STATUS_COLORS } from '../types';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { cn } from '../utils/cn';
+import { validateFile } from '../utils/fileUpload';
+
+const EXTENDED_STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400',
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  completed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  cancelled: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400',
+  in_use: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
+};
 
 const initialFormData = {
   inventory_id: '' as string | null,
@@ -22,7 +37,6 @@ const initialFormData = {
   end_time: '16:00',
   purpose: '',
   notes: '',
-  document_file: null as File | null,
 };
 
 export default function BorrowPage() {
@@ -31,712 +45,592 @@ export default function BorrowPage() {
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [selectedItem, setSelectedItem] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [conflictError, setConflictError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [formData, setFormData] = useState(initialFormData);
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
-  const [uploading, setUploading] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
+  const [fileError, setFileError] = useState('');
+  const [workflowSteps, setWorkflowSteps] = useState<any[]>([]);
+  const [selectedWorkflow, setSelectedWorkflow] = useState<any | null>(null);
+  const [historyEmail, setHistoryEmail] = useState('');
+  const [historyBorrowings, setHistoryBorrowings] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySearched, setHistorySearched] = useState(false);
+
+  useEffect(() => { fetchAllData(); }, []);
+
+  async function fetchAllData() {
+    setLoading(true);
+    const [invRes, facRes, wfRes] = await Promise.all([
+      supabase.from('inventory').select('*, categories(name)').eq('condition', 'good').order('name'),
+      supabase.from('facilities').select('*, workflow_templates(id, name)').eq('status', 'aktif').order('name'),
+      supabase.from('workflow_templates').select('*, workflow_steps(*, roles(name))').eq('is_active', true),
+    ]);
+    if (invRes.data) setInventory(invRes.data);
+    if (facRes.data) setFacilities(facRes.data as any);
+    setLoading(false);
+  }
+
+  async function fetchWorkflowForItem() {
+    const facilityId = formData.facility_id;
+    const facility = facilities.find(f => f.id === facilityId);
+    if (facility && (facility as any).workflow_templates) {
+      const wf = (facility as any).workflow_templates;
+      setSelectedWorkflow(wf);
+      const { data: steps } = await supabase
+        .from('workflow_steps')
+        .select('*, roles(name)')
+        .eq('workflow_template_id', wf.id)
+        .order('step_order');
+      setWorkflowSteps(steps || []);
+    } else {
+      // Use default workflow
+      const { data: defaultWf } = await supabase
+        .from('workflow_templates')
+        .select('*, workflow_steps(*, roles(name))')
+        .eq('name', 'Workflow Sarpras')
+        .eq('is_active', true)
+        .maybeSingle();
+      if (defaultWf) {
+        setSelectedWorkflow(defaultWf);
+        const steps = (defaultWf as any).workflow_steps || [];
+        setWorkflowSteps(steps.sort((a: any, b: any) => a.step_order - b.step_order));
+      }
+    }
+  }
 
   useEffect(() => {
-    fetchAllData();
-  }, []);
-
-  const fetchAllData = async () => {
-    setLoading(true);
-    try {
-      const [invRes, facRes, borRes] = await Promise.all([
-        supabase.from('inventory').select('*').eq('condition', 'good').order('name'),
-        supabase.from('facilities').select('*').order('name'),
-        supabase.from('borrowings').select('*, inventory(name, code), facilities(name)').order('created_at', { ascending: false }).limit(20),
-      ]);
-      if (invRes.data) setInventory(invRes.data);
-      if (facRes.data) setFacilities(facRes.data);
-      if (borRes.data) setBorrowings(borRes.data as Borrowing[]);
-    } catch (err) {
-      console.error('Fetch error:', err);
+    if (formData.item_type === 'ruangan' && formData.facility_id) {
+      fetchWorkflowForItem();
+    } else if (formData.item_type === 'barang') {
+      setSelectedWorkflow(null);
+      setWorkflowSteps([]);
     }
-    setLoading(false);
-  };
+  }, [formData.facility_id, formData.item_type]);
 
-  const fetchRecentBorrowings = async () => {
-    const { data, error } = await supabase
-      .from('borrowings')
-      .select('*, inventory(name, code), facilities(name)')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    if (data && !error) setBorrowings(data as Borrowing[]);
-  };
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] || null;
+    setFileError('');
+    if (!file) { setSelectedDocument(null); return; }
+    const err = validateFile(file);
+    if (err) { setFileError(err.message); setSelectedDocument(null); return; }
+    setSelectedDocument(file);
+  }
 
-  const checkAvailability = async (): Promise<{ available: boolean; message: string }> => {
+  async function checkAvailability(): Promise<{ available: boolean; message: string }> {
     if (formData.item_type === 'barang' && formData.inventory_id) {
       const item = inventory.find(i => i.id === formData.inventory_id);
       if (!item) return { available: false, message: 'Barang tidak ditemukan' };
-
-      const { data: activeBorrowings } = await supabase
+      const { data: active } = await supabase
         .from('borrowings')
         .select('borrowed_units')
         .eq('inventory_id', formData.inventory_id)
-        .in('status', ['approved', 'pending'])
-        .lte('borrow_date', formData.return_date)
-        .gte('return_date', formData.borrow_date);
-
-      const borrowedOnDate = (activeBorrowings || []).reduce((sum: number, b: any) => sum + (b.borrowed_units || 1), 0);
-      const availableUnits = item.quantity - borrowedOnDate;
-
-      if (formData.borrowed_units > availableUnits) {
-        return { available: false, message: `Unit barang tidak tersedia untuk tanggal yang dipilih. Tersedia: ${availableUnits} unit` };
+        .in('status', ['pending', 'approved']);
+      const usedUnits = (active || []).reduce((sum: number, b: any) => sum + (b.borrowed_units || 0), 0);
+      const available = item.available_quantity - usedUnits;
+      if (formData.borrowed_units > available) {
+        return { available: false, message: `Hanya tersedia ${available} unit (diminta: ${formData.borrowed_units})` };
       }
+      return { available: true, message: '' };
+    }
+    if (formData.item_type === 'ruangan' && formData.facility_id) {
+      const { data: conflicts } = await supabase
+        .from('borrowings')
+        .select('id, borrow_date, start_time, end_time, borrower_name')
+        .eq('facility_id', formData.facility_id)
+        .eq('borrow_date', formData.borrow_date)
+        .in('status', ['pending', 'approved']);
+      const conflict = (conflicts || []).find(b => {
+        return formData.start_time < b.end_time && formData.end_time > b.start_time;
+      });
+      if (conflict) {
+        return { available: false, message: `Jadwal bentrok dengan peminjaman ${conflict.borrower_name} (${conflict.start_time}–${conflict.end_time})` };
+      }
+      return { available: true, message: '' };
     }
     return { available: true, message: '' };
-  };
+  }
 
-  const checkConflict = async (): Promise<string | null> => {
-    if (!formData.borrow_date || !formData.return_date || !formData.start_time || !formData.end_time) return null;
-
-    if (formData.start_time >= formData.end_time) {
-      return 'Jam selesai harus lebih lambat dari jam mulai';
-    }
-
-    const targetId = formData.item_type === 'barang' ? formData.inventory_id : formData.facility_id;
-    const targetField = formData.item_type === 'barang' ? 'inventory_id' : 'facility_id';
-
-    if (!targetId) return null;
-
-    if (formData.item_type === 'ruangan') {
-      const { data, error } = await supabase
-        .from('borrowings')
-        .select('id, borrower_name, borrow_date, return_date, start_time, end_time')
-        .eq(targetField, targetId)
-        .in('status', ['approved', 'pending'])
-        .lte('borrow_date', formData.return_date)
-        .gte('return_date', formData.borrow_date);
-
-      if (error) return null;
-
-      if (data && data.length > 0) {
-        for (const existing of data) {
-          const exStartTime = existing.start_time || '08:00';
-          const exEndTime = existing.end_time || '16:00';
-
-          // Time overlap: new period overlaps with existing period
-          // Overlap occurs when: new_start < existing_end AND new_end > existing_start
-          const timeOverlap = formData.start_time < exEndTime && formData.end_time > exStartTime;
-
-          if (timeOverlap) {
-            const dateStr = new Date(existing.borrow_date).toLocaleDateString('id-ID');
-            return `Jadwal tidak tersedia karena sudah digunakan oleh ${existing.borrower_name} pada ${dateStr} jam ${exStartTime.slice(0, 5)} - ${exEndTime.slice(0, 5)}`;
-          }
-        }
-      }
-    }
-
-    return null;
-  };
-
-  const uploadDocument = async (file: File): Promise<string | null> => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-    const filePath = `documents/${fileName}`;
-
-    const { error } = await supabase.storage.from('borrowing-documents').upload(filePath, file);
-    if (error) {
-      console.error('Upload error:', error);
-      return null;
-    }
-
-    const { data } = supabase.storage.from('borrowing-documents').getPublicUrl(filePath);
-    return data.publicUrl;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!formData.inventory_id && !formData.facility_id) {
+      setSubmitError('Pilih barang atau ruangan terlebih dahulu');
+      return;
+    }
     setSubmitting(true);
     setConflictError('');
     setSubmitError('');
-    setSubmitSuccess(false);
+    try {
+      const avail = await checkAvailability();
+      if (!avail.available) { setConflictError(avail.message); setSubmitting(false); return; }
 
-    if (!formData.inventory_id && !formData.facility_id) {
-      setSubmitError('Pilih barang atau ruangan terlebih dahulu');
-      setSubmitting(false);
-      return;
-    }
+      // Determine initial status label from workflow
+      const firstStep = workflowSteps[0];
+      const initialStatusLabel = firstStep
+        ? `Menunggu ${firstStep.step_label}`
+        : 'Menunggu Persetujuan';
 
-    if (formData.start_time >= formData.end_time) {
-      setSubmitError('Jam selesai harus lebih lambat dari jam mulai');
-      setSubmitting(false);
-      return;
-    }
+      const insertData: any = {
+        inventory_id: formData.inventory_id || null,
+        facility_id: formData.facility_id || null,
+        borrower_name: formData.borrower_name,
+        borrower_class: formData.borrower_class,
+        borrower_email: formData.borrower_email,
+        borrower_phone: formData.borrower_phone,
+        item_type: formData.item_type,
+        borrowed_units: formData.borrowed_units,
+        borrow_date: formData.borrow_date,
+        return_date: formData.return_date || null,
+        start_time: formData.start_time,
+        end_time: formData.end_time,
+        purpose: formData.purpose,
+        notes: formData.notes,
+        status: 'pending',
+        workflow_template_id: selectedWorkflow?.id || null,
+        current_step: 0,
+        current_status_label: initialStatusLabel,
+      };
 
-    if (formData.borrow_date > formData.return_date) {
-      setSubmitError('Tanggal selesai harus sama atau setelah tanggal mulai');
-      setSubmitting(false);
-      return;
-    }
+      const { error } = await supabase.from('borrowings').insert(insertData);
+      if (error) throw new Error(error.message);
 
-    // Check availability for multi-unit items
-    const availability = await checkAvailability();
-    if (!availability.available) {
-      setConflictError(availability.message);
-      setSubmitting(false);
-      return;
-    }
-
-    // Check time conflict for rooms
-    const conflict = await checkConflict();
-    if (conflict) {
-      setConflictError(conflict);
-      setSubmitting(false);
-      return;
-    }
-
-    // Upload document if selected
-    let documentUrl = '';
-    let documentName = '';
-    if (selectedDocument) {
-      setUploading(true);
-      const url = await uploadDocument(selectedDocument);
-      if (url) {
-        documentUrl = url;
-        documentName = selectedDocument.name;
-      }
-      setUploading(false);
-    }
-
-    const insertData = {
-      borrower_name: formData.borrower_name,
-      borrower_class: formData.borrower_class,
-      borrower_email: formData.borrower_email,
-      borrower_phone: formData.borrower_phone,
-      item_type: formData.item_type,
-      borrowed_units: formData.item_type === 'barang' ? formData.borrowed_units : 1,
-      borrow_date: formData.borrow_date,
-      return_date: formData.return_date || formData.borrow_date,
-      start_time: formData.start_time,
-      end_time: formData.end_time,
-      purpose: formData.purpose,
-      notes: formData.notes,
-      status: 'pending',
-      document_url: documentUrl,
-      document_name: documentName,
-      inventory_id: formData.item_type === 'barang' && formData.inventory_id ? formData.inventory_id : null,
-      facility_id: formData.item_type === 'ruangan' && formData.facility_id ? formData.facility_id : null,
-    };
-
-    const { error } = await supabase.from('borrowings').insert([insertData]);
-
-    if (error) {
-      console.error('Insert error:', error);
-      setSubmitError(`Gagal menyimpan: ${error.message}`);
-    } else {
       setSubmitSuccess(true);
       setFormData(initialFormData);
-      setSelectedItem('');
       setSelectedDocument(null);
-      fetchRecentBorrowings();
+      setWorkflowSteps([]);
+      setSelectedWorkflow(null);
       setTimeout(() => setSubmitSuccess(false), 5000);
+    } catch (err: any) {
+      setSubmitError(err.message || 'Terjadi kesalahan saat mengirim pengajuan');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-  };
+  }
 
-  const filteredItems = (formData.item_type === 'barang' ? inventory : facilities).filter(item =>
-    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    ('code' in item && item.code.toLowerCase().includes(searchQuery.toLowerCase()))
+  async function searchHistory() {
+    if (!historyEmail.trim()) return;
+    setHistoryLoading(true);
+    setHistorySearched(true);
+    const { data } = await supabase
+      .from('borrowings')
+      .select('*, inventory(name, code), facilities(name)')
+      .eq('borrower_email', historyEmail.trim())
+      .order('created_at', { ascending: false });
+    setHistoryBorrowings(data || []);
+    setHistoryLoading(false);
+  }
+
+  const filteredInventory = inventory.filter(i =>
+    i.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    i.code?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('id-ID', { year: 'numeric', month: 'short', day: 'numeric' });
-
-  const getAvailableUnits = (itemId: string): number => {
-    const item = inventory.find(i => i.id === itemId);
-    if (!item) return 0;
-    // Simple calculation - in real time would need to check active borrowings
-    return item.available_quantity || item.quantity;
-  };
+  const filteredFacilities = facilities.filter(f =>
+    f.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       <Navbar />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-16">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Peminjaman</h1>
+          <p className="text-slate-500 dark:text-slate-400">Ajukan peminjaman fasilitas dan inventaris sekolah</p>
+        </motion.div>
 
-      <section className="pt-24 pb-8 bg-gradient-to-br from-blue-50 via-white to-cyan-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-        <div className="max-w-7xl mx-auto px-4 text-center">
-          <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
-            className="text-3xl lg:text-4xl font-bold text-slate-900 dark:text-white mb-2">
-            Peminjaman Sarana & Prasarana
-          </motion.h1>
-          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}
-            className="text-slate-600 dark:text-slate-400">
-            Ajukan peminjaman barang atau ruangan sekolah
-          </motion.p>
-        </div>
-      </section>
-
-      {/* Tabs */}
-      <div className="max-w-7xl mx-auto px-4 mb-6">
-        <div className="flex gap-2">
-          {[
-            { key: 'form' as const, label: 'Form Peminjaman' },
-            { key: 'history' as const, label: 'Riwayat Peminjaman' },
-          ].map(tab => (
-            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                'px-5 py-2.5 rounded-xl text-sm font-medium transition-all',
-                activeTab === tab.key
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/25'
-                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700'
-              )}>
-              {tab.label}
-            </button>
+        {/* Tabs */}
+        <div className="flex gap-1 mb-8 bg-white dark:bg-slate-800 p-1 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 max-w-xs">
+          {([['form', 'Form Peminjaman'], ['history', 'Riwayat']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setActiveTab(key)}
+              className={cn('flex-1 py-2 rounded-lg text-sm font-medium transition-all', activeTab === key
+                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+              )}>{label}</button>
           ))}
         </div>
-      </div>
 
-      <AnimatePresence mode="wait">
-        {activeTab === 'form' ? (
-          <motion.section key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="pb-8">
-            <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2">
-                <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200/50 dark:border-slate-700/50 p-6">
-                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-blue-500" /> Form Peminjaman
-                  </h2>
+        <AnimatePresence mode="wait">
+          {activeTab === 'form' ? (
+            <motion.div key="form" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+              {submitSuccess && (
+                <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 flex items-center gap-3 p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-xl">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium text-emerald-800 dark:text-emerald-200">Pengajuan berhasil dikirim!</p>
+                    <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-0.5">
+                      {workflowSteps[0] ? `Status awal: Menunggu ${workflowSteps[0].step_label}` : 'Menunggu persetujuan admin.'}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
 
-                  {/* Success */}
-                  <AnimatePresence>
-                    {submitSuccess && (
-                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                        className="mb-6 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 flex items-center gap-3">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Pengajuan berhasil dikirim!</p>
-                          <p className="text-xs text-emerald-600 dark:text-emerald-500">Status: Menunggu Persetujuan. Anda akan dihubungi via email.</p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+              <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left: Item selection */}
+                <div className="lg:col-span-2 space-y-6">
+                  {/* Type toggle */}
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Jenis Peminjaman</h2>
+                    <div className="flex gap-3">
+                      {([['barang', 'Barang/Inventaris', Package], ['ruangan', 'Ruangan/Fasilitas', Building2]] as const).map(([val, label, Icon]) => (
+                        <button key={val} type="button"
+                          onClick={() => { setFormData(p => ({ ...p, item_type: val, inventory_id: null, facility_id: null })); setSearchQuery(''); }}
+                          className={cn('flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-medium transition-all',
+                            formData.item_type === val
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
+                              : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                          )}>
+                          <Icon className="w-4 h-4" />{label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                  {/* Conflict/Error */}
-                  <AnimatePresence>
-                    {(conflictError || submitError) && (
-                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                        className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 flex items-center gap-3">
-                        <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                        <p className="text-sm text-red-700 dark:text-red-400">{conflictError || submitError}</p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Item Type */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Jenis Peminjaman</label>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          { type: 'barang' as const, label: 'Barang / Inventaris', icon: Package },
-                          { type: 'ruangan' as const, label: 'Ruangan / Fasilitas', icon: Building2 },
-                        ].map(opt => (
-                          <button key={opt.type} type="button"
-                            onClick={() => { setFormData({ ...formData, item_type: opt.type, inventory_id: null, facility_id: null }); setSelectedItem(''); }}
-                            className={cn('flex items-center gap-3 p-4 rounded-xl border-2 transition-all text-left',
-                              formData.item_type === opt.type ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  {/* Item search & selection */}
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h2 className="font-semibold text-slate-900 dark:text-white mb-4">
+                      Pilih {formData.item_type === 'barang' ? 'Barang' : 'Ruangan'}
+                    </h2>
+                    <div className="relative mb-4">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                        placeholder={`Cari ${formData.item_type === 'barang' ? 'barang' : 'ruangan'}...`}
+                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    {loading ? (
+                      <div className="flex justify-center py-8"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                        {(formData.item_type === 'barang' ? filteredInventory : filteredFacilities).map((item: any) => (
+                          <button key={item.id} type="button"
+                            onClick={() => setFormData(p => ({
+                              ...p,
+                              inventory_id: formData.item_type === 'barang' ? item.id : null,
+                              facility_id: formData.item_type === 'ruangan' ? item.id : null,
+                            }))}
+                            className={cn('text-left p-3 rounded-xl border-2 transition-all',
+                              (formData.item_type === 'barang' ? formData.inventory_id : formData.facility_id) === item.id
+                                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                : 'border-slate-200 dark:border-slate-600 hover:border-blue-300'
                             )}>
-                            <opt.icon className={cn('w-6 h-6', formData.item_type === opt.type ? 'text-blue-500' : 'text-slate-400')} />
-                            <span className={cn('text-sm font-medium', formData.item_type === opt.type ? 'text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')}>{opt.label}</span>
+                            <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">{item.name}</p>
+                            {item.code && <p className="text-xs text-slate-400 mt-0.5">{item.code}</p>}
+                            {formData.item_type === 'barang' && (
+                              <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                                Tersedia: {item.available_quantity ?? item.quantity}
+                              </p>
+                            )}
+                            {formData.item_type === 'ruangan' && (item as any).workflow_templates && (
+                              <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
+                                <GitBranch className="w-3 h-3" />{(item as any).workflow_templates.name}
+                              </p>
+                            )}
                           </button>
                         ))}
                       </div>
-                    </div>
+                    )}
+                  </div>
 
-                    {/* Search & Select Item */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        {formData.item_type === 'barang' ? 'Pilih Barang' : 'Pilih Ruangan'} <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative mb-3">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                        <input type="text" placeholder={formData.item_type === 'barang' ? 'Cari barang...' : 'Cari ruangan...'} value={searchQuery}
-                          onChange={e => setSearchQuery(e.target.value)}
-                          className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white" />
+                  {/* Workflow preview */}
+                  {workflowSteps.length > 0 && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-5 border border-blue-200 dark:border-blue-700">
+                      <div className="flex items-center gap-2 mb-3">
+                        <GitBranch className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        <span className="text-sm font-semibold text-blue-800 dark:text-blue-200">
+                          Alur Persetujuan: {selectedWorkflow?.name}
+                        </span>
                       </div>
-                      {!loading && (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
-                          {filteredItems.map(item => {
-                            const isItem = 'available_quantity' in item;
-                            const available = isItem ? getAvailableUnits(item.id) : 1;
-                            return (
-                              <button key={item.id} type="button"
-                                onClick={() => {
-                                  setSelectedItem(item.id);
-                                  if (formData.item_type === 'barang') {
-                                    setFormData({ ...formData, inventory_id: item.id, facility_id: null, borrowed_units: 1 });
-                                  } else {
-                                    setFormData({ ...formData, facility_id: item.id, inventory_id: null });
-                                  }
-                                }}
-                                className={cn('p-3 rounded-xl border-2 text-left transition-all',
-                                  selectedItem === item.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
-                                )}>
-                                <div className="font-medium text-slate-900 dark:text-white text-sm truncate">{item.name}</div>
-                                {'code' in item && <div className="text-xs text-slate-400">{item.code}</div>}
-                                {isItem && (
-                                  <div className={cn('text-xs mt-1', available > 0 ? 'text-green-600' : 'text-red-600')}>
-                                    Tersedia: {available} unit
-                                  </div>
-                                )}
-                                {'capacity' in item && <div className="text-xs text-slate-400">Kapasitas: {item.capacity}</div>}
-                              </button>
-                            );
-                          })}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-full text-xs font-medium text-slate-600 dark:text-slate-300">
+                          <User className="w-3 h-3" /> Pengaju
+                        </div>
+                        {workflowSteps.map((step, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <svg className="w-3 h-3 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                            </svg>
+                            <div className={cn('px-3 py-1.5 rounded-full text-xs font-medium',
+                              step.is_info_only
+                                ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 italic'
+                                : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300')}>
+                              {step.roles?.name || step.step_label}
+                              {step.is_info_only && ' (Mengetahui)'}
+                            </div>
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-2">
+                          <svg className="w-3 h-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                          </svg>
+                          <div className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full text-xs font-medium">
+                            Disetujui
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Borrower Info */}
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h2 className="font-semibold text-slate-900 dark:text-white mb-5">Data Peminjam</h2>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {[
+                        { label: 'Nama Lengkap', key: 'borrower_name', icon: User, placeholder: 'Nama lengkap', required: true },
+                        { label: 'Kelas/Unit', key: 'borrower_class', icon: FileText, placeholder: 'Contoh: XI TKJ 1', required: true },
+                        { label: 'Email', key: 'borrower_email', icon: Mail, placeholder: 'email@siswa.sch.id', required: true, type: 'email' },
+                        { label: 'No. HP', key: 'borrower_phone', icon: Phone, placeholder: '08xxxxxxxxxx', required: false },
+                      ].map(field => (
+                        <div key={field.key}>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{field.label}</label>
+                          <div className="relative">
+                            <field.icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input
+                              type={(field as any).type || 'text'}
+                              value={(formData as any)[field.key]}
+                              onChange={e => setFormData(p => ({ ...p, [field.key]: e.target.value }))}
+                              placeholder={field.placeholder}
+                              required={field.required}
+                              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Date/Time */}
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h2 className="font-semibold text-slate-900 dark:text-white mb-5">Waktu Peminjaman</h2>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tanggal</label>
+                        <input type="date" value={formData.borrow_date}
+                          onChange={e => setFormData(p => ({ ...p, borrow_date: e.target.value }))} required
+                          className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      {formData.item_type === 'barang' && (
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tanggal Kembali</label>
+                          <input type="date" value={formData.return_date}
+                            onChange={e => setFormData(p => ({ ...p, return_date: e.target.value }))}
+                            min={formData.borrow_date}
+                            className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Jam Mulai</label>
+                        <input type="time" value={formData.start_time}
+                          onChange={e => setFormData(p => ({ ...p, start_time: e.target.value }))} required
+                          className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Jam Selesai</label>
+                        <input type="time" value={formData.end_time}
+                          onChange={e => setFormData(p => ({ ...p, end_time: e.target.value }))} required
+                          className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      {formData.item_type === 'barang' && (
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Jumlah</label>
+                          <input type="number" min={1} value={formData.borrowed_units}
+                            onChange={e => setFormData(p => ({ ...p, borrowed_units: parseInt(e.target.value) || 1 }))} required
+                            className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                         </div>
                       )}
                     </div>
+                  </div>
 
-                    {/* Borrower Info */}
-                    <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 space-y-4">
-                      <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                        <User className="w-4 h-4" /> Data Peminjam
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="relative">
-                          <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="text" required placeholder="Nama Peminjam *" value={formData.borrower_name}
-                            onChange={e => setFormData({ ...formData, borrower_name: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                        </div>
-                        <input type="text" required placeholder="Kelas / Unit *" value={formData.borrower_class}
-                          onChange={e => setFormData({ ...formData, borrower_class: e.target.value })}
-                          className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="email" required placeholder="Email Aktif *" value={formData.borrower_email}
-                            onChange={e => setFormData({ ...formData, borrower_email: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                        </div>
-                        <div className="relative">
-                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="tel" placeholder="Nomor HP" value={formData.borrower_phone}
-                            onChange={e => setFormData({ ...formData, borrower_phone: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                        </div>
+                  {/* Purpose + Notes */}
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h2 className="font-semibold text-slate-900 dark:text-white mb-5">Detail Kegiatan</h2>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tujuan/Kegiatan <span className="text-red-500">*</span></label>
+                        <textarea value={formData.purpose} onChange={e => setFormData(p => ({ ...p, purpose: e.target.value }))}
+                          placeholder="Jelaskan tujuan peminjaman..." rows={3} required
+                          className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                       </div>
-                    </div>
-
-                    {/* Date & Time */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        Tanggal & Waktu <span className="text-red-500">*</span>
-                      </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <div className="relative">
-                          <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="date" required value={formData.borrow_date}
-                            onChange={e => setFormData({ ...formData, borrow_date: e.target.value })}
-                            className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm" />
-                          <span className="absolute -top-2 left-3 text-[10px] text-slate-500 bg-white dark:bg-slate-700 px-1">Tanggal Mulai</span>
-                        </div>
-                        <div className="relative">
-                          <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="time" required value={formData.start_time}
-                            onChange={e => setFormData({ ...formData, start_time: e.target.value })}
-                            className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm" />
-                          <span className="absolute -top-2 left-3 text-[10px] text-slate-500 bg-white dark:bg-slate-700 px-1">Jam Mulai</span>
-                        </div>
-                        <div className="relative">
-                          <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="date" required value={formData.return_date}
-                            onChange={e => setFormData({ ...formData, return_date: e.target.value })}
-                            className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm" />
-                          <span className="absolute -top-2 left-3 text-[10px] text-slate-500 bg-white dark:bg-slate-700 px-1">Tanggal Selesai</span>
-                        </div>
-                        <div className="relative">
-                          <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="time" required value={formData.end_time}
-                            onChange={e => setFormData({ ...formData, end_time: e.target.value })}
-                            className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm" />
-                          <span className="absolute -top-2 left-3 text-[10px] text-slate-500 bg-white dark:bg-slate-700 px-1">Jam Selesai</span>
-                        </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Catatan</label>
+                        <textarea value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))}
+                          placeholder="Informasi tambahan..." rows={2}
+                          className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                       </div>
-                    </div>
 
-                    {/* Units for Barang */}
-                    {formData.item_type === 'barang' && selectedItem && (
-                      <div className="max-w-xs">
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                          Jumlah Unit yang Dipinjam <span className="text-red-500">*</span>
+                      {/* File upload */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                          Dokumen Pendukung <span className="text-slate-400 font-normal">(JPG, PNG, PDF — maks 10 MB)</span>
                         </label>
-                        <div className="relative">
-                          <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                          <input type="number" min="1" max={getAvailableUnits(selectedItem)} required value={formData.borrowed_units}
-                            onChange={e => setFormData({ ...formData, borrowed_units: parseInt(e.target.value) || 1 })}
-                            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                        </div>
-                        <p className="text-xs text-slate-500 mt-1">Tersedia: {getAvailableUnits(selectedItem)} unit</p>
-                      </div>
-                    )}
-
-                    {/* Purpose */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        Keperluan Peminjaman <span className="text-red-500">*</span>
-                      </label>
-                      <textarea rows={2} required placeholder="Jelaskan keperluan peminjaman..." value={formData.purpose}
-                        onChange={e => setFormData({ ...formData, purpose: e.target.value })}
-                        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                    </div>
-
-                    {/* Notes */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Catatan Tambahan</label>
-                      <div className="relative">
-                        <MessageSquare className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                        <textarea rows={2} placeholder="Catatan tambahan (opsional)..." value={formData.notes}
-                          onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                          className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
-                      </div>
-                    </div>
-
-                    {/* Document Upload */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        <Upload className="w-4 h-4 inline mr-1" /> Dokumen Pendukung (opsional)
-                      </label>
-                      <p className="text-xs text-slate-500 mb-2">Surat Peminjaman atau dokumen pendukung lainnya (PDF, DOC, JPG, PNG)</p>
-                      <div className="flex items-center gap-3">
-                        <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                          onChange={e => setSelectedDocument(e.target.files?.[0] || null)}
-                          className="hidden" id="document-upload" />
-                        <label htmlFor="document-upload"
-                          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-400 cursor-pointer hover:border-blue-400 transition-colors">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-sm">{selectedDocument ? selectedDocument.name : 'Pilih file...'}</span>
-                        </label>
-                        {selectedDocument && (
-                          <button type="button" onClick={() => setSelectedDocument(null)}
-                            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400">
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <button type="submit" disabled={submitting || uploading || !selectedItem}
-                      className={cn('w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-medium transition-all',
-                        submitting || uploading || !selectedItem
-                          ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 cursor-not-allowed'
-                          : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:shadow-lg hover:shadow-blue-500/25 active:scale-[0.98]'
-                      )}>
-                      <Send className="w-5 h-5" />
-                      {uploading ? 'Mengunggah dokumen...' : submitting ? 'Memeriksa & Mengirim...' : 'Ajukan Peminjaman'}
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              {/* Sidebar */}
-              <div>
-                <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200/50 dark:border-slate-700/50 p-6">
-                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Riwayat Terbaru</h2>
-                  <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                    {borrowings.length === 0 ? (
-                      <p className="text-slate-500 text-center py-8 text-sm">Belum ada peminjaman</p>
-                    ) : (
-                      borrowings.map(b => (
-                        <div key={b.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-100 dark:border-slate-600/50">
-                          <div className="flex items-start justify-between mb-1.5">
-                            <div>
-                              <div className="font-medium text-slate-900 dark:text-white text-sm">
-                                {b.item_type === 'ruangan' ? b.facilities?.name : b.inventory?.name}
-                              </div>
-                              <div className="text-xs text-slate-500">{b.borrower_name} - {b.borrower_class}</div>
-                            </div>
-                            <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap', BORROWING_STATUS_COLORS[b.status])}>
-                              {BORROWING_STATUS_LABELS[b.status]}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-400">
-                            {formatDate(b.borrow_date)} {(b.start_time || '').slice(0, 5)} - {b.return_date ? formatDate(b.return_date) : '-'} {(b.end_time || '').slice(0, 5)}
-                            {b.item_type === 'barang' && ` | ${b.borrowed_units || 1} unit`}
-                          </div>
-                          {b.document_url && (
-                            <a href={b.document_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline mt-1">
-                              <Download className="w-3 h-3" /> {b.document_name || 'Dokumen'}
-                            </a>
+                        <label className={cn('flex items-center gap-3 p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors',
+                          selectedDocument
+                            ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
+                            : fileError
+                              ? 'border-red-400 bg-red-50 dark:bg-red-900/20'
+                              : 'border-slate-200 dark:border-slate-600 hover:border-blue-400 bg-slate-50 dark:bg-slate-700'
+                        )}>
+                          <input type="file" className="hidden" accept=".jpg,.jpeg,.png,.pdf" onChange={handleFileChange} />
+                          <Upload className={cn('w-5 h-5 flex-shrink-0', selectedDocument ? 'text-emerald-500' : fileError ? 'text-red-400' : 'text-slate-400')} />
+                          <span className={cn('text-sm', selectedDocument ? 'text-emerald-700 dark:text-emerald-300' : fileError ? 'text-red-600 dark:text-red-400' : 'text-slate-500')}>
+                            {selectedDocument ? selectedDocument.name : fileError || 'Klik untuk upload dokumen'}
+                          </span>
+                          {selectedDocument && (
+                            <button type="button" onClick={e => { e.preventDefault(); setSelectedDocument(null); }}
+                              className="ml-auto p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded-lg text-emerald-600">
+                              <X className="w-4 h-4" />
+                            </button>
                           )}
+                        </label>
+                        {fileError && (
+                          <p className="text-red-500 text-xs mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{fileError}</p>
+                        )}
+                        <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                          <Info className="w-3 h-3" />File disimpan dengan aman di sistem
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Errors */}
+                  {(conflictError || submitError) && (
+                    <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-xl">
+                      <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-700 dark:text-red-300">{conflictError || submitError}</p>
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={submitting || !!(fileError)}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-blue-500/30 disabled:opacity-60 transition-all">
+                    {submitting ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send className="w-5 h-5" />}
+                    {submitting ? 'Mengirim...' : 'Ajukan Peminjaman'}
+                  </button>
+                </div>
+
+                {/* Right: Info panel */}
+                <div className="space-y-4">
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                      <Info className="w-4 h-4 text-blue-500" />Ketentuan Peminjaman
+                    </h3>
+                    <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
+                      <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Pengajuan akan melalui alur persetujuan sesuai fasilitas</li>
+                      <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Peminjam wajib mengisi data dengan benar</li>
+                      <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Barang dikembalikan tepat waktu dalam kondisi baik</li>
+                      <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>File dokumen maks 10 MB (JPG, PNG, PDF)</li>
+                    </ul>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 rounded-2xl p-5 border border-blue-200 dark:border-blue-700">
+                    <h3 className="font-semibold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
+                      <Clock className="w-4 h-4" />Alur Status
+                    </h3>
+                    <div className="space-y-2 text-sm">
+                      {[
+                        'Draft',
+                        'Menunggu Persetujuan Pembina',
+                        'Menunggu Wakasek Kesiswaan',
+                        'Menunggu PJ Fasilitas',
+                        'Menunggu Wakasek Sarpras',
+                        'Disetujui',
+                        'Sedang Dipinjam',
+                        'Sudah Dikembalikan',
+                      ].map((s, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-full bg-blue-200 dark:bg-blue-800 flex items-center justify-center text-xs font-bold text-blue-700 dark:text-blue-300 flex-shrink-0">{i + 1}</div>
+                          <span className="text-blue-700 dark:text-blue-300">{s}</span>
                         </div>
-                      ))
-                    )}
+                      ))}
+                    </div>
                   </div>
                 </div>
+              </form>
+            </motion.div>
+          ) : (
+            /* History tab */
+            <motion.div key="history" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 mb-6">
+                <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Cari Riwayat Peminjaman</h2>
+                <div className="flex gap-3">
+                  <div className="relative flex-1">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input value={historyEmail} onChange={e => setHistoryEmail(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && searchHistory()}
+                      placeholder="Masukkan email peminjam..."
+                      className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <button onClick={searchHistory} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
+                    Cari
+                  </button>
+                </div>
               </div>
-            </div>
-          </motion.section>
-        ) : (
-          <motion.section key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="pb-8">
-            <HistorySearch />
-          </motion.section>
-        )}
-      </AnimatePresence>
 
+              {historyLoading && <div className="flex justify-center py-12"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}
+
+              {historySearched && !historyLoading && historyBorrowings.length === 0 && (
+                <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+                  <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                  <p className="text-slate-500">Tidak ada riwayat peminjaman untuk email tersebut</p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {historyBorrowings.map(b => (
+                  <BorrowingHistoryCard key={b.id} borrowing={b} />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
       <Footer />
     </div>
   );
 }
 
-function HistorySearch() {
-  const [email, setEmail] = useState('');
-  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const handleSearch = async () => {
-    if (!email.trim()) return;
-    setLoading(true);
-    setSearched(true);
-    const { data, error } = await supabase
-      .from('borrowings')
-      .select('*, inventory(name, code), facilities(name)')
-      .eq('borrower_email', email.trim().toLowerCase())
-      .order('created_at', { ascending: false });
-    if (error) console.error('History search error:', error);
-    if (data) setBorrowings(data as Borrowing[]);
-    setLoading(false);
-  };
-
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  const grouped = {
-    active: borrowings.filter(b => b.status === 'approved' || b.status === 'pending'),
-    past: borrowings.filter(b => b.status === 'completed' || b.status === 'rejected' || b.status === 'cancelled'),
-  };
+function BorrowingHistoryCard({ borrowing: b }: { borrowing: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusLabel = b.current_status_label || BORROWING_STATUS_LABELS[b.status as keyof typeof BORROWING_STATUS_LABELS] || b.status;
+  const statusColor = EXTENDED_STATUS_COLORS[b.status] || 'bg-slate-100 text-slate-600';
+  const itemName = b.inventory?.name || b.facilities?.name || '-';
 
   return (
-    <div className="max-w-3xl mx-auto px-4 space-y-6">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200/50 dark:border-slate-700/50 p-6">
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-1">Riwayat Peminjaman Saya</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Masukkan email yang Anda gunakan saat mengajukan peminjaman</p>
-        <div className="flex gap-3">
-          <div className="relative flex-1">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input type="email" placeholder="Masukkan email Anda..." value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white" />
-          </div>
-          <button onClick={handleSearch} disabled={loading || !email.trim()}
-            className={cn('px-6 py-3 rounded-xl font-medium transition-all flex items-center gap-2',
-              loading || !email.trim() ? 'bg-slate-200 dark:bg-slate-700 text-slate-400' : 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg'
-            )}>
-            <Search className="w-4 h-4" /> Cari
-          </button>
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="flex items-center gap-4 p-4">
+        <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0',
+          b.item_type === 'ruangan' ? 'bg-blue-100 dark:bg-blue-900/30' : 'bg-cyan-100 dark:bg-cyan-900/30')}>
+          {b.item_type === 'ruangan' ? <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400" /> : <Package className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />}
         </div>
-      </div>
-
-      {loading && (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="bg-white dark:bg-slate-800 rounded-xl p-5 animate-pulse">
-              <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/3 mb-3" />
-              <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-2/3" />
-            </div>
-          ))}
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-slate-900 dark:text-white text-sm truncate">{itemName}</p>
+          <p className="text-xs text-slate-500">{new Date(b.borrow_date || b.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
-      )}
-
-      {!loading && searched && borrowings.length === 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200/50 dark:border-slate-700/50 p-12 text-center">
-          <Mail className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Tidak Ditemukan</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Tidak ada riwayat peminjaman untuk email ini</p>
-        </div>
-      )}
-
-      {!loading && borrowings.length > 0 && (
-        <div className="space-y-6">
-          {grouped.active.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 px-1">Peminjaman Aktif ({grouped.active.length})</h2>
-              <div className="space-y-3">
-                {grouped.active.map(b => <BorrowingCard key={b.id} borrowing={b} expanded={expandedId === b.id} onToggle={() => setExpandedId(expandedId === b.id ? null : b.id)} formatDate={formatDate} />)}
-              </div>
-            </div>
-          )}
-          {grouped.past.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 px-1">Riwayat Sebelumnya ({grouped.past.length})</h2>
-              <div className="space-y-3">
-                {grouped.past.map(b => <BorrowingCard key={b.id} borrowing={b} expanded={expandedId === b.id} onToggle={() => setExpandedId(expandedId === b.id ? null : b.id)} formatDate={formatDate} />)}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BorrowingCard({ borrowing: b, expanded, onToggle, formatDate }: { borrowing: Borrowing; expanded: boolean; onToggle: () => void; formatDate: (d: string) => string }) {
-  const itemName = b.item_type === 'ruangan' ? b.facilities?.name : b.inventory?.name;
-  return (
-    <motion.div layout className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-      <div className="p-5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors" onClick={onToggle}>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center',
-              b.item_type === 'ruangan' ? 'bg-cyan-100 dark:bg-cyan-900/30' : 'bg-blue-100 dark:bg-blue-900/30'
-            )}>
-              {b.item_type === 'ruangan' ? <Building2 className="w-5 h-5 text-cyan-600 dark:text-cyan-400" /> : <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
-            </div>
-            <div>
-              <div className="font-medium text-slate-900 dark:text-white">{itemName}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 mt-0.5">
-                <Calendar className="w-3 h-3" />
-                {formatDate(b.borrow_date)} {(b.start_time || '08:00').slice(0, 5)} - {b.return_date ? formatDate(b.return_date) : '-'} {(b.end_time || '16:00').slice(0, 5)}
-                {b.item_type === 'barang' && ` | ${b.borrowed_units || 1} unit`}
-              </div>
-            </div>
-          </div>
-          <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap', BORROWING_STATUS_COLORS[b.status])}>
-            {BORROWING_STATUS_LABELS[b.status]}
-          </span>
-        </div>
+        <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0', statusColor)}>{statusLabel}</span>
+        <button onClick={() => setExpanded(!expanded)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
+          {expanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+        </button>
       </div>
       <AnimatePresence>
         {expanded && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
-            <div className="px-5 pb-5 pt-0 border-t border-slate-100 dark:border-slate-700/50">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-                <div>
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-1"><FileText className="w-3 h-3" /> Keperluan</label>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">{b.purpose || '-'}</p>
+          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+            <div className="px-4 pb-4 border-t border-slate-100 dark:border-slate-700 pt-3 grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-slate-400">Tujuan</span><p className="text-slate-700 dark:text-slate-200">{b.purpose || '-'}</p></div>
+              <div><span className="text-slate-400">Jam</span><p className="text-slate-700 dark:text-slate-200">{b.start_time} – {b.end_time}</p></div>
+              {b.admin_notes && <div className="col-span-2"><span className="text-slate-400">Catatan Admin</span><p className="text-slate-700 dark:text-slate-200">{b.admin_notes}</p></div>}
+              {b.drive_file_url && (
+                <div className="col-span-2">
+                  <a href={b.drive_file_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:underline text-xs">
+                    <Download className="w-3.5 h-3.5" />Lihat Dokumen
+                  </a>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-1"><MessageSquare className="w-3 h-3" /> Catatan Admin</label>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">{b.admin_notes || 'Belum ada catatan'}</p>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1 block">Kelas/Unit</label>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">{b.borrower_class}</p>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1 block">Catatan Peminjam</label>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">{b.notes || '-'}</p>
-                </div>
-                {b.approved_by && (
-                  <div className="col-span-full">
-                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1 block">Disetujui Oleh</label>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">
-                      {b.approved_by} ({b.approver_position}) - {b.approved_at ? formatDate(b.approved_at.split('T')[0]) : '-'}
-                    </p>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   );
 }
