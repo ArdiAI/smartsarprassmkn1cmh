@@ -36,6 +36,13 @@ import TeamAdminPage from './pages/admin/TeamAdminPage';
 import AnnouncementsAdminPage from './pages/admin/AnnouncementsAdminPage';
 import AspirasiAdminPage from './pages/admin/AspirasiAdminPage';
 
+// Super Admin pages
+import UserManagementPage from './pages/admin/superadmin/UserManagementPage';
+import RolesPermissionsPage from './pages/admin/superadmin/RolesPermissionsPage';
+import FacilityManagersPage from './pages/admin/superadmin/FacilityManagersPage';
+import ApprovalWorkflowPage from './pages/admin/superadmin/ApprovalWorkflowPage';
+import SystemConfigPage from './pages/admin/superadmin/SystemConfigPage';
+
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
 
@@ -127,6 +134,12 @@ function AppRoutes() {
         <Route path="team" element={<TeamAdminPage />} />
         <Route path="announcements" element={<AnnouncementsAdminPage />} />
         <Route path="aspirasi" element={<AspirasiAdminPage />} />
+        {/* Super Admin routes */}
+        <Route path="super/users" element={<UserManagementPage />} />
+        <Route path="super/roles" element={<RolesPermissionsPage />} />
+        <Route path="super/facility-managers" element={<FacilityManagersPage />} />
+        <Route path="super/workflows" element={<ApprovalWorkflowPage />} />
+        <Route path="super/config" element={<SystemConfigPage />} />
       </Route>
 
       {/* Catch all - redirect to auth */}
