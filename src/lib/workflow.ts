@@ -2,12 +2,11 @@ import { supabase } from './supabase';
 
 export interface WorkflowStep {
   id: string;
-  template_id: string;
+  workflow_template_id: string;
   step_order: number;
   step_label: string;
-  role_name: string;
+  role_id: string;
   is_info_only: boolean;
-  workflow_template_id?: string;
 }
 
 export interface WorkflowTemplate {
@@ -28,9 +27,9 @@ export async function fetchWorkflowTemplate(templateId: string): Promise<Workflo
   const { data: steps } = await supabase
     .from('workflow_steps')
     .select('*')
-    .eq('template_id', templateId)
+    .eq('workflow_template_id', templateId)
     .order('step_order', { ascending: true });
-  return { ...template, steps: steps || [] };
+  return { ...template, steps: (steps as unknown as WorkflowStep[]) || [] };
 }
 
 export async function getDefaultWorkflow(): Promise<WorkflowTemplate | null> {

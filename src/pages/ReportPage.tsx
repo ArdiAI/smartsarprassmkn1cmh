@@ -1,540 +1,451 @@
-import { useEffect, useState, FormEvent } from 'react';
-import { supabase } from '../lib/supabase';
-import { showToast } from '../components/Toast';
+import { useState, useEffect } from 'react';
+import {
+  FileText, Send, Loader2, CheckCircle, AlertTriangle,
+  MapPin, Calendar, RefreshCw, Image as ImageIcon, Mail, Phone, User, Package
+} from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import {
-  AlertTriangle,
-  Loader2,
-  CheckCircle2,
-  Plus,
-  MapPin,
-  Calendar,
-  User,
-  Mail,
-  FileText,
-  Image as ImageIcon,
-  Building2,
-  ArrowLeft,
-} from 'lucide-react';
-
-interface Facility {
-  id: string;
-  name: string;
-}
+import { showToast } from '../components/Toast';
+import { supabase } from '../lib/supabase';
+import { cn } from '../utils/cn';
 
 interface DamageReport {
   id: string;
-  item_name: string;
-  description: string;
+  inventory_id: string | null;
   reporter_name: string;
-  reporter_email: string;
-  status: string;
+  description: string;
+  image_url: string;
+  severity: 'minor' | 'moderate' | 'severe';
+  status: 'pending' | 'in_progress' | 'resolved';
+  resolution_notes: string;
   created_at: string;
+  resolved_at: string | null;
+  reporter_unit: string;
+  reporter_email: string;
+  reporter_phone: string;
   location: string;
-  severity: string;
-  damage_type: string;
-  reported_date: string;
-  photo_url: string | null;
-  facility_id: string | null;
 }
 
-interface FacilityOption {
-  id: string;
-  name: string;
-}
-
-const severityOptions = [
-  { value: 'low', label: 'Rendah', color: 'emerald', icon: '🟢' },
-  { value: 'medium', label: 'Sedang', color: 'amber', icon: '🟡' },
-  { value: 'high', label: 'Tinggi', color: 'orange', icon: '🟠' },
-  { value: 'critical', label: 'Kritis', color: 'red', icon: '🔴' },
-];
-
-const damageTypeOptions = [
-  { value: 'rusak_fisik', label: 'Rusak Fisik' },
-  { value: 'hilang', label: 'Hilang' },
-  { value: 'tidak_berfungsi', label: 'Tidak Berfungsi' },
-  { value: 'lainnya', label: 'Lainnya' },
-];
-
-const severityConfig: Record<string, { label: string; classes: string }> = {
-  low: { label: 'Rendah', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  medium: { label: 'Sedang', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  high: { label: 'Tinggi', classes: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' },
-  critical: { label: 'Kritis', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+const severityConfig: Record<string, { label: string; color: string; cardColor: string; icon: typeof AlertTriangle }> = {
+  minor: {
+    label: 'Ringan',
+    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    cardColor: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20',
+    icon: CheckCircle,
+  },
+  moderate: {
+    label: 'Sedang',
+    color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    cardColor: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20',
+    icon: AlertTriangle,
+  },
+  severe: {
+    label: 'Berat',
+    color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    cardColor: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20',
+    icon: AlertTriangle,
+  },
 };
 
-const statusConfig: Record<string, { label: string; classes: string }> = {
-  pending: { label: 'Menunggu', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  reviewed: { label: 'Ditinjau', classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-  resolved: { label: 'Selesai', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  rejected: { label: 'Ditolak', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+const statusConfig: Record<string, { label: string; color: string }> = {
+  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
 };
-
-const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function ReportPage() {
-  const [facilities, setFacilities] = useState<FacilityOption[]>([]);
-  const [recentReports, setRecentReports] = useState<DamageReport[]>([]);
-  const [loadingFacilities, setLoadingFacilities] = useState(true);
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<DamageReport | null>(null);
-
   const [form, setForm] = useState({
     reporter_name: '',
     reporter_email: '',
+    reporter_unit: '',
+    reporter_phone: '',
     item_name: '',
     location: '',
-    facility_id: '',
-    damage_type: 'rusak_fisik',
-    severity: 'low',
-    reported_date: todayStr(),
+    severity: '' as '' | 'minor' | 'moderate' | 'severe',
     description: '',
-    photo_url: '',
+    image_url: '',
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState<DamageReport | null>(null);
+  const [reports, setReports] = useState<DamageReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState(true);
 
   useEffect(() => {
-    const fetchFacilities = async () => {
-      try {
-        const { data } = await supabase.from('facilities').select('id, name').order('name', { ascending: true });
-        setFacilities((data as unknown as FacilityOption[]) ?? []);
-      } catch {
-        setFacilities([]);
-      } finally {
-        setLoadingFacilities(false);
-      }
-    };
-    fetchFacilities();
-  }, []);
-
-  const fetchReports = async (email: string) => {
-    if (!email.trim()) {
-      setRecentReports([]);
+    if (form.reporter_email && form.reporter_email.includes('@')) {
+      fetchReports(form.reporter_email);
+    } else {
+      setReports([]);
       setLoadingReports(false);
-      return;
-    }
-    setLoadingReports(true);
-    try {
-      const { data } = await supabase
-        .from('damage_reports')
-        .select('*')
-        .eq('reporter_email', email)
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setRecentReports((data as unknown as DamageReport[]) ?? []);
-    } catch {
-      setRecentReports([]);
-    } finally {
-      setLoadingReports(false);
-    }
-  };
-
-  useEffect(() => {
-    if (form.reporter_email && /\S+@\S+\.\S+/.test(form.reporter_email)) {
-      const timer = setTimeout(() => fetchReports(form.reporter_email), 500);
-      return () => clearTimeout(timer);
     }
   }, [form.reporter_email]);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    if (form.description.length < 20) {
-      showToast('Deskripsi kerusakan minimal 20 karakter', 'warning');
-      return;
-    }
-
-    setSubmitting(true);
+  async function fetchReports(email: string) {
+    setLoadingReports(true);
     try {
+      const { data, error } = await supabase
+        .from('damage_reports')
+        .select('id, inventory_id, reporter_name, description, image_url, severity, status, resolution_notes, created_at, resolved_at, reporter_unit, reporter_email, reporter_phone, location')
+        .eq('reporter_email', email)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setReports((data as unknown as DamageReport[]) || []);
+    } catch (e) {
+      console.error('Error fetching reports:', e);
+    } finally {
+      setLoadingReports(false);
+    }
+  }
+
+  function validate(): boolean {
+    if (!form.reporter_name.trim()) { showToast('Nama pelapor wajib diisi', 'warning'); return false; }
+    if (!form.reporter_email.trim() || !form.reporter_email.includes('@')) { showToast('Email pelapor valid wajib diisi', 'warning'); return false; }
+    if (!form.reporter_unit.trim()) { showToast('Unit/Kelas wajib diisi', 'warning'); return false; }
+    if (!form.item_name.trim()) { showToast('Nama barang wajib diisi', 'warning'); return false; }
+    if (!form.location.trim()) { showToast('Lokasi wajib diisi', 'warning'); return false; }
+    if (!form.severity) { showToast('Pilih tingkat keparahan', 'warning'); return false; }
+    if (!form.description.trim() || form.description.trim().length < 20) {
+      showToast('Deskripsi minimal 20 karakter', 'warning'); return false;
+    }
+    return true;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!validate()) return;
+    setSubmitting(true);
+
+    try {
+      const fullDescription = `${form.item_name} — ${form.description}`;
       const payload = {
-        reporter_name: form.reporter_name,
-        reporter_email: form.reporter_email,
-        item_name: form.item_name,
-        location: form.location,
-        facility_id: form.facility_id || null,
-        damage_type: form.damage_type,
+        reporter_name: form.reporter_name.trim(),
+        reporter_email: form.reporter_email.trim(),
+        reporter_unit: form.reporter_unit.trim(),
+        reporter_phone: form.reporter_phone.trim() || null,
+        description: fullDescription,
+        location: form.location.trim(),
         severity: form.severity,
-        reported_date: form.reported_date,
-        description: form.description,
-        photo_url: form.photo_url || null,
-        status: 'pending',
+        image_url: form.image_url.trim() || null,
+        status: 'pending' as const,
       };
 
       const { data, error } = await supabase
         .from('damage_reports')
         .insert(payload)
-        .select('*')
+        .select('id, inventory_id, reporter_name, description, image_url, severity, status, resolution_notes, created_at, resolved_at, reporter_unit, reporter_email, reporter_phone, location')
         .single();
 
       if (error) throw error;
-
-      const report = data as unknown as DamageReport;
-      setSuccess(report);
       showToast('Laporan kerusakan berhasil dikirim!', 'success');
-
-      // Refresh recent reports
+      setSuccess(data as unknown as DamageReport);
       fetchReports(form.reporter_email);
-    } catch (err: any) {
-      showToast(err.message ?? 'Gagal mengirim laporan', 'error');
+    } catch (e) {
+      console.error('Error submitting report:', e);
+      showToast('Gagal mengirim laporan. Silakan coba lagi.', 'error');
     } finally {
       setSubmitting(false);
     }
-  };
+  }
 
-  const resetForm = () => {
+  function resetForm() {
+    setSuccess(null);
     setForm({
       reporter_name: '',
       reporter_email: '',
+      reporter_unit: '',
+      reporter_phone: '',
       item_name: '',
       location: '',
-      facility_id: '',
-      damage_type: 'rusak_fisik',
-      severity: 'low',
-      reported_date: todayStr(),
+      severity: '',
       description: '',
-      photo_url: '',
+      image_url: '',
     });
-    setSuccess(null);
-  };
+  }
 
-  const inputClass =
-    'w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all';
+  const inputClass = 'w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors';
   const labelClass = 'block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5';
 
-  // Success state
-  if (success) {
-    const sev = severityConfig[success.severity] ?? severityConfig.low;
-    const st = statusConfig[success.status] ?? statusConfig.pending;
-    return (
-      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
-        <Navbar />
-        <main className="flex-1 max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 text-center">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-6">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500" />
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Laporan Terkirim!</h1>
-            <p className="text-slate-500 dark:text-slate-400 mb-6">
-              Laporan kerusakan Anda telah berhasil dikirim dan akan ditinjau oleh tim terkait.
-            </p>
+  return (
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors">
+      <Navbar />
+      <main className="flex-1 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Laporan Kerusakan</h1>
+          <p className="text-slate-600 dark:text-slate-400">Laporkan kerusakan sarana atau prasarana</p>
+        </div>
 
-            <div className="bg-slate-50 dark:bg-slate-700/30 rounded-2xl p-6 text-left space-y-3 mb-6">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Barang</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{success.item_name}</span>
+        {success ? (
+          /* Success State */
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-sm text-center">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Laporan Terkirim!</h2>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">Laporan Anda telah berhasil dikirim dan akan ditindaklanjuti oleh tim terkait.</p>
+
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-6 text-left mb-6 space-y-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Pelapor</span>
+                <span className="font-medium text-slate-900 dark:text-white">{success.reporter_name}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Lokasi</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{success.location}</span>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Unit/Kelas</span>
+                <span className="font-medium text-slate-900 dark:text-white">{success.reporter_unit}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Keparahan</span>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${sev.classes}`}>{sev.label}</span>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Lokasi</span>
+                <span className="font-medium text-slate-900 dark:text-white">{success.location}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Status</span>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${st.classes}`}>{st.label}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Tanggal</span>
-                <span className="font-semibold text-slate-900 dark:text-white">
-                  {new Date(success.reported_date).toLocaleDateString('id-ID')}
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Keparahan</span>
+                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', severityConfig[success.severity]?.color)}>
+                  {severityConfig[success.severity]?.label}
                 </span>
               </div>
-              <div>
-                <span className="text-sm text-slate-500 dark:text-slate-400 block mb-1">Deskripsi</span>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Status</span>
+                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', statusConfig[success.status]?.color)}>
+                  {statusConfig[success.status]?.label}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Deskripsi</p>
                 <p className="text-sm text-slate-700 dark:text-slate-300">{success.description}</p>
               </div>
             </div>
 
             <button
               onClick={resetForm}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors"
             >
-              <Plus className="w-5 h-5" />
+              <RefreshCw className="w-4 h-4" />
               Buat Laporan Lain
             </button>
           </div>
-        </main>
-        <Footer />
-      </div>
-    );
-  }
+        ) : (
+          /* Form */
+          <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-700 shadow-sm space-y-5">
+            {/* Reporter Name */}
+            <div>
+              <label className={labelClass}>Nama Pelapor <span className="text-red-500">*</span></label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={form.reporter_name}
+                  onChange={(e) => setForm({ ...form, reporter_name: e.target.value })}
+                  className={cn(inputClass, 'pl-10')}
+                  placeholder="Nama lengkap Anda"
+                  required
+                />
+              </div>
+            </div>
 
-  return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
-      <Navbar />
-      <main className="flex-1 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-3">
-            <AlertTriangle className="w-8 h-8 text-amber-500" />
-            Laporan Kerusakan
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400">
-            Laporkan kerusakan sarana atau prasarana untuk ditindaklanjuti
-          </p>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-700 space-y-6">
-          {/* Reporter info */}
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Informasi Pelapor</h2>
+            {/* Email & Phone */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Nama Pelapor <span className="text-red-500">*</span></label>
+                <label className={labelClass}>Email Pelapor <span className="text-red-500">*</span></label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
-                    type="text"
+                    type="email"
+                    value={form.reporter_email}
+                    onChange={(e) => setForm({ ...form, reporter_email: e.target.value })}
+                    className={cn(inputClass, 'pl-10')}
+                    placeholder="email@sekolah.id"
                     required
-                    value={form.reporter_name}
-                    onChange={(e) => setForm({ ...form, reporter_name: e.target.value })}
-                    placeholder="Nama lengkap"
-                    className={inputClass + ' pl-11'}
                   />
                 </div>
               </div>
               <div>
-                <label className={labelClass}>Email Pelapor <span className="text-red-500">*</span></label>
+                <label className={labelClass}>No. Telepon</label>
                 <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
-                    type="email"
-                    required
-                    value={form.reporter_email}
-                    onChange={(e) => setForm({ ...form, reporter_email: e.target.value })}
-                    placeholder="email@example.com"
-                    className={inputClass + ' pl-11'}
+                    type="text"
+                    value={form.reporter_phone}
+                    onChange={(e) => setForm({ ...form, reporter_phone: e.target.value })}
+                    className={cn(inputClass, 'pl-10')}
+                    placeholder="08xxxxxxxxxx (opsional)"
                   />
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Item info */}
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Informasi Barang</h2>
+            {/* Unit & Location */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Nama Barang/Item <span className="text-red-500">*</span></label>
+                <label className={labelClass}>Unit/Kelas <span className="text-red-500">*</span></label>
                 <input
                   type="text"
-                  required
-                  value={form.item_name}
-                  onChange={(e) => setForm({ ...form, item_name: e.target.value })}
-                  placeholder="Nama barang yang rusak"
+                  value={form.reporter_unit}
+                  onChange={(e) => setForm({ ...form, reporter_unit: e.target.value })}
                   className={inputClass}
+                  placeholder="Contoh: XII IPA 1"
+                  required
                 />
               </div>
               <div>
                 <label className={labelClass}>Lokasi <span className="text-red-500">*</span></label>
                 <div className="relative">
-                  <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
-                    required
                     value={form.location}
                     onChange={(e) => setForm({ ...form, location: e.target.value })}
-                    placeholder="Lokasi barang"
-                    className={inputClass + ' pl-11'}
+                    className={cn(inputClass, 'pl-10')}
+                    placeholder="Contoh: Lab Komputer 1"
+                    required
                   />
                 </div>
               </div>
-              <div>
-                <label className={labelClass}>Jenis Fasilitas (opsional)</label>
-                <div className="relative">
-                  <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <select
-                    value={form.facility_id}
-                    onChange={(e) => setForm({ ...form, facility_id: e.target.value })}
-                    className={inputClass + ' pl-11'}
-                    disabled={loadingFacilities}
-                  >
-                    <option value="">Pilih fasilitas...</option>
-                    {facilities.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className={labelClass}>Tipe Kerusakan</label>
-                <select
-                  value={form.damage_type}
-                  onChange={(e) => setForm({ ...form, damage_type: e.target.value })}
-                  className={inputClass}
-                >
-                  {damageTypeOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
             </div>
-          </div>
 
-          {/* Severity */}
-          <div>
-            <label className={labelClass}>Tingkat Keparahan <span className="text-red-500">*</span></label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {severityOptions.map((opt) => {
-                const isSelected = form.severity === opt.value;
-                const colorMap: Record<string, string> = {
-                  emerald: 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20',
-                  amber: 'border-amber-500 bg-amber-50 dark:bg-amber-900/20',
-                  orange: 'border-orange-500 bg-orange-50 dark:bg-orange-900/20',
-                  red: 'border-red-500 bg-red-50 dark:bg-red-900/20',
-                };
-                return (
-                  <label
-                    key={opt.value}
-                    className={`cursor-pointer rounded-xl border-2 p-4 transition-all ${
-                      isSelected
-                        ? colorMap[opt.color]
-                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="severity"
-                      value={opt.value}
-                      checked={isSelected}
-                      onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                      className="sr-only"
-                    />
-                    <div className="text-center">
-                      <div className="text-2xl mb-1">{opt.icon}</div>
-                      <div className={`text-sm font-medium ${isSelected ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'}`}>
-                        {opt.label}
-                      </div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Date and photo */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Item Name */}
             <div>
-              <label className={labelClass}>Tanggal Laporan <span className="text-red-500">*</span></label>
+              <label className={labelClass}>Nama Barang/Item <span className="text-red-500">*</span></label>
               <div className="relative">
-                <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="date"
+                  type="text"
+                  value={form.item_name}
+                  onChange={(e) => setForm({ ...form, item_name: e.target.value })}
+                  className={cn(inputClass, 'pl-10')}
+                  placeholder="Contoh: Proyektor Epson"
                   required
-                  value={form.reported_date}
-                  onChange={(e) => setForm({ ...form, reported_date: e.target.value })}
-                  className={inputClass + ' pl-11'}
                 />
               </div>
             </div>
+
+            {/* Severity */}
+            <div>
+              <label className={labelClass}>Tingkat Keparahan <span className="text-red-500">*</span></label>
+              <div className="grid grid-cols-3 gap-3">
+                {(['minor', 'moderate', 'severe'] as const).map((sev) => {
+                  const cfg = severityConfig[sev];
+                  const Icon = cfg.icon;
+                  const isSelected = form.severity === sev;
+                  return (
+                    <button
+                      key={sev}
+                      type="button"
+                      onClick={() => setForm({ ...form, severity: sev })}
+                      className={cn(
+                        'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
+                        isSelected
+                          ? cfg.cardColor
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      <Icon className={cn('w-6 h-6', isSelected ? '' : 'text-slate-400 dark:text-slate-500')} />
+                      <span className={cn('text-sm font-medium', isSelected ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400')}>
+                        {cfg.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className={labelClass}>Deskripsi Kerusakan <span className="text-red-500">*</span></label>
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                rows={4}
+                className={inputClass}
+                placeholder="Jelaskan kerusakan secara detail (minimal 20 karakter)..."
+                required
+                minLength={20}
+              />
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                {form.description.length}/20 karakter minimum
+              </p>
+            </div>
+
+            {/* Image URL */}
             <div>
               <label className={labelClass}>URL Foto (opsional)</label>
               <div className="relative">
-                <ImageIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="url"
-                  value={form.photo_url}
-                  onChange={(e) => setForm({ ...form, photo_url: e.target.value })}
-                  placeholder="https://..."
-                  className={inputClass + ' pl-11'}
+                  type="text"
+                  value={form.image_url}
+                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                  className={cn(inputClass, 'pl-10')}
+                  placeholder="https://... (opsional)"
                 />
               </div>
             </div>
-          </div>
 
-          {/* Description */}
-          <div>
-            <label className={labelClass}>
-              Deskripsi Kerusakan <span className="text-red-500">*</span>
-              <span className="ml-2 text-xs text-slate-400">({form.description.length}/20 min.)</span>
-            </label>
-            <div className="relative">
-              <FileText className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-400" />
-              <textarea
-                required
-                minLength={20}
-                rows={5}
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="Jelaskan kerusakan secara detail (minimal 20 karakter)..."
-                className={inputClass + ' pl-11 resize-none'}
-              />
-            </div>
-          </div>
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                Mengirim laporan...
-              </>
-            ) : (
-              <>
-                <AlertTriangle className="w-5 h-5" />
-                Kirim Laporan
-              </>
-            )}
-          </button>
-        </form>
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors"
+            >
+              {submitting ? (
+                <><Loader2 className="w-5 h-5 animate-spin" /> Mengirim...</>
+              ) : (
+                <><Send className="w-5 h-5" /> Kirim Laporan</>
+              )}
+            </button>
+          </form>
+        )}
 
         {/* Recent Reports */}
         <div className="mt-8">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Laporan Terbaru Anda</h2>
-          {!form.reporter_email || !/\S+@\S+\.\S+/.test(form.reporter_email) ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-              <EmptyState
-                icon={AlertTriangle}
-                title="Isi email pelapor untuk melihat riwayat"
-                description="Laporan terbaru Anda akan muncul di sini"
-              />
-            </div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-blue-500" />
+            Laporan Terbaru Anda
+          </h2>
+          {!form.reporter_email || !form.reporter_email.includes('@') ? (
+            <EmptyState icon={FileText} title="Masukkan email Anda" description="Isi email pada formulir di atas untuk melihat laporan Anda" />
           ) : loadingReports ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700">
-              <Loader2 className="w-6 h-6 text-slate-300 dark:text-slate-600 animate-spin mx-auto" />
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700 animate-pulse">
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mb-2" />
+                  <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-full" />
+                </div>
+              ))}
             </div>
-          ) : recentReports.length === 0 ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-              <EmptyState icon={AlertTriangle} title="Belum ada laporan" description="Laporan kerusakan Anda akan tampil di sini" />
-            </div>
+          ) : reports.length === 0 ? (
+            <EmptyState icon={FileText} title="Belum ada laporan" description="Laporan yang Anda buat akan muncul di sini" />
           ) : (
             <div className="space-y-3">
-              {recentReports.map((r) => {
-                const sev = severityConfig[r.severity] ?? severityConfig.low;
-                const st = statusConfig[r.status] ?? statusConfig.pending;
+              {reports.map((r) => {
+                const sev = severityConfig[r.severity] || severityConfig.minor;
+                const st = statusConfig[r.status] || statusConfig.pending;
                 return (
-                  <div
-                    key={r.id}
-                    className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.item_name}</h3>
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${sev.classes}`}>{sev.label}</span>
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${st.classes}`}>{st.label}</span>
+                  <div key={r.id} className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 line-clamp-2">{r.description}</p>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', sev.color)}>{sev.label}</span>
+                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', st.color)}>{st.label}</span>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500 dark:text-slate-400 mb-2">
-                      <span className="flex items-center gap-1.5">
-                        <MapPin className="w-4 h-4" />
-                        {r.location}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Calendar className="w-4 h-4" />
-                        {new Date(r.reported_date).toLocaleDateString('id-ID')}
+                    <div className="flex items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
+                      {r.location && (
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5" /> {r.location}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5" /> {new Date(r.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2">{r.description}</p>
+                    {r.resolution_notes && r.status === 'resolved' && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">Tindak Lanjut:</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">{r.resolution_notes}</p>
+                      </div>
+                    )}
                   </div>
                 );
               })}

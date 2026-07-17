@@ -1,5 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Users, X, Loader2, Mail, Phone, Eye, EyeOff } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  Users, Plus, Pencil, Trash2, X, Loader2, AlertCircle, Mail, Phone,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
@@ -7,101 +9,114 @@ import { cn } from '../../utils/cn';
 interface TeamMember {
   id: string;
   name: string;
-  position: string;
-  email: string;
-  phone: string;
+  position: string | null;
+  role: string | null;
   photo_url: string | null;
   description: string | null;
-  display_order: number;
-  is_active: boolean;
+  email: string | null;
+  phone: string | null;
+  order: number | null;
+  is_active: boolean | null;
+  created_at: string;
 }
 
 interface FormData {
+  id?: string;
   name: string;
   position: string;
-  email: string;
-  phone: string;
+  role: string;
   photo_url: string;
   description: string;
-  display_order: string;
+  email: string;
+  phone: string;
+  order: string;
   is_active: boolean;
 }
 
 const emptyForm: FormData = {
-  name: '', position: '', email: '', phone: '', photo_url: '',
-  description: '', display_order: '0', is_active: true,
+  name: '',
+  position: '',
+  role: '',
+  photo_url: '',
+  description: '',
+  email: '',
+  phone: '',
+  order: '',
+  is_active: true,
 };
 
 export default function TeamAdminPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    fetchMembers();
+  }, []);
+
+  async function fetchMembers() {
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('team_members')
-        .select('id, name, position, email, phone, photo_url, description, display_order, is_active')
-        .order('display_order', { ascending: true });
+        .select('*')
+        .order('order', { ascending: true });
+
       if (error) throw error;
-      setMembers((data ?? []) as unknown as TeamMember[]);
-    } catch {
-      showToast('Gagal memuat tim', 'error');
+      setMembers((data as unknown as TeamMember[]) || []);
+    } catch (err) {
+      console.error('Fetch team error:', err);
+      showToast('Gagal memuat data tim', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const openAdd = () => {
-    setEditingId(null);
-    setForm(emptyForm);
+  function openAdd() {
+    setForm({ ...emptyForm, order: String(members.length) });
     setModalOpen(true);
-  };
+  }
 
-  const openEdit = (member: TeamMember) => {
-    setEditingId(member.id);
+  function openEdit(m: TeamMember) {
     setForm({
-      name: member.name,
-      position: member.position,
-      email: member.email,
-      phone: member.phone,
-      photo_url: member.photo_url || '',
-      description: member.description || '',
-      display_order: String(member.display_order),
-      is_active: member.is_active,
+      id: m.id,
+      name: m.name ?? '',
+      position: m.position ?? '',
+      role: m.role ?? '',
+      photo_url: m.photo_url ?? '',
+      description: m.description ?? '',
+      email: m.email ?? '',
+      phone: m.phone ?? '',
+      order: String(m.order ?? ''),
+      is_active: m.is_active ?? true,
     });
     setModalOpen(true);
-  };
+  }
 
-  const handleSave = async () => {
-    if (!form.name.trim() || !form.position.trim()) {
-      showToast('Nama dan posisi wajib diisi', 'warning');
+  async function handleSave() {
+    if (!form.name.trim()) {
+      showToast('Nama wajib diisi', 'warning');
       return;
     }
     setSaving(true);
     try {
       const payload = {
         name: form.name.trim(),
-        position: form.position.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim(),
+        position: form.position.trim() || null,
+        role: form.role.trim() || null,
         photo_url: form.photo_url.trim() || null,
         description: form.description.trim() || null,
-        display_order: parseInt(form.display_order, 10) || 0,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        order: parseInt(form.order) || 0,
         is_active: form.is_active,
       };
 
-      if (editingId) {
-        const { error } = await supabase.from('team_members').update(payload).eq('id', editingId);
+      if (form.id) {
+        const { error } = await supabase.from('team_members').update(payload).eq('id', form.id);
         if (error) throw error;
         showToast('Anggota tim diperbarui', 'success');
       } else {
@@ -110,115 +125,140 @@ export default function TeamAdminPage() {
         showToast('Anggota tim ditambahkan', 'success');
       }
       setModalOpen(false);
-      await load();
-    } catch {
+      await fetchMembers();
+    } catch (err) {
+      console.error('Save error:', err);
       showToast('Gagal menyimpan anggota tim', 'error');
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete() {
+    if (!deleteId) return;
+    setSaving(true);
     try {
-      const { error } = await supabase.from('team_members').delete().eq('id', id);
+      const { error } = await supabase.from('team_members').delete().eq('id', deleteId);
       if (error) throw error;
       showToast('Anggota tim dihapus', 'success');
-      setConfirmDelete(null);
-      await load();
-    } catch {
+      setDeleteId(null);
+      await fetchMembers();
+    } catch (err) {
+      console.error('Delete error:', err);
       showToast('Gagal menghapus anggota tim', 'error');
+    } finally {
+      setSaving(false);
     }
-  };
+  }
 
-  const toggleActive = async (member: TeamMember) => {
+  async function toggleActive(m: TeamMember) {
     try {
       const { error } = await supabase
         .from('team_members')
-        .update({ is_active: !member.is_active })
-        .eq('id', member.id);
+        .update({ is_active: !m.is_active })
+        .eq('id', m.id);
       if (error) throw error;
-      showToast(`Anggota ${!member.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
-      await load();
-    } catch {
+      showToast(`Anggota ${!m.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+      await fetchMembers();
+    } catch (err) {
+      console.error('Toggle error:', err);
       showToast('Gagal mengubah status', 'error');
     }
-  };
+  }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim</p>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim SARPRAS</p>
         </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-medium hover:opacity-90 transition-opacity"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-medium hover:shadow-lg hover:shadow-blue-500/20 transition-all"
         >
-          <Plus className="w-4 h-4" /> Tambah Anggota
+          <Plus className="w-4 h-4" />
+          <span>Tambah Anggota</span>
         </button>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
         </div>
       ) : members.length === 0 ? (
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center">
-          <Users className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Belum ada anggota tim</p>
+          <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-500 dark:text-slate-400">Tidak ada anggota tim</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {members.map((member) => (
-            <div key={member.id} className={cn(
-              'bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5',
-              !member.is_active && 'opacity-60'
-            )}>
-              <div className="flex items-start gap-4">
-                {member.photo_url ? (
-                  <img src={member.photo_url} alt={member.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+          {members.map((m) => (
+            <div
+              key={m.id}
+              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5"
+            >
+              <div className="flex items-start gap-3">
+                {m.photo_url ? (
+                  <img src={m.photo_url} alt={m.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white font-semibold text-xl flex-shrink-0">
-                    {member.name.charAt(0).toUpperCase()}
+                  <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center flex-shrink-0">
+                    <span className="text-white font-bold text-lg">{(m.name ?? 'A').charAt(0).toUpperCase()}</span>
                   </div>
                 )}
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-slate-900 dark:text-white truncate">{member.name}</h3>
-                  <p className="text-sm text-blue-600 dark:text-blue-400 truncate">{member.position}</p>
-                  {member.email && (
-                    <div className="flex items-center gap-1 mt-1 text-xs text-slate-500 dark:text-slate-400 truncate">
-                      <Mail className="w-3 h-3 flex-shrink-0" /> {member.email}
-                    </div>
-                  )}
-                  {member.phone && (
-                    <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 truncate">
-                      <Phone className="w-3 h-3 flex-shrink-0" /> {member.phone}
-                    </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{m.name}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{m.position ?? '-'}</p>
+                  {m.role && (
+                    <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-medium">
+                      {m.role}
+                    </span>
                   )}
                 </div>
               </div>
-              {member.description && (
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{member.description}</p>
+
+              {m.description && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{m.description}</p>
               )}
-              <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+
+              <div className="space-y-1 mt-3 text-xs text-slate-500 dark:text-slate-400">
+                {m.email && (
+                  <div className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{m.email}</span>
+                  </div>
+                )}
+                {m.phone && (
+                  <div className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{m.phone}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
-                  onClick={() => toggleActive(member)}
+                  onClick={() => toggleActive(m)}
                   className={cn(
-                    'flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg',
-                    member.is_active
-                      ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
-                      : 'text-slate-500 bg-slate-100 dark:bg-slate-800'
+                    'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors',
+                    m.is_active
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
                   )}
                 >
-                  {member.is_active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                  {member.is_active ? 'Aktif' : 'Nonaktif'}
+                  {m.is_active ? 'Aktif' : 'Nonaktif'}
                 </button>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => openEdit(member)} className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20">
-                    <Edit2 className="w-4 h-4" />
+                  <button
+                    onClick={() => openEdit(m)}
+                    className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
                   </button>
-                  <button onClick={() => setConfirmDelete(member.id)} className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
+                  <button
+                    onClick={() => setDeleteId(m.id)}
+                    className="p-1.5 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -230,78 +270,122 @@ export default function TeamAdminPage() {
 
       {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
-          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{editingId ? 'Edit Anggota' : 'Tambah Anggota'}</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                {form.id ? 'Edit Anggota' : 'Tambah Anggota'}
+              </h3>
+              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Nama *</label>
-                  <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Nama *</label>
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Posisi *</label>
-                  <input type="text" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Jabatan</label>
+                  <input
+                    type="text"
+                    value={form.position}
+                    onChange={(e) => setForm({ ...form, position: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-slate-600 dark:text-slate-300">Role</label>
+                <input
+                  type="text"
+                  value={form.role}
+                  onChange={(e) => setForm({ ...form, role: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-600 dark:text-slate-300">URL Foto</label>
+                <input
+                  type="text"
+                  value={form.photo_url}
+                  onChange={(e) => setForm({ ...form, photo_url: e.target.value })}
+                  placeholder="https://..."
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-600 dark:text-slate-300">Deskripsi</label>
+                <textarea
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  rows={2}
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Email</label>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Telepon</label>
+                  <input
+                    type="text"
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Email</label>
-                  <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Urutan (order)</label>
+                  <input
+                    type="number"
+                    value={form.order}
+                    onChange={(e) => setForm({ ...form, order: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Phone</label>
-                  <input type="text" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Photo URL</label>
-                <input type="text" value={form.photo_url} onChange={(e) => setForm({ ...form, photo_url: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Deskripsi</label>
-                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Display Order</label>
-                  <input type="number" value={form.display_order} onChange={(e) => setForm({ ...form, display_order: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Status</label>
-                  <div className="flex items-center gap-2 mt-2.5">
-                    <button
-                      onClick={() => setForm({ ...form, is_active: !form.is_active })}
-                      className={cn(
-                        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                        form.is_active ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
-                      )}
-                    >
-                      <span className={cn('inline-block h-4 w-4 transform rounded-full bg-white transition-transform', form.is_active ? 'translate-x-6' : 'translate-x-1')} />
-                    </button>
-                    <span className="text-sm text-slate-600 dark:text-slate-300">{form.is_active ? 'Aktif' : 'Nonaktif'}</span>
-                  </div>
+                  <label className="text-sm text-slate-600 dark:text-slate-300">Status</label>
+                  <select
+                    value={String(form.is_active)}
+                    onChange={(e) => setForm({ ...form, is_active: e.target.value === 'true' })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="true">Aktif</option>
+                    <option value="false">Nonaktif</option>
+                  </select>
                 </div>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-800 sticky bottom-0 bg-white dark:bg-slate-900">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">Batal</button>
-              <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                {editingId ? 'Simpan' : 'Tambah'}
+              <button
+                onClick={() => setModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:shadow-lg disabled:opacity-50 transition-all"
+              >
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>Simpan</span>
               </button>
             </div>
           </div>
@@ -309,19 +393,29 @@ export default function TeamAdminPage() {
       )}
 
       {/* Delete confirmation */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setConfirmDelete(null)}>
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <Trash2 className="w-5 h-5 text-red-600" />
-              </div>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Anggota?</h3>
+      {deleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-6 h-6 text-red-500" />
             </div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">Hapus Anggota?</h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">Tindakan ini tidak dapat dibatalkan.</p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmDelete(null)} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">Batal</button>
-              <button onClick={() => handleDelete(confirmDelete)} className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Hapus</button>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={() => setDeleteId(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>Hapus</span>
+              </button>
             </div>
           </div>
         </div>
