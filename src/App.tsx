@@ -1,11 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './components/Toast';
 import { supabase } from './lib/supabase';
-import { useState, useEffect } from 'react';
 
+const AuthPage = lazy(() => import('./pages/AuthPage'));
+const ConfirmEmailPage = lazy(() => import('./pages/ConfirmEmailPage'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const FacilitiesPage = lazy(() => import('./pages/FacilitiesPage'));
 const InventoryPage = lazy(() => import('./pages/InventoryPage'));
@@ -14,7 +15,6 @@ const RekapPage = lazy(() => import('./pages/RekapPage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const ReportPage = lazy(() => import('./pages/ReportPage'));
 const AboutPage = lazy(() => import('./pages/AboutPage'));
-const AuthPage = lazy(() => import('./pages/AuthPage'));
 
 const LoginPage = lazy(() => import('./pages/admin/LoginPage'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
@@ -32,46 +32,29 @@ const RolesPermissionsPage = lazy(() => import('./pages/admin/superadmin/RolesPe
 const FacilityManagersPage = lazy(() => import('./pages/admin/superadmin/FacilityManagersPage'));
 const ApprovalWorkflowPage = lazy(() => import('./pages/admin/superadmin/ApprovalWorkflowPage'));
 const SystemConfigPage = lazy(() => import('./pages/admin/superadmin/SystemConfigPage'));
-
+const ApproverEmailsPage = lazy(() => import('./pages/admin/superadmin/ApproverEmailsPage'));
 const AdminLayout = lazy(() => import('./layouts/AdminLayout'));
 
 function PageLoader() {
-  return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-}
-
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <PageLoader />;
-  if (!user) return <Navigate to="/auth" replace />;
-  return <>{children}</>;
+  return <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
-
   useEffect(() => {
-    const checkAdmin = async () => {
+    const check = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data } = await supabase
-          .from('admin_users')
-          .select('id')
-          .eq('user_id', session.user.id)
-          .single();
+        const { data } = await supabase.from('admin_users').select('id').eq('user_id', session.user.id).single();
         setIsAdmin(!!data);
       }
       setChecking(false);
     };
-    checkAdmin();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => { checkAdmin(); });
+    check();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => check());
     return () => subscription.unsubscribe();
   }, []);
-
   if (checking) return <PageLoader />;
   if (!isAdmin) return <Navigate to="/admin/login" replace />;
   return <>{children}</>;
@@ -81,6 +64,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/auth" element={<Suspense fallback={<PageLoader />}><AuthPage /></Suspense>} />
+      <Route path="/auth/confirm" element={<Suspense fallback={<PageLoader />}><ConfirmEmailPage /></Suspense>} />
 
       <Route path="/" element={<Suspense fallback={<PageLoader />}><LandingPage /></Suspense>} />
       <Route path="/facilities" element={<Suspense fallback={<PageLoader />}><FacilitiesPage /></Suspense>} />
@@ -106,26 +90,16 @@ function AppRoutes() {
         <Route path="super/roles" element={<Suspense fallback={<PageLoader />}><RolesPermissionsPage /></Suspense>} />
         <Route path="super/facility-managers" element={<Suspense fallback={<PageLoader />}><FacilityManagersPage /></Suspense>} />
         <Route path="super/workflows" element={<Suspense fallback={<PageLoader />}><ApprovalWorkflowPage /></Suspense>} />
+        <Route path="super/approver-emails" element={<Suspense fallback={<PageLoader />}><ApproverEmailsPage /></Suspense>} />
         <Route path="super/config" element={<Suspense fallback={<PageLoader />}><SystemConfigPage /></Suspense>} />
       </Route>
-
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 function App() {
-  return (
-    <ThemeProvider>
-      <AuthProvider>
-        <ToastProvider>
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
-        </ToastProvider>
-      </AuthProvider>
-    </ThemeProvider>
-  );
+  return <ThemeProvider><AuthProvider><ToastProvider><BrowserRouter><AppRoutes /></BrowserRouter></ToastProvider></AuthProvider></ThemeProvider>;
 }
 
 export default App;

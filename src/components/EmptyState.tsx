@@ -1,8 +1,5 @@
 import { Package } from 'lucide-react';
-
-interface Props { title?: string; message?: string; }
-
-export default function EmptyState({ title = 'Tidak ada data', message = 'Data belum tersedia' }: Props) {
+export default function EmptyState({ title = 'Tidak ada data', message = 'Data belum tersedia' }: { title?: string; message?: string }) {
   return (
     <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
       <Package className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />

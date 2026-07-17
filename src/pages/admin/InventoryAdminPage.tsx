@@ -1,196 +1,206 @@
 import { useState, useEffect } from 'react';
+import { Plus, Search, Pencil, Trash2, X, Package, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
-import { Search, Plus, Pencil, Trash2, Package, X, AlertTriangle } from 'lucide-react';
 
-interface Inventory {
-  id: string;
-  name: string;
-  code: string;
-  quantity: number;
-  available_quantity: number;
-  condition: string;
-  category_id: string | null;
-  location: string;
+interface InventoryItem {
+  id: string; code: string; name: string; category_id: string | null;
+  quantity: number; available_quantity: number; condition: string; location: string;
+  categories: { name: string }[] | null;
 }
 interface Category { id: string; name: string; }
-
-const CONDITIONS: Record<string, string> = { good: 'Baik', fair: 'Cukup', poor: 'Rusak' };
-const CONDITION_COLORS: Record<string, string> = {
-  good: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  fair: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+interface FormState {
+  name: string; code: string; quantity: string; available_quantity: string;
+  condition: string; category_id: string; location: string;
+}
+const emptyForm: FormState = { name: '', code: '', quantity: '0', available_quantity: '0', condition: 'good', category_id: '', location: '' };
+const conditionLabel: Record<string, string> = { good: 'Baik', fair: 'Layak', poor: 'Rusak' };
+const conditionColor: Record<string, string> = {
+  good: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  fair: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
   poor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
 };
 
-const EMPTY: Omit<Inventory, 'id'> = { name: '', code: '', quantity: 1, available_quantity: 1, condition: 'good', category_id: null, location: '' };
-
 export default function InventoryAdminPage() {
-  const [items, setItems] = useState<Inventory[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<typeof EMPTY>(EMPTY);
+  const [editing, setEditing] = useState<InventoryItem | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetch(); }, []);
 
-  async function fetchData() {
+  async function fetch() {
     setLoading(true);
-    const [invRes, catRes] = await Promise.all([
-      supabase.from('inventory').select('*').order('created_at', { ascending: false }),
-      supabase.from('categories').select('id, name'),
+    const [{ data: inv }, { data: cats }] = await Promise.all([
+      supabase.from('inventory').select('*, categories(name)').order('name'),
+      supabase.from('categories').select('id, name').order('name'),
     ]);
-    if (invRes.data) setItems(invRes.data as Inventory[]);
-    if (catRes.data) setCategories(catRes.data as Category[]);
+    setItems((inv as unknown as InventoryItem[]) || []);
+    setCategories((cats as Category[]) || []);
     setLoading(false);
   }
 
-  function openAdd() { setEditId(null); setForm(EMPTY); setError(''); setModalOpen(true); }
-  function openEdit(item: Inventory) { setEditId(item.id); setForm({ ...item }); setError(''); setModalOpen(true); }
-
-  async function handleSave() {
-    setSaving(true); setError('');
-    try {
-      if (!form.name.trim() || !form.code.trim()) throw new Error('Nama dan kode wajib diisi');
-      const payload = { ...form, quantity: Number(form.quantity), available_quantity: Number(form.available_quantity) };
-      if (editId) {
-        const { error: e } = await supabase.from('inventory').update(payload).eq('id', editId);
-        if (e) throw new Error(e.message);
-      } else {
-        const { error: e } = await supabase.from('inventory').insert(payload);
-        if (e) throw new Error(e.message);
-      }
-      setModalOpen(false); fetchData();
-    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
+  function openCreate() { setEditing(null); setForm(emptyForm); setModalOpen(true); }
+  function openEdit(item: InventoryItem) {
+    setEditing(item);
+    setForm({
+      name: item.name, code: item.code, quantity: String(item.quantity),
+      available_quantity: String(item.available_quantity ?? item.quantity),
+      condition: item.condition || 'good', category_id: item.category_id || '', location: item.location || '',
+    });
+    setModalOpen(true);
   }
 
-  async function handleDelete(id: string) {
+  async function save() {
+    setSaving(true);
+    const payload = {
+      name: form.name, code: form.code, quantity: Number(form.quantity),
+      available_quantity: Number(form.available_quantity), condition: form.condition,
+      category_id: form.category_id || null, location: form.location,
+    };
+    if (editing) {
+      await supabase.from('inventory').update(payload).eq('id', editing.id);
+    } else {
+      await supabase.from('inventory').insert(payload);
+    }
+    setSaving(false); setModalOpen(false); fetch();
+  }
+
+  async function remove(id: string) {
     if (!confirm('Hapus item ini?')) return;
-    const { error } = await supabase.from('inventory').delete().eq('id', id);
-    if (error) alert(error.message); else fetchData();
+    await supabase.from('inventory').delete().eq('id', id);
+    fetch();
   }
 
   const filtered = items.filter(i =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    i.code.toLowerCase().includes(search.toLowerCase()) ||
-    i.location.toLowerCase().includes(search.toLowerCase())
+    !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.code?.toLowerCase().includes(search.toLowerCase())
   );
-
-  const catName = (id: string | null) => categories.find(c => c.id === id)?.name || '-';
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Kelola Inventaris</h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-1">Tambah, ubah, dan hapus item inventaris</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
+          <p className="text-slate-600 dark:text-slate-400">Kelola data barang inventaris</p>
         </div>
-        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
-          <Plus className="w-4 h-4" /> Tambah Item
+        <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+          <Plus className="w-4 h-4" /> Tambah
         </button>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input type="text" placeholder="Cari nama, kode, lokasi..." value={search} onChange={e => setSearch(e.target.value)}
-          className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama atau kode..."
+          className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
 
       {loading ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-14 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse" />)}</div>
+        <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-20 text-slate-400">
+          <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p>Tidak ada data</p>
+        </div>
       ) : (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium">Kode</th>
-                <th className="text-left px-4 py-3 font-medium">Nama</th>
-                <th className="text-left px-4 py-3 font-medium">Kategori</th>
-                <th className="text-left px-4 py-3 font-medium">Qty</th>
-                <th className="text-left px-4 py-3 font-medium">Tersedia</th>
-                <th className="text-left px-4 py-3 font-medium">Kondisi</th>
-                <th className="text-left px-4 py-3 font-medium">Lokasi</th>
-                <th className="text-right px-4 py-3 font-medium">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-              {filtered.map(item => (
-                <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300 font-mono text-xs">{item.code}</td>
-                  <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{catName(item.category_id)}</td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.quantity}</td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.available_quantity}</td>
-                  <td className="px-4 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', CONDITION_COLORS[item.condition])}>{CONDITIONS[item.condition] || item.condition}</span></td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.location || '-'}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => openEdit(item)} className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-200"><Pencil className="w-4 h-4" /></button>
-                      <button onClick={() => handleDelete(item.id)} className="p-1.5 rounded-lg bg-red-100 dark:bg-red-900/20 text-red-600 hover:bg-red-200"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  </td>
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium">Nama</th>
+                  <th className="text-left px-4 py-3 font-medium">Kode</th>
+                  <th className="text-left px-4 py-3 font-medium">Kategori</th>
+                  <th className="text-left px-4 py-3 font-medium">Qty</th>
+                  <th className="text-left px-4 py-3 font-medium">Tersedia</th>
+                  <th className="text-left px-4 py-3 font-medium">Kondisi</th>
+                  <th className="text-left px-4 py-3 font-medium">Lokasi</th>
+                  <th className="text-right px-4 py-3 font-medium">Aksi</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {filtered.length === 0 && <div className="p-12 text-center"><Package className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" /><p className="text-slate-500 dark:text-slate-400">Tidak ada data</p></div>}
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {filtered.map(item => (
+                  <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.code || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.categories?.[0]?.name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.quantity}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.available_quantity ?? item.quantity}</td>
+                    <td className="px-4 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', conditionColor[item.condition] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400')}>{conditionLabel[item.condition] || item.condition}</span></td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.location || '-'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => openEdit(item)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"><Pencil className="w-4 h-4" /></button>
+                        <button onClick={() => remove(item.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setModalOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{editId ? 'Edit Item' : 'Tambah Item'}</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><X className="w-5 h-5 text-slate-500" /></button>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{editing ? 'Edit Item' : 'Tambah Item'}</h2>
+              <button onClick={() => setModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-5 h-5" /></button>
             </div>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Nama" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-                <Field label="Kode" value={form.code} onChange={v => setForm({ ...form, code: v })} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Jumlah" type="number" value={String(form.quantity)} onChange={v => setForm({ ...form, quantity: Number(v) })} />
-                <Field label="Tersedia" type="number" value={String(form.available_quantity)} onChange={v => setForm({ ...form, available_quantity: Number(v) })} />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Nama</label>
+                <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Kondisi</label>
-                <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
-                  <option value="good">Baik</option><option value="fair">Cukup</option><option value="poor">Rusak</option>
-                </select>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Kode</label>
+                <input type="text" value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Kategori</label>
-                <select value={form.category_id || ''} onChange={e => setForm({ ...form, category_id: e.target.value || null })}
+                <select value={form.category_id} onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
                   <option value="">-</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
-              <Field label="Lokasi" value={form.location} onChange={v => setForm({ ...form, location: v })} />
-              {error && <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"><AlertTriangle className="w-4 h-4 text-red-500" /><p className="text-sm text-red-700 dark:text-red-400">{error}</p></div>}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Jumlah</label>
+                <input type="number" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Tersedia</label>
+                <input type="number" value={form.available_quantity} onChange={e => setForm(f => ({ ...f, available_quantity: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Kondisi</label>
+                <select value={form.condition} onChange={e => setForm(f => ({ ...f, condition: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
+                  <option value="good">Baik</option><option value="fair">Layak</option><option value="poor">Rusak</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Lokasi</label>
+                <input type="text" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
             </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setModalOpen(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
+              <button onClick={save} disabled={saving || !form.name} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
     </div>
   );
 }

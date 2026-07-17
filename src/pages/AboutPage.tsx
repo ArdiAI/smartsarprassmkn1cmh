@@ -1,99 +1,95 @@
-import { Building2, Target, Users, ShieldCheck, Mail, MapPin, GraduationCap } from 'lucide-react';
+import { Building2, Target, ShieldCheck, BarChart3, Users, Zap, Mail, MapPin } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { brandConfig } from '../brand/config';
 
 const values = [
-  { icon: Target, title: 'Visi', desc: 'Menjadi sistem pengelolaan sarana prasarana sekolah yang terdepan dan terintegrasi.' },
-  { icon: ShieldCheck, title: 'Transparansi', desc: 'Setiap peminjaman dan persetujuan tercatat dengan jelas dan dapat dilacak.' },
-  { icon: Users, title: 'Kolaborasi', desc: 'Mempermudah koordinasi antara siswa, guru, dan admin dalam pengelolaan sarana.' },
-  { icon: Building2, title: 'Efisiensi', desc: 'Otomatisasi proses persetujuan bertingkat untuk pengelolaan yang lebih cepat.' },
+  { icon: ShieldCheck, title: 'Transparansi', desc: 'Setiap aktivitas tercatat dan dapat diaudit oleh semua pihak yang berkepentingan.' },
+  { icon: BarChart3, title: 'Akurasi Data', desc: 'Data sarana dan prasarana diperbarui secara real-time untuk akurasi pelaporan.' },
+  { icon: Users, title: 'Kemudahan Akses', desc: 'Siswa dan guru dapat mengakses informasi kapan saja dan di mana saja.' },
+  { icon: Zap, title: 'Efisiensi', desc: 'Otomatisasi proses peminjaman dan pelaporan menghemat waktu administrasi.' },
 ];
 
-const stats = [
-  { label: 'Fasilitas Terdaftar', value: '10+' },
-  { label: 'Item Inventaris', value: '50+' },
-  { label: 'Peminjaman / Bulan', value: '100+' },
-  { label: 'Tingkat Penyelesaian', value: '98%' },
+const goals = [
+  'Menyediakan platform terpusat untuk pengelolaan sarana dan prasarana sekolah',
+  'Meningkatkan transparansi dan akuntabilitas penggunaan fasilitas',
+  'Mempermudah proses peminjaman dan pengembalian barang inventaris',
+  'Mempercepat penanganan laporan kerusakan fasilitas',
+  'Menyediakan data statistik untuk pengambilan keputusan',
 ];
 
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-16">
+      <main className="relative z-10 pt-20 pb-12 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 mb-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mx-auto mb-4">
             <Building2 className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white mb-2">{brandConfig.system.name}</h1>
-          <p className="text-lg text-slate-500 dark:text-slate-400">{brandConfig.system.fullName}</p>
+          <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white">{brandConfig.system.name}</h1>
+          <p className="mt-2 text-lg text-blue-600 dark:text-blue-400 font-medium">{brandConfig.system.fullName}</p>
+          <p className="mt-3 text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">{brandConfig.system.description}</p>
         </div>
 
-        {/* Description */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-8 mb-8">
+        {/* About Section */}
+        <section className="bg-white dark:bg-slate-800 rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-700 mb-8">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Tentang Sistem</h2>
-          <p className="text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
-            {brandConfig.system.name} adalah platform digital yang dikembangkan untuk mengelola sarana dan prasarana di {brandConfig.system.school}.
-            Sistem ini memungkinkan siswa dan staf untuk melakukan peminjaman ruangan maupun barang inventaris secara online,
-            dengan sistem persetujuan bertingkat untuk memastikan akuntabilitas penuh.
-          </p>
           <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-            Dengan fitur pelaporan kerusakan, rekap statistik, dan pengumuman real-time, {brandConfig.system.name}
-            memberikan solusi menyeluruh untuk pengelolaan fasilitas sekolah yang lebih efisien dan transparan.
+            {brandConfig.system.name} adalah sistem informasi terpadu yang dikembangkan untuk
+            membantu pengelolaan sarana dan prasarana di {brandConfig.system.school}. Sistem ini
+            mengintegrasikan manajemen fasilitas, inventaris, peminjaman, dan pelaporan kerusakan
+            dalam satu platform yang mudah diakses oleh seluruh warga sekolah. Dengan adanya sistem
+            ini, diharapkan pengelolaan sarana dan prasarana menjadi lebih tertib, transparan, dan
+            akuntabel.
           </p>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {stats.map((s, i) => (
-            <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 text-center">
-              <p className="text-3xl font-extrabold text-blue-600 dark:text-blue-400 mb-1">{s.value}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{s.label}</p>
-            </div>
-          ))}
-        </div>
+        </section>
 
         {/* Values */}
-        <div className="mb-8">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 text-center">Nilai & Prinsip</h2>
+        <section className="mb-8">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Nilai Utama</h2>
           <div className="grid sm:grid-cols-2 gap-4">
-            {values.map((v, i) => (
-              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
-                    <v.icon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 dark:text-white mb-1">{v.title}</h3>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">{v.desc}</p>
-                  </div>
+            {values.map(v => (
+              <div key={v.title} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700">
+                <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-3">
+                  <v.icon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 </div>
+                <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{v.title}</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{v.desc}</p>
               </div>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* Contact Info */}
-        <div className="bg-gradient-to-br from-blue-600 to-cyan-600 rounded-2xl p-8 text-white">
-          <h2 className="text-xl font-bold mb-4">Informasi Kontak</h2>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <GraduationCap className="w-5 h-5 opacity-80" />
-              <span>{brandConfig.system.school}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <MapPin className="w-5 h-5 opacity-80" />
-              <span>Cimahi, Jawa Barat</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Mail className="w-5 h-5 opacity-80" />
-              <span>admin@sisarpras.sch.id</span>
-            </div>
+        {/* Goals */}
+        <section className="bg-white dark:bg-slate-800 rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-700 mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Target className="w-5 h-5 text-blue-500" />
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Tujuan Sistem</h2>
           </div>
-        </div>
-      </div>
+          <ul className="space-y-3">
+            {goals.map((g, i) => (
+              <li key={i} className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-xs font-bold text-blue-600 dark:text-blue-400">{i + 1}</span>
+                </div>
+                <p className="text-sm text-slate-600 dark:text-slate-400">{g}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {/* Contact */}
+        <section className="bg-gradient-to-r from-blue-600 to-cyan-500 rounded-2xl p-6 sm:p-8 text-white">
+          <h2 className="text-xl font-bold mb-2">Hubungi Kami</h2>
+          <p className="text-blue-50 mb-4 text-sm">Untuk pertanyaan atau bantuan, silakan hubungi pihak sekolah.</p>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <span className="flex items-center gap-2"><MapPin className="w-4 h-4" /> {brandConfig.system.school}</span>
+            <span className="flex items-center gap-2"><Mail className="w-4 h-4" /> admin@sekolah.sch.id</span>
+          </div>
+        </section>
+      </main>
       <Footer />
     </div>
   );

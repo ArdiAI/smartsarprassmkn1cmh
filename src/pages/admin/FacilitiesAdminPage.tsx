@@ -1,117 +1,118 @@
 import { useState, useEffect } from 'react';
+import { Plus, Pencil, Trash2, X, Building2, MapPin, Users, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
-import { Plus, Pencil, Trash2, Building2, X, AlertTriangle, MapPin, Users } from 'lucide-react';
 
 interface Facility {
-  id: string;
-  name: string;
-  location: string;
-  capacity: number;
-  status: string;
-  category: string;
-  facility_type: string;
-  workflow_template_id: string | null;
+  id: string; name: string; location: string; capacity: number; status: string;
+  category: string; facility_type: string; workflow_template_id: string | null;
+  image_url: string; workflow_templates?: { name: string } | null;
 }
 interface WorkflowTemplate { id: string; name: string; }
-
-const STATUS_COLORS: Record<string, string> = {
-  aktif: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  nonaktif: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400',
-  maintenance: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+interface FormState {
+  name: string; location: string; capacity: string; status: string;
+  category: string; facility_type: string; workflow_template_id: string;
+}
+const emptyForm: FormState = { name: '', location: '', capacity: '0', status: 'aktif', category: 'umum', facility_type: 'ruangan', workflow_template_id: '' };
+const statusColor: Record<string, string> = {
+  aktif: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  tidak_aktif: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  maintenance: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
 };
-
-const EMPTY: Omit<Facility, 'id'> = { name: '', location: '', capacity: 0, status: 'aktif', category: 'umum', facility_type: 'ruangan', workflow_template_id: null };
 
 export default function FacilitiesAdminPage() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<typeof EMPTY>(EMPTY);
+  const [editing, setEditing] = useState<Facility | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetch(); }, []);
 
-  async function fetchData() {
+  async function fetch() {
     setLoading(true);
-    const [fRes, tRes] = await Promise.all([
-      supabase.from('facilities').select('*').order('created_at', { ascending: false }),
-      supabase.from('workflow_templates').select('id, name').eq('is_active', true),
+    const [{ data: fac }, { data: tmpl }] = await Promise.all([
+      supabase.from('facilities').select('*, workflow_templates(name)').order('name'),
+      supabase.from('workflow_templates').select('id, name').order('name'),
     ]);
-    if (fRes.data) setFacilities(fRes.data as Facility[]);
-    if (tRes.data) setTemplates(tRes.data as WorkflowTemplate[]);
+    setFacilities((fac as unknown as Facility[]) || []);
+    setTemplates((tmpl as WorkflowTemplate[]) || []);
     setLoading(false);
   }
 
-  function openAdd() { setEditId(null); setForm(EMPTY); setError(''); setModalOpen(true); }
-  function openEdit(f: Facility) { setEditId(f.id); setForm({ ...f }); setError(''); setModalOpen(true); }
-
-  async function handleSave() {
-    setSaving(true); setError('');
-    try {
-      if (!form.name.trim()) throw new Error('Nama wajib diisi');
-      const payload = { ...form, capacity: Number(form.capacity) };
-      if (editId) {
-        const { error: e } = await supabase.from('facilities').update(payload).eq('id', editId);
-        if (e) throw new Error(e.message);
-      } else {
-        const { error: e } = await supabase.from('facilities').insert(payload);
-        if (e) throw new Error(e.message);
-      }
-      setModalOpen(false); fetchData();
-    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
+  function openCreate() { setEditing(null); setForm(emptyForm); setModalOpen(true); }
+  function openEdit(fac: Facility) {
+    setEditing(fac);
+    setForm({
+      name: fac.name, location: fac.location || '', capacity: String(fac.capacity || 0),
+      status: fac.status || 'aktif', category: fac.category || 'umum',
+      facility_type: fac.facility_type || 'ruangan', workflow_template_id: fac.workflow_template_id || '',
+    });
+    setModalOpen(true);
   }
 
-  async function handleDelete(id: string) {
+  async function save() {
+    setSaving(true);
+    const payload = {
+      name: form.name, location: form.location, capacity: Number(form.capacity),
+      status: form.status, category: form.category, facility_type: form.facility_type,
+      workflow_template_id: form.workflow_template_id || null,
+    };
+    if (editing) {
+      await supabase.from('facilities').update(payload).eq('id', editing.id);
+    } else {
+      await supabase.from('facilities').insert(payload);
+    }
+    setSaving(false); setModalOpen(false); fetch();
+  }
+
+  async function remove(id: string) {
     if (!confirm('Hapus fasilitas ini?')) return;
-    const { error } = await supabase.from('facilities').delete().eq('id', id);
-    if (error) alert(error.message); else fetchData();
+    await supabase.from('facilities').delete().eq('id', id);
+    fetch();
   }
-
-  const templateName = (id: string | null) => templates.find(t => t.id === id)?.name || '-';
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Kelola Fasilitas</h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-1">Tambah, ubah, dan hapus fasilitas</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
+          <p className="text-slate-600 dark:text-slate-400">Kelola data fasilitas sekolah</p>
         </div>
-        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
-          <Plus className="w-4 h-4" /> Tambah Fasilitas
+        <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+          <Plus className="w-4 h-4" /> Tambah
         </button>
       </div>
 
       {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="h-40 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse" />)}</div>
+        <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>
       ) : facilities.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 text-center">
-          <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada fasilitas</p>
+        <div className="text-center py-20 text-slate-400">
+          <Building2 className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p>Belum ada fasilitas</p>
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {facilities.map(f => (
-            <div key={f.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-5 flex flex-col">
+          {facilities.map(fac => (
+            <div key={fac.id} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg transition-shadow">
               <div className="flex items-start justify-between mb-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-500 flex items-center justify-center text-white flex-shrink-0">
-                  <Building2 className="w-5 h-5" />
+                <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                  <Building2 className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                 </div>
-                <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium', STATUS_COLORS[f.status] || 'bg-slate-100')}>{f.status}</span>
+                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', statusColor[fac.status] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400')}>{fac.status || 'aktif'}</span>
               </div>
-              <h3 className="font-semibold text-slate-900 dark:text-white">{f.name}</h3>
-              <div className="space-y-1 mt-2 text-xs text-slate-500 dark:text-slate-400 flex-1">
-                <p className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> {f.location || '-'}</p>
-                <p className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Kapasitas: {f.capacity}</p>
-                <p>Kategori: {f.category} · Tipe: {f.facility_type}</p>
-                <p>Workflow: {templateName(f.workflow_template_id)}</p>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{fac.name}</h3>
+              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                {fac.location && <p className="flex items-center gap-1"><MapPin className="w-3 h-3" />{fac.location}</p>}
+                <p className="flex items-center gap-1"><Users className="w-3 h-3" />Kapasitas: {fac.capacity || 0}</p>
+                <p className="flex items-center gap-1"><span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">{fac.category || 'umum'}</span><span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">{fac.facility_type || 'ruangan'}</span></p>
+                {fac.workflow_templates?.name && <p className="text-blue-500">Workflow: {fac.workflow_templates.name}</p>}
               </div>
-              <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-                <button onClick={() => openEdit(f)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 text-sm font-medium hover:bg-blue-200"><Pencil className="w-3.5 h-3.5" /> Edit</button>
-                <button onClick={() => handleDelete(f.id)} className="px-3 py-2 rounded-lg bg-red-100 dark:bg-red-900/20 text-red-600 hover:bg-red-200"><Trash2 className="w-3.5 h-3.5" /></button>
+              <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                <button onClick={() => openEdit(fac)} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                <button onClick={() => remove(fac.id)} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 className="w-3.5 h-3.5" /> Hapus</button>
               </div>
             </div>
           ))}
@@ -119,53 +120,61 @@ export default function FacilitiesAdminPage() {
       )}
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setModalOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{editId ? 'Edit Fasilitas' : 'Tambah Fasilitas'}</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><X className="w-5 h-5 text-slate-500" /></button>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}</h2>
+              <button onClick={() => setModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-5 h-5" /></button>
             </div>
-            <div className="space-y-3">
-              <Field label="Nama" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-              <Field label="Lokasi" value={form.location} onChange={v => setForm({ ...form, location: v })} />
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Kapasitas" type="number" value={String(form.capacity)} onChange={v => setForm({ ...form, capacity: Number(v) })} />
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Status</label>
-                  <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
-                    <option value="aktif">Aktif</option><option value="nonaktif">Nonaktif</option><option value="maintenance">Maintenance</option>
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Kategori" value={form.category} onChange={v => setForm({ ...form, category: v })} />
-                <Field label="Tipe Fasilitas" value={form.facility_type} onChange={v => setForm({ ...form, facility_type: v })} />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Nama</label>
+                <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Template Workflow</label>
-                <select value={form.workflow_template_id || ''} onChange={e => setForm({ ...form, workflow_template_id: e.target.value || null })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Lokasi</label>
+                <input type="text" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Kapasitas</label>
+                <input type="number" value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Status</label>
+                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
+                  <option value="aktif">Aktif</option><option value="tidak_aktif">Tidak Aktif</option><option value="maintenance">Maintenance</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Kategori</label>
+                <input type="text" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Tipe Fasilitas</label>
+                <input type="text" value={form.facility_type} onChange={e => setForm(f => ({ ...f, facility_type: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Workflow Template</label>
+                <select value={form.workflow_template_id} onChange={e => setForm(f => ({ ...f, workflow_template_id: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
                   <option value="">-</option>
                   {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
-              {error && <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"><AlertTriangle className="w-4 h-4 text-red-500" /><p className="text-sm text-red-700 dark:text-red-400">{error}</p></div>}
             </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setModalOpen(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
+              <button onClick={save} disabled={saving || !form.name} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
     </div>
   );
 }

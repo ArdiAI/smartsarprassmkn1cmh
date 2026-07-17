@@ -1,8 +1,9 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { Building2, Menu, X, Moon, Sun, LayoutDashboard, ClipboardList, Package, Building, FileText, BarChart3, LogOut, Home, Bell } from 'lucide-react';
+import { Building2, Menu, X, Moon, Sun, LayoutDashboard, ClipboardList, Package, Building, FileText, LogOut, Home } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
 
 export default function Navbar() {
@@ -20,7 +21,6 @@ export default function Navbar() {
     { to: '/report', label: 'Laporan', icon: FileText },
     { to: '/about', label: 'Tentang', icon: Building2 },
   ];
-
   const isActive = (path: string) => location.pathname === path;
 
   return (
@@ -31,20 +31,16 @@ export default function Navbar() {
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
               <Building2 className="w-5 h-5 text-white" />
             </div>
-            <span className="font-bold text-slate-900 dark:text-white hidden sm:block">SISARPRAS</span>
+            <span className="font-bold text-slate-900 dark:text-white hidden sm:block">{brandConfig.system.name}</span>
           </Link>
-
           <div className="hidden lg:flex items-center gap-1">
             {navLinks.map(link => (
-              <Link key={link.to} to={link.to}
-                className={cn('flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive(link.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-                )}>
+              <Link key={link.to} to={link.to} className={cn('flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                isActive(link.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')}>
                 <link.icon className="w-4 h-4" />{link.label}
               </Link>
             ))}
           </div>
-
           <div className="flex items-center gap-2">
             <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
               {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
@@ -66,22 +62,15 @@ export default function Navbar() {
             </button>
           </div>
         </div>
-
         {mobileOpen && (
           <div className="lg:hidden py-3 border-t border-slate-200 dark:border-slate-800">
             {navLinks.map(link => (
-              <Link key={link.to} to={link.to} onClick={() => setMobileOpen(false)}
-                className={cn('flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium',
-                  isActive(link.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400'
-                )}>
+              <Link key={link.to} to={link.to} onClick={() => setMobileOpen(false)} className={cn('flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium',
+                isActive(link.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')}>
                 <link.icon className="w-4 h-4" />{link.label}
               </Link>
             ))}
-            {user && (
-              <Link to="/admin" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-blue-600">
-                <LayoutDashboard className="w-4 h-4" />Dashboard
-              </Link>
-            )}
+            {user && <Link to="/admin" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-blue-600"><LayoutDashboard className="w-4 h-4" />Dashboard</Link>}
           </div>
         )}
       </div>

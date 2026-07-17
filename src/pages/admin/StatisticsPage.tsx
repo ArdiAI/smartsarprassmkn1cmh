@@ -1,145 +1,147 @@
 import { useState, useEffect } from 'react';
+import { BarChart3, TrendingUp, Package, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
-import { BarChart3, TrendingUp, Package, Clock, Check, X } from 'lucide-react';
 
-interface Borrowing {
-  id: string;
-  status: string;
-  created_at: string;
-  borrowing_items?: { item_name: string; quantity: number }[];
-}
+interface MonthlyData { month: string; count: number; }
+interface StatusData { status: string; count: number; }
+interface PopularItem { name: string; count: number; }
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  completed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+const statusColor: Record<string, string> = {
+  pending: 'bg-yellow-500', approved: 'bg-green-500', rejected: 'bg-red-500',
+  returned: 'bg-blue-500', completed: 'bg-cyan-500', cancelled: 'bg-slate-500',
 };
-const STATUS_LABELS: Record<string, string> = { pending: 'Menunggu', approved: 'Disetujui', rejected: 'Ditolak', completed: 'Selesai' };
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const statusLabel: Record<string, string> = {
+  pending: 'Menunggu', approved: 'Disetujui', rejected: 'Ditolak',
+  returned: 'Dikembalikan', completed: 'Selesai', cancelled: 'Dibatalkan',
+};
 
 export default function StatisticsPage() {
-  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
+  const [monthly, setMonthly] = useState<MonthlyData[]>([]);
+  const [statusData, setStatusData] = useState<StatusData[]>([]);
+  const [popular, setPopular] = useState<PopularItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase.from('borrowings').select('id, status, created_at, borrowing_items(item_name, quantity)').order('created_at', { ascending: false });
-      if (error) console.error(error);
-      if (data) setBorrowings(data as Borrowing[]);
-      setLoading(false);
-    })();
-  }, []);
+  useEffect(() => { fetch(); }, []);
 
-  // Monthly trends (current year)
-  const currentYear = new Date().getFullYear();
-  const monthlyData = Array(12).fill(0);
-  borrowings.forEach(b => {
-    const d = new Date(b.created_at);
-    if (d.getFullYear() === currentYear) monthlyData[d.getMonth()]++;
-  });
-  const maxMonthly = Math.max(...monthlyData, 1);
+  async function fetch() {
+    setLoading(true);
+    const { data: borrowings } = await supabase.from('borrowings')
+      .select('id, status, borrow_date, inventory(name), facility(name)').order('created_at', { ascending: false });
+    const all = (borrowings as unknown as Array<{ id: string; status: string; borrow_date: string; inventory?: { name: string } | null; facility?: { name: string } | null }>) || [];
 
-  // Status breakdown
-  const statusCounts: Record<string, number> = {};
-  borrowings.forEach(b => { statusCounts[b.status] = (statusCounts[b.status] || 0) + 1; });
+    // Monthly counts (last 6 months)
+    const now = new Date();
+    const months: MonthlyData[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = d.toLocaleDateString('id-ID', { month: 'short' });
+      const count = all.filter(b => {
+        if (!b.borrow_date) return false;
+        const bd = new Date(b.borrow_date);
+        return bd.getMonth() === d.getMonth() && bd.getFullYear() === d.getFullYear();
+      }).length;
+      months.push({ month: label, count });
+    }
+    setMonthly(months);
 
-  // Popular items
-  const itemCounts: Record<string, number> = {};
-  borrowings.forEach(b => {
-    (b.borrowing_items || []).forEach(item => {
-      itemCounts[item.item_name] = (itemCounts[item.item_name] || 0) + item.quantity;
+    // Status breakdown
+    const statusMap: Record<string, number> = {};
+    all.forEach(b => { statusMap[b.status] = (statusMap[b.status] || 0) + 1; });
+    setStatusData(Object.entries(statusMap).map(([status, count]) => ({ status, count })));
+
+    // Popular items
+    const itemMap: Record<string, number> = {};
+    all.forEach(b => {
+      const name = b.inventory?.name || b.facility?.name || 'Unknown';
+      itemMap[name] = (itemMap[name] || 0) + 1;
     });
-  });
-  const popularItems = Object.entries(itemCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const maxItem = Math.max(...popularItems.map(i => i[1]), 1);
+    setPopular(Object.entries(itemMap).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5));
 
-  const statCards = [
-    { label: 'Total Peminjaman', value: borrowings.length, icon: Package, color: 'text-blue-500' },
-    { label: 'Menunggu', value: statusCounts.pending || 0, icon: Clock, color: 'text-amber-500' },
-    { label: 'Disetujui', value: statusCounts.approved || 0, icon: Check, color: 'text-emerald-500' },
-    { label: 'Ditolak', value: statusCounts.rejected || 0, icon: X, color: 'text-red-500' },
-  ];
+    setLoading(false);
+  }
+
+  const maxMonthly = Math.max(...monthly.map(m => m.count), 1);
+  const maxPopular = Math.max(...popular.map(p => p.count), 1);
+  const totalBorrowings = statusData.reduce((s, d) => s + d.count, 0);
+
+  if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><BarChart3 className="w-6 h-6 text-amber-500" /> Statistik Peminjaman</h1>
-        <p className="text-slate-600 dark:text-slate-400 mt-1">Ringkasan dan tren data peminjaman</p>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Statistik</h1>
+        <p className="text-slate-600 dark:text-slate-400">Analisis peminjaman dan penggunaan sarpras</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((s, i) => (
-          <div key={i} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200/50 dark:border-slate-700/50">
-            <s.icon className={cn('w-5 h-5 mb-2', s.color)} />
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">{loading ? '...' : s.value}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{s.label}</p>
-          </div>
-        ))}
+      {/* Monthly bar chart */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <BarChart3 className="w-5 h-5 text-blue-500" />
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Peminjaman Bulanan</h2>
+        </div>
+        <div className="flex items-end justify-between gap-3 h-48">
+          {monthly.map((m, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-2">
+              <div className="w-full flex-1 flex items-end">
+                <div className="w-full bg-gradient-to-t from-blue-600 to-cyan-400 rounded-t-lg transition-all hover:opacity-80 relative group"
+                  style={{ height: `${(m.count / maxMonthly) * 100}%`, minHeight: '4px' }}>
+                  <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs font-medium text-slate-700 dark:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">{m.count}</span>
+                </div>
+              </div>
+              <span className="text-xs text-slate-500 dark:text-slate-400">{m.month}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Monthly trends */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-5">
-          <h2 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Tren Bulanan {currentYear}</h2>
-          {loading ? <div className="h-48 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse" /> : (
-            <div className="flex items-end justify-between gap-1 h-48">
-              {monthlyData.map((count, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-xs text-slate-400">{count || ''}</span>
-                  <div className="w-full bg-blue-500 rounded-t-md transition-all" style={{ height: `${(count / maxMonthly) * 100}%`, minHeight: count > 0 ? '4px' : '0' }} />
-                  <span className="text-xs text-slate-400">{MONTHS[i]}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
         {/* Status breakdown */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-5">
-          <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Breakdown Status</h2>
-          {loading ? <div className="h-48 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse" /> : (
-            <div className="space-y-3">
-              {Object.entries(STATUS_LABELS).map(([status, label]) => {
-                const count = statusCounts[status] || 0;
-                const pct = borrowings.length > 0 ? (count / borrowings.length) * 100 : 0;
-                return (
-                  <div key={status}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_COLORS[status])}>{label}</span>
-                      <span className="text-sm text-slate-600 dark:text-slate-300">{count} ({pct.toFixed(0)}%)</span>
-                    </div>
-                    <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={cn('h-full rounded-full transition-all', STATUS_COLORS[status].split(' ')[0])} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Popular items */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-5">
-        <h2 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-cyan-500" /> Item Terpopuler</h2>
-        {loading ? <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse" /> : popularItems.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-8">Belum ada data</p>
-        ) : (
-          <div className="space-y-2">
-            {popularItems.map(([name, count], i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-xs text-slate-400 w-6">#{i + 1}</span>
-                <span className="text-sm text-slate-700 dark:text-slate-300 w-32 truncate flex-shrink-0">{name}</span>
-                <div className="flex-1 h-6 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all" style={{ width: `${(count / maxItem) * 100}%` }} />
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-green-500" />
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Breakdown Status</h2>
+          </div>
+          <div className="space-y-3">
+            {statusData.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">Belum ada data</p>
+            ) : statusData.map(s => (
+              <div key={s.status}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-slate-700 dark:text-slate-300">{statusLabel[s.status] || s.status}</span>
+                  <span className="text-sm font-medium text-slate-900 dark:text-white">{s.count} ({totalBorrowings ? Math.round((s.count / totalBorrowings) * 100) : 0}%)</span>
                 </div>
-                <span className="text-sm font-medium text-slate-900 dark:text-white w-8 text-right">{count}</span>
+                <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                  <div className={cn('h-full rounded-full transition-all', statusColor[s.status] || 'bg-slate-400')} style={{ width: `${totalBorrowings ? (s.count / totalBorrowings) * 100 : 0}%` }} />
+                </div>
               </div>
             ))}
           </div>
-        )}
+        </div>
+
+        {/* Popular items */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Package className="w-5 h-5 text-purple-500" />
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Item Terpopuler</h2>
+          </div>
+          <div className="space-y-3">
+            {popular.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">Belum ada data</p>
+            ) : popular.map((p, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{p.name}</p>
+                  <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mt-1">
+                    <div className="h-full bg-purple-500 rounded-full" style={{ width: `${(p.count / maxPopular) * 100}%` }} />
+                  </div>
+                </div>
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{p.count}x</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

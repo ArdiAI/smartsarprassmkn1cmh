@@ -1,157 +1,158 @@
 import { useState, useEffect } from 'react';
+import { Plus, Pencil, Trash2, X, Shield, Mail, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
-import { Plus, Pencil, Trash2, Users, X, AlertTriangle, Mail, Shield } from 'lucide-react';
 
 interface AdminUser {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  is_active: boolean;
+  id: string; name: string; email: string; role: string; is_active: boolean; created_at: string;
 }
-
-const ROLE_COLORS: Record<string, string> = {
-  super_admin: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+interface FormState { name: string; email: string; role: string; is_active: boolean; }
+const emptyForm: FormState = { name: '', email: '', role: 'admin', is_active: true };
+const roleColor: Record<string, string> = {
+  superadmin: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   admin: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  approver: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
-  viewer: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400',
+  operator: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
 };
-const ROLE_LABELS: Record<string, string> = { super_admin: 'Super Admin', admin: 'Admin', approver: 'Approver', viewer: 'Viewer' };
-
-const EMPTY: Omit<AdminUser, 'id'> = { name: '', email: '', role: 'admin', is_active: true };
 
 export default function TeamAdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<typeof EMPTY>(EMPTY);
+  const [editing, setEditing] = useState<AdminUser | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetch(); }, []);
 
-  async function fetchData() {
+  async function fetch() {
     setLoading(true);
-    const { data, error } = await supabase.from('admin_users').select('*').order('created_at', { ascending: false });
-    if (error) console.error(error);
-    if (data) setUsers(data as AdminUser[]);
+    const { data } = await supabase.from('admin_users').select('*').order('created_at', { ascending: false });
+    setUsers((data as AdminUser[]) || []);
     setLoading(false);
   }
 
-  function openAdd() { setEditId(null); setForm(EMPTY); setError(''); setModalOpen(true); }
-  function openEdit(u: AdminUser) { setEditId(u.id); setForm({ ...u }); setError(''); setModalOpen(true); }
-
-  async function handleSave() {
-    setSaving(true); setError('');
-    try {
-      if (!form.email.trim()) throw new Error('Email wajib diisi');
-      if (editId) {
-        const { error: e } = await supabase.from('admin_users').update(form).eq('id', editId);
-        if (e) throw new Error(e.message);
-      } else {
-        const { error: e } = await supabase.from('admin_users').insert(form);
-        if (e) throw new Error(e.message);
-      }
-      setModalOpen(false); fetchData();
-    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
+  function openCreate() { setEditing(null); setForm(emptyForm); setModalOpen(true); }
+  function openEdit(u: AdminUser) {
+    setEditing(u);
+    setForm({ name: u.name || '', email: u.email, role: u.role || 'admin', is_active: u.is_active });
+    setModalOpen(true);
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Hapus admin ini?')) return;
-    const { error } = await supabase.from('admin_users').delete().eq('id', id);
-    if (error) alert(error.message); else fetchData();
+  async function save() {
+    setSaving(true);
+    const payload = { name: form.name, email: form.email, role: form.role, is_active: form.is_active };
+    if (editing) {
+      await supabase.from('admin_users').update(payload).eq('id', editing.id);
+    } else {
+      await supabase.from('admin_users').insert(payload);
+    }
+    setSaving(false); setModalOpen(false); fetch();
   }
 
   async function toggleActive(u: AdminUser) {
-    const { error } = await supabase.from('admin_users').update({ is_active: !u.is_active }).eq('id', u.id);
-    if (error) alert(error.message); else fetchData();
+    await supabase.from('admin_users').update({ is_active: !u.is_active }).eq('id', u.id);
+    fetch();
+  }
+
+  async function remove(id: string) {
+    if (!confirm('Hapus anggota tim ini?')) return;
+    await supabase.from('admin_users').delete().eq('id', id);
+    fetch();
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Users className="w-6 h-6 text-emerald-500" /> Kelola Tim Admin</h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-1">Tambah, ubah, dan kelola admin</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Tim Admin</h1>
+          <p className="text-slate-600 dark:text-slate-400">Kelola akun admin dan operator</p>
         </div>
-        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
-          <Plus className="w-4 h-4" /> Tambah Admin
+        <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+          <Plus className="w-4 h-4" /> Tambah
         </button>
       </div>
 
       {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse" />)}</div>
+        <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>
       ) : users.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 text-center">
-          <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada admin</p>
+        <div className="text-center py-20 text-slate-400">
+          <Shield className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p>Belum ada anggota tim</p>
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {users.map(u => (
-            <div key={u.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-4">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center text-white font-semibold flex-shrink-0', u.is_active ? 'bg-gradient-to-br from-emerald-500 to-teal-400' : 'bg-slate-400')}>
-                    {u.name?.[0]?.toUpperCase() || u.email[0]?.toUpperCase() || '?'}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm text-slate-900 dark:text-white truncate">{u.name || '-'}</p>
-                    <p className="text-xs text-slate-400 truncate flex items-center gap-1"><Mail className="w-3 h-3" /> {u.email}</p>
-                  </div>
-                </div>
-                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0', ROLE_COLORS[u.role] || 'bg-slate-100')}>
-                  <Shield className="w-3 h-3" /> {ROLE_LABELS[u.role] || u.role}
-                </span>
-              </div>
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
-                <button onClick={() => toggleActive(u)} className={cn('flex items-center gap-1.5 text-xs font-medium', u.is_active ? 'text-emerald-600' : 'text-slate-400')}>
-                  <span className={cn('w-2 h-2 rounded-full', u.is_active ? 'bg-emerald-500' : 'bg-slate-400')} />
-                  {u.is_active ? 'Aktif' : 'Nonaktif'}
-                </button>
-                <div className="flex gap-1">
-                  <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-200"><Pencil className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => handleDelete(u.id)} className="p-1.5 rounded-lg bg-red-100 dark:bg-red-900/20 text-red-600 hover:bg-red-200"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium">Nama</th>
+                  <th className="text-left px-4 py-3 font-medium">Email</th>
+                  <th className="text-left px-4 py-3 font-medium">Role</th>
+                  <th className="text-left px-4 py-3 font-medium">Status</th>
+                  <th className="text-right px-4 py-3 font-medium">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {users.map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{u.name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{u.email}</td>
+                    <td className="px-4 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', roleColor[u.role] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400')}>{u.role}</span></td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => toggleActive(u)} className={cn('px-2 py-0.5 rounded-full text-xs font-medium', u.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400')}>
+                        {u.is_active ? 'Aktif' : 'Nonaktif'}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => openEdit(u)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"><Pencil className="w-4 h-4" /></button>
+                        <button onClick={() => remove(u.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setModalOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{editId ? 'Edit Admin' : 'Tambah Admin'}</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><X className="w-5 h-5 text-slate-500" /></button>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{editing ? 'Edit Anggota' : 'Tambah Anggota'}</h2>
+              <button onClick={() => setModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Nama</label>
-                <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+                <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Email</label>
-                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                    className="w-full pl-10 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Role</label>
-                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
-                  <option value="super_admin">Super Admin</option><option value="admin">Admin</option><option value="approver">Approver</option><option value="viewer">Viewer</option>
+                <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
+                  <option value="superadmin">Superadmin</option><option value="admin">Admin</option><option value="operator">Operator</option>
                 </select>
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.is_active} onChange={e => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded" />
-                <span className="text-sm text-slate-700 dark:text-slate-300">Aktif</span>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                Akun Aktif
               </label>
-              {error && <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"><AlertTriangle className="w-4 h-4 text-red-500" /><p className="text-sm text-red-700 dark:text-red-400">{error}</p></div>}
             </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setModalOpen(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
+              <button onClick={save} disabled={saving || !form.email} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
             </div>
           </div>
         </div>
