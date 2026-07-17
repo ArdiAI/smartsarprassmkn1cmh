@@ -1,24 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
 import {
-  MailCheck,
+  Mail,
   Plus,
   Pencil,
   Trash2,
-  X,
   Loader2,
-  RefreshCw,
-  CheckCircle2,
-  Mail,
+  X,
   User,
-  Info,
   Shield,
+  Info,
+  CheckCircle2,
 } from 'lucide-react';
 
-// ---- Types matching DB schema ----
-// NOTE: columns are `approver_email` and `approver_name` (NOT email/name)
+// ---- Types matching the `role_approver_emails` table ----
+// NOTE: columns are `approver_email` and `approver_name` (NOT `email` and `name`)
 interface RoleApproverEmail {
   id: string;
   role_id: string | null;
@@ -33,18 +31,17 @@ interface RoleApproverEmail {
 interface Role {
   id: string;
   name: string;
-  level: number | null;
 }
 
-type ApproverForm = {
+interface ApproverForm {
   role_id: string;
   role_name: string;
   approver_email: string;
   approver_name: string;
   is_active: boolean;
-};
+}
 
-const EMPTY_FORM: ApproverForm = {
+const emptyForm: ApproverForm = {
   role_id: '',
   role_name: '',
   approver_email: '',
@@ -58,63 +55,65 @@ export default function ApproverEmailsPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<RoleApproverEmail | null>(null);
-  const [form, setForm] = useState<ApproverForm>(EMPTY_FORM);
+  const [form, setForm] = useState<ApproverForm>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const fetchApprovers = useCallback(async () => {
     setLoading(true);
-    try {
-      const [apprRes, roleRes] = await Promise.all([
-        supabase.from('role_approver_emails').select('*').order('role_name', { ascending: true }),
-        supabase.from('roles').select('id, name, level').order('level', { ascending: true, nullsFirst: false }),
-      ]);
-
-      if (apprRes.error) throw apprRes.error;
-      if (roleRes.error) throw roleRes.error;
-
-      setApprovers((apprRes.data ?? []) as unknown as RoleApproverEmail[]);
-      setRoles((roleRes.data ?? []) as unknown as Role[]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load data';
-      showToast(msg, 'error');
-    } finally {
-      setLoading(false);
+    const { data, error } = await supabase
+      .from('role_approver_emails')
+      .select(
+        'id, role_id, role_name, approver_email, approver_name, is_active, created_at, updated_at'
+      )
+      .order('created_at', { ascending: false });
+    if (error) {
+      showToast('Gagal memuat approver emails: ' + error.message, 'error');
+    } else {
+      setApprovers((data ?? []) as unknown as RoleApproverEmail[]);
     }
+    setLoading(false);
+  }, []);
+
+  const fetchRoles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('roles')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('level', { ascending: true });
+    if (error) {
+      showToast('Gagal memuat roles: ' + error.message, 'error');
+      return;
+    }
+    setRoles((data ?? []) as unknown as Role[]);
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    fetchApprovers();
+    fetchRoles();
+  }, [fetchApprovers, fetchRoles]);
 
   const openAdd = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm(emptyForm);
     setShowModal(true);
   };
 
-  const openEdit = (appr: RoleApproverEmail) => {
-    setEditing(appr);
+  const openEdit = (a: RoleApproverEmail) => {
+    setEditing(a);
     setForm({
-      role_id: appr.role_id ?? '',
-      role_name: appr.role_name ?? '',
-      approver_email: appr.approver_email ?? '',
-      approver_name: appr.approver_name ?? '',
-      is_active: appr.is_active !== false,
+      role_id: a.role_id ?? '',
+      role_name: a.role_name ?? '',
+      approver_email: a.approver_email ?? '',
+      approver_name: a.approver_name ?? '',
+      is_active: a.is_active ?? true,
     });
     setShowModal(true);
   };
 
-  const closeModal = () => {
-    setShowModal(false);
-    setEditing(null);
-    setForm(EMPTY_FORM);
-  };
-
   const handleRoleSelect = (roleId: string) => {
     const role = roles.find(r => r.id === roleId);
-    setForm(f => ({
-      ...f,
+    setForm(prev => ({
+      ...prev,
       role_id: roleId,
       role_name: role?.name ?? '',
     }));
@@ -122,76 +121,75 @@ export default function ApproverEmailsPage() {
 
   const handleSave = async () => {
     if (!form.role_id) {
-      showToast('Please select a role', 'warning');
+      showToast('Role wajib dipilih', 'warning');
       return;
     }
     if (!form.approver_email.trim()) {
-      showToast('Approver email is required', 'warning');
+      showToast('Email approver wajib diisi', 'warning');
       return;
     }
-    // Basic email validation
-    const emailTrim = form.approver_email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
-      showToast('Please enter a valid email address', 'warning');
+    if (!form.approver_name.trim()) {
+      showToast('Nama approver wajib diisi', 'warning');
       return;
     }
+
+    const payload = {
+      role_id: form.role_id,
+      role_name: form.role_name,
+      approver_email: form.approver_email.trim(),
+      approver_name: form.approver_name.trim(),
+      is_active: form.is_active,
+    };
 
     setSaving(true);
-    try {
-      // NOTE: uses approver_email and approver_name columns
-      const payload = {
-        role_id: form.role_id,
-        role_name: form.role_name || null,
-        approver_email: emailTrim,
-        approver_name: form.approver_name.trim() || null,
-        is_active: form.is_active,
-      };
-
-      if (editing) {
-        const { error } = await supabase
-          .from('role_approver_emails')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', editing.id);
-        if (error) throw error;
-        showToast('Approver updated', 'success');
-      } else {
-        const { error } = await supabase.from('role_approver_emails').insert(payload);
-        if (error) throw error;
-        showToast('Approver added', 'success');
-      }
-      closeModal();
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to save approver';
-      showToast(msg, 'error');
-    } finally {
-      setSaving(false);
+    let error: { message: string } | null = null;
+    if (editing) {
+      const res = await supabase
+        .from('role_approver_emails')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', editing.id);
+      error = res.error;
+    } else {
+      const res = await supabase.from('role_approver_emails').insert(payload);
+      error = res.error;
     }
+    setSaving(false);
+
+    if (error) {
+      showToast('Gagal menyimpan: ' + error.message, 'error');
+      return;
+    }
+    showToast(editing ? 'Approver diperbarui' : 'Approver ditambahkan', 'success');
+    setShowModal(false);
+    fetchApprovers();
   };
 
-  const handleDelete = async (appr: RoleApproverEmail) => {
-    if (!confirm(`Remove approver ${appr.approver_email ?? ''}?`)) return;
-    setDeletingId(appr.id);
-    try {
-      const { error } = await supabase.from('role_approver_emails').delete().eq('id', appr.id);
-      if (error) throw error;
-      showToast('Approver removed', 'success');
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to remove approver';
-      showToast(msg, 'error');
-    } finally {
-      setDeletingId(null);
+  const handleDelete = async (id: string) => {
+    if (!confirm('Hapus approver email ini?')) return;
+    const { error } = await supabase.from('role_approver_emails').delete().eq('id', id);
+    if (error) {
+      showToast('Gagal menghapus: ' + error.message, 'error');
+      return;
     }
+    showToast('Approver dihapus', 'success');
+    fetchApprovers();
   };
 
-  // Group by role_name for display
-  const grouped = approvers.reduce<Record<string, RoleApproverEmail[]>>((acc, a) => {
-    const g = a.role_name ?? 'Unassigned Role';
-    if (!acc[g]) acc[g] = [];
-    acc[g].push(a);
-    return acc;
-  }, {});
+  const handleToggleActive = async (a: RoleApproverEmail) => {
+    const next = !(a.is_active ?? false);
+    const { error } = await supabase
+      .from('role_approver_emails')
+      .update({ is_active: next, updated_at: new Date().toISOString() })
+      .eq('id', a.id);
+    if (error) {
+      showToast('Gagal mengubah status: ' + error.message, 'error');
+      return;
+    }
+    showToast(next ? 'Approver diaktifkan' : 'Approver dinonaktifkan', 'success');
+    setApprovers(prev =>
+      prev.map(x => (x.id === a.id ? { ...x, is_active: next } : x))
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -199,125 +197,114 @@ export default function ApproverEmailsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <MailCheck className="w-6 h-6 text-blue-500" />
+            <Mail className="w-6 h-6 text-blue-500" />
             Approver Emails
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Map roles to approver email addresses for notifications
+            Kelola email approver untuk setiap role dalam alur persetujuan
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadData}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
-          </button>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Add Approver
-          </button>
-        </div>
+        <button onClick={openAdd} className="btn-primary flex items-center gap-2 justify-center">
+          <Plus className="w-4 h-4" />
+          Tambah Approver
+        </button>
       </div>
 
       {/* Info banner */}
-      <div className="flex items-start gap-3 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-        <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-        <div className="text-sm text-blue-700 dark:text-blue-300">
-          <p className="font-medium mb-1">How approver emails work</p>
-          <p className="text-blue-600 dark:text-blue-400">
-            Each role can have one or more approver email addresses. When a request reaches a step
-            that requires a role's approval, notifications are sent to all active emails assigned
-            to that role.
+      <div className="card p-4 border-l-4 border-l-blue-500 flex items-start gap-3">
+        <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+          <Info className="w-4 h-4 text-blue-500" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-slate-900 dark:text-white">
+            Tentang Approver Emails
+          </p>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-0.5">
+            Email approver digunakan untuk mengirim notifikasi persetujuan. Setiap role dapat
+            memiliki satu atau beberapa approver. Pilih role dari dropdown — field
+            <span className="font-mono text-xs"> role_name </span>
+            akan terisi otomatis.
           </p>
         </div>
       </div>
 
-      {/* Content */}
+      {/* List */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
         </div>
       ) : approvers.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
-          <MailCheck className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400 font-medium">No approver emails configured</p>
-          <p className="text-sm text-slate-400 mt-1">Add an approver email to get started</p>
+        <div className="card py-16 text-center text-slate-500 dark:text-slate-400">
+          <Mail className="w-10 h-10 mx-auto mb-3 opacity-40" />
+          <p>Belum ada approver email</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {Object.entries(grouped).map(([roleName, items]) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {approvers.map(a => (
             <div
-              key={roleName}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden"
+              key={a.id}
+              className={cn(
+                'card p-5 flex flex-col gap-3 transition-shadow hover:shadow-md',
+                !(a.is_active ?? false) && 'opacity-60'
+              )}
             >
-              {/* Role header */}
-              <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 dark:bg-slate-700/30 border-b border-slate-100 dark:border-slate-700/50">
-                <Shield className="w-4 h-4 text-blue-500" />
-                <h3 className="font-semibold text-slate-900 dark:text-white">{roleName}</h3>
-                <span className="text-xs text-slate-400">
-                  {items.length} approver{items.length !== 1 ? 's' : ''}
-                </span>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+                    <Shield className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-slate-900 dark:text-white truncate">
+                      {a.role_name ?? 'Role tidak diketahui'}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {a.role_id ?? '-'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleToggleActive(a)}
+                  className={cn(
+                    'px-2 py-0.5 rounded-md text-xs font-medium transition-colors flex-shrink-0',
+                    a.is_active
+                      ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                  )}
+                >
+                  {a.is_active ? 'Aktif' : 'Nonaktif'}
+                </button>
               </div>
 
-              {/* Approvers list */}
-              <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {items.map(appr => (
-                  <div
-                    key={appr.id}
-                    className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
-                        <Mail className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                          {appr.approver_name ?? 'Unnamed'}
-                        </p>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 truncate">
-                          {appr.approver_email ?? '—'}
-                        </p>
-                      </div>
-                    </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <span className="text-slate-700 dark:text-slate-300 truncate">
+                    {a.approver_name ?? 'Tanpa nama'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <span className="text-slate-600 dark:text-slate-400 truncate">
+                    {a.approver_email ?? '-'}
+                  </span>
+                </div>
+              </div>
 
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium',
-                          appr.is_active !== false
-                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
-                            : 'bg-slate-100 dark:bg-slate-700/50 text-slate-500'
-                        )}
-                      >
-                        {appr.is_active !== false ? 'Active' : 'Inactive'}
-                      </span>
-                      <button
-                        onClick={() => openEdit(appr)}
-                        className="p-2 rounded-xl text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                        title="Edit"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(appr)}
-                        disabled={deletingId === appr.id}
-                        className="p-2 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                        title="Remove"
-                      >
-                        {deletingId === appr.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/50">
+                <button
+                  onClick={() => openEdit(a)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(a.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Hapus
+                </button>
               </div>
             </div>
           ))}
@@ -326,15 +313,20 @@ export default function ApproverEmailsPage() {
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6 shadow-xl border border-slate-200 dark:border-slate-700 animate-slide-up max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {editing ? 'Edit Approver' : 'Add Approver Email'}
-              </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                  <Mail className="w-5 h-5 text-blue-500" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {editing ? 'Edit Approver' : 'Tambah Approver'}
+                </h2>
+              </div>
               <button
-                onClick={closeModal}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                onClick={() => setShowModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -342,97 +334,81 @@ export default function ApproverEmailsPage() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Role *
-                </label>
+                <label className="label">Role</label>
                 <select
                   value={form.role_id}
                   onChange={e => handleRoleSelect(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  className="input"
                 >
-                  <option value="">— Select role —</option>
+                  <option value="">Pilih role</option>
                   {roles.map(r => (
                     <option key={r.id} value={r.id}>
                       {r.name}
-                      {r.level != null ? ` (L${r.level})` : ''}
                     </option>
                   ))}
                 </select>
-                {form.role_name && (
-                  <p className="text-xs text-slate-400 mt-1">
-                    Role name: <span className="font-mono">{form.role_name}</span>
-                  </p>
-                )}
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  role_name akan diisi otomatis: <span className="font-mono">{form.role_name || '-'}</span>
+                </p>
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Approver Email *
-                </label>
+                <label className="label">Nama Approver</label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="email"
-                    value={form.approver_email}
-                    onChange={e => setForm(f => ({ ...f, approver_email: e.target.value }))}
-                    placeholder="approver@example.com"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Approver Name
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
                     value={form.approver_name}
-                    onChange={e => setForm(f => ({ ...f, approver_name: e.target.value }))}
-                    placeholder="Full name (optional)"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    onChange={e => setForm({ ...form, approver_name: e.target.value })}
+                    placeholder="Nama lengkap approver"
+                    className="input pl-10"
                   />
                 </div>
               </div>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={form.is_active}
-                  onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))}
-                  className={cn(
-                    'relative w-11 h-6 rounded-full transition-colors',
-                    form.is_active ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform',
-                      form.is_active && 'translate-x-5'
-                    )}
+              <div>
+                <label className="label">Email Approver</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    value={form.approver_email}
+                    onChange={e => setForm({ ...form, approver_email: e.target.value })}
+                    placeholder="approver@example.com"
+                    className="input pl-10"
                   />
-                </button>
-                <span className="text-sm text-slate-700 dark:text-slate-300">Active</span>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.is_active}
+                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
+                  className="w-4 h-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-slate-700 dark:text-slate-300">Aktif</span>
               </label>
             </div>
 
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="flex gap-2 mt-6">
               <button
-                onClick={closeModal}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                onClick={() => setShowModal(false)}
+                className="btn-secondary flex-1"
+                disabled={saving}
               >
-                Cancel
+                Batal
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {editing ? 'Save Changes' : 'Add Approver'}
+                {saving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    {editing ? 'Simpan' : 'Tambah'}
+                  </>
+                )}
               </button>
             </div>
           </div>

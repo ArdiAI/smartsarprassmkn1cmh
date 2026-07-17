@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Package, Building2, ClipboardList, Megaphone, ArrowRight, Clock,
-  Boxes, FileWarning, History, Info, TrendingUp, Calendar,
+  Package,
+  Building2,
+  ClipboardList,
+  ArrowRight,
+  Clock,
+  Megaphone,
+  History,
+  Info,
+  Wrench,
+  ChevronRight,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import AnimatedBackground from '../components/AnimatedBackground';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
+import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
 
 interface Announcement {
@@ -16,59 +25,48 @@ interface Announcement {
   title: string;
   description: string;
   priority: string;
-  published_at: string | null;
+  published_at: string;
   created_at: string;
-  author: string | null;
-}
-
-interface Stats {
-  inventory: number;
-  facilities: number;
-  borrowings: number;
+  author: string;
 }
 
 const quickLinks = [
-  { to: '/fasilitas', label: 'Fasilitas', description: 'Lihat daftar fasilitas tersedia', icon: Building2, color: 'from-blue-500 to-blue-600' },
-  { to: '/inventaris', label: 'Inventaris', description: 'Jelajahi barang inventaris', icon: Boxes, color: 'from-cyan-500 to-cyan-600' },
-  { to: '/pinjam', label: 'Pinjam', description: 'Ajukan peminjaman barang', icon: ClipboardList, color: 'from-indigo-500 to-indigo-600' },
-  { to: '/laporan', label: 'Laporan', description: 'Laporkan kerusakan barang', icon: FileWarning, color: 'from-amber-500 to-orange-500' },
-  { to: '/riwayat', label: 'Riwayat', description: 'Riwayat peminjaman', icon: History, color: 'from-emerald-500 to-emerald-600' },
-  { to: '/tentang', label: 'Tentang', description: 'Tentang SMART SARPRAS', icon: Info, color: 'from-slate-500 to-slate-600' },
+  { to: '/fasilitas', label: 'Fasilitas', desc: 'Lihat daftar fasilitas tersedia', icon: Building2, color: 'from-blue-500 to-cyan-500' },
+  { to: '/inventaris', label: 'Inventaris', desc: 'Cek barang yang tersedia', icon: Package, color: 'from-cyan-500 to-teal-500' },
+  { to: '/pinjam', label: 'Pinjam', desc: 'Ajukan peminjaman barang', icon: ClipboardList, color: 'from-blue-500 to-indigo-500' },
+  { to: '/laporan', label: 'Laporan', desc: 'Laporkan kerusakan', icon: Wrench, color: 'from-amber-500 to-orange-500' },
+  { to: '/riwayat', label: 'Riwayat', desc: 'Riwayat peminjaman', icon: History, color: 'from-purple-500 to-pink-500' },
+  { to: '/tentang', label: 'Tentang', desc: 'Tentang SMART SARPRAS', icon: Info, color: 'from-slate-500 to-slate-600' },
 ];
 
-function priorityBadge(priority: string) {
-  switch ((priority || '').toLowerCase()) {
-    case 'tinggi':
-      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
-    case 'sedang':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-    default:
-      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
-  }
+function formatClock(date: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function formatDate(d: string | null) {
-  if (!d) return '-';
-  try {
-    return new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
-  } catch {
-    return d;
-  }
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
 }
+
+const priorityColors: Record<string, string> = {
+  tinggi: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  sedang: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  rendah: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+};
 
 export default function LandingPage() {
-  const [stats, setStats] = useState<Stats>({ inventory: 0, facilities: 0, borrowings: 0 });
+  const [stats, setStats] = useState({ inventory: 0, facilities: 0, borrowings: 0 });
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    async function load() {
+    (async () => {
       try {
         const [inv, fac, brw, ann] = await Promise.all([
           supabase.from('inventory').select('id', { count: 'exact', head: true }),
@@ -81,175 +79,164 @@ export default function LandingPage() {
             .order('published_at', { ascending: false })
             .limit(5),
         ]);
+
         setStats({
           inventory: inv.count ?? 0,
           facilities: fac.count ?? 0,
           borrowings: brw.count ?? 0,
         });
         setAnnouncements((ann.data as unknown as Announcement[]) || []);
-      } catch (e) {
+      } catch {
         // ignore
       } finally {
         setLoading(false);
       }
-    }
-    load();
+    })();
   }, []);
 
   const statCards = [
-    { label: 'Inventaris', value: stats.inventory, icon: Package, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/20' },
-    { label: 'Fasilitas', value: stats.facilities, icon: Building2, color: 'text-cyan-600 dark:text-cyan-400', bg: 'bg-cyan-50 dark:bg-cyan-900/20' },
-    { label: 'Peminjaman', value: stats.borrowings, icon: ClipboardList, color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-50 dark:bg-indigo-900/20' },
+    { label: 'Total Inventaris', value: stats.inventory, icon: Package, color: 'text-blue-600 dark:text-blue-400' },
+    { label: 'Total Fasilitas', value: stats.facilities, icon: Building2, color: 'text-cyan-600 dark:text-cyan-400' },
+    { label: 'Total Peminjaman', value: stats.borrowings, icon: ClipboardList, color: 'text-indigo-600 dark:text-indigo-400' },
   ];
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
-      <AnimatedBackground />
       <Navbar />
-      <main className="flex-1">
-        {/* Hero */}
-        <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
-          <div className="text-center max-w-3xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium mb-6">
-              <TrendingUp className="w-4 h-4" />
-              Sistem Manajemen Sarana &amp; Prasarana
-            </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              <span className="bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
-                SMART SARPRAS
-              </span>
-            </h1>
-            <p className="mt-4 text-lg text-slate-600 dark:text-slate-300">
-              Sistem Manajemen Sarana dan Prasarana Terpadu — kelola inventaris,
-              fasilitas, dan peminjaman dengan mudah dalam satu platform.
-            </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-              <Link
-                to="/pinjam"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors shadow-lg shadow-blue-500/20"
-              >
-                <ClipboardList className="w-5 h-5" />
-                Ajukan Peminjaman
-              </Link>
-              <Link
-                to="/fasilitas"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-              >
-                Lihat Fasilitas
-                <ArrowRight className="w-5 h-5" />
-              </Link>
-            </div>
-          </div>
+      <AnimatedBackground />
 
-          {/* Realtime Clock */}
-          <div className="mt-10 flex justify-center">
-            <div className="inline-flex items-center gap-3 px-5 py-3 rounded-2xl bg-white/80 dark:bg-slate-800/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-sm">
-              <Clock className="w-5 h-5 text-blue-500" />
-              <div className="text-left">
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                </p>
-                <p className="text-lg font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
-                  {now.toLocaleTimeString('id-ID', { hour12: false })}
-                </p>
-              </div>
-            </div>
+      {/* Hero */}
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-16 w-full">
+        <div className="text-center max-w-3xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium mb-6">
+            <Clock className="w-4 h-4" />
+            {formatClock(now)} WIB · {now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </div>
-        </section>
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-slate-900 dark:text-white mb-4">
+            <span className="bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">{brandConfig.system.name}</span>
+          </h1>
+          <p className="text-lg sm:text-xl text-slate-600 dark:text-slate-300 mb-8">
+            {brandConfig.system.fullName}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link
+              to="/pinjam"
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-lg shadow-blue-500/25 transition-all hover:scale-105"
+            >
+              <ClipboardList className="w-5 h-5" />
+              Ajukan Peminjaman
+            </Link>
+            <Link
+              to="/fasilitas"
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold border border-slate-200 dark:border-slate-700 transition-all hover:scale-105"
+            >
+              <Building2 className="w-5 h-5" />
+              Lihat Fasilitas
+            </Link>
+          </div>
+        </div>
+      </section>
 
-        {/* Stats */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {statCards.map((s) => (
-              <div key={s.label} className="card p-6 flex items-center gap-4">
-                <div className={cn('w-12 h-12 rounded-2xl flex items-center justify-center', s.bg)}>
-                  <s.icon className={cn('w-6 h-6', s.color)} />
-                </div>
+      {/* Stats */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {statCards.map((s) => (
+            <div
+              key={s.label}
+              className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm"
+            >
+              <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-500 dark:text-slate-400">{s.label}</p>
-                  {loading ? (
-                    <div className="w-16 h-7 rounded-lg bg-slate-200 dark:bg-slate-700 animate-pulse" />
-                  ) : (
-                    <p className="text-2xl font-bold text-slate-900 dark:text-white">{s.value}</p>
-                  )}
+                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-1">
+                    {loading ? <span className="inline-block w-12 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" /> : s.value}
+                  </p>
+                </div>
+                <div className={cn('w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center', s.color)}>
+                  <s.icon className="w-6 h-6" />
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
+            </div>
+          ))}
+        </div>
+      </section>
 
-        {/* Quick Links */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Akses Cepat</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {quickLinks.map((q) => (
-              <Link
-                key={q.to}
-                to={q.to}
-                className="card p-6 group hover:shadow-md transition-all hover:-translate-y-0.5"
-              >
-                <div className={cn('w-11 h-11 rounded-2xl bg-gradient-to-br flex items-center justify-center mb-4', q.color)}>
-                  <q.icon className="w-5 h-5 text-white" />
+      {/* Quick Links */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 w-full">
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Akses Cepat</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {quickLinks.map((link) => (
+            <Link
+              key={link.to}
+              to={link.to}
+              className="group bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all hover:scale-[1.02]"
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white', link.color)}>
+                  <link.icon className="w-6 h-6" />
                 </div>
-                <h3 className="font-semibold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  {q.label}
-                </h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{q.description}</p>
-              </Link>
-            ))}
-          </div>
-        </section>
+                <ChevronRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{link.label}</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{link.desc}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
 
-        {/* Announcements */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex items-center gap-2 mb-6">
-            <Megaphone className="w-6 h-6 text-blue-500" />
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman Terbaru</h2>
-          </div>
-          <div className="card divide-y divide-slate-200 dark:divide-slate-700">
-            {loading ? (
-              [0, 1, 2].map((i) => (
-                <div key={i} className="p-5 flex gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 animate-pulse" />
-                  <div className="flex-1 space-y-2">
-                    <div className="w-1/3 h-5 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-                    <div className="w-2/3 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-                  </div>
-                </div>
-              ))
-            ) : announcements.length === 0 ? (
-              <EmptyState icon={Megaphone} title="Belum ada pengumuman" description="Pengumuman akan muncul di sini" />
-            ) : (
-              announcements.map((a) => (
-                <div key={a.id} className="p-5 flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0">
-                    <Megaphone className="w-5 h-5 text-blue-500" />
-                  </div>
+      {/* Announcements */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 w-full">
+        <div className="flex items-center gap-3 mb-6">
+          <Megaphone className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman Terbaru</h2>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+          {loading ? (
+            <div className="p-6 space-y-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-16 bg-slate-100 dark:bg-slate-700/50 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : announcements.length === 0 ? (
+            <EmptyState icon={Megaphone} title="Belum ada pengumuman" description="Pengumuman akan muncul di sini" />
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-700">
+              {announcements.map((a) => (
+                <li key={a.id} className="p-5 flex items-start gap-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{a.title}</h3>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{a.title}</h3>
                       {a.priority && (
-                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', priorityBadge(a.priority))}>
+                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize', priorityColors[a.priority.toLowerCase()] || priorityColors.rendah)}>
                           {a.priority}
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 line-clamp-2">{a.description}</p>
-                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      <span className="inline-flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5" />
-                        {formatDate(a.published_at || a.created_at)}
-                      </span>
-                      {a.author && <span>• {a.author}</span>}
-                    </div>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{a.description}</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                      {a.author && `${a.author} · `}
+                      {a.published_at ? formatDate(a.published_at) : formatDate(a.created_at)}
+                    </p>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </main>
-      <Footer />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="text-center mt-6">
+          <Link
+            to="/fasilitas"
+            className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 font-medium hover:gap-3 transition-all"
+          >
+            Mulai eksplor fasilitas
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </section>
+
+      <div className="mt-auto">
+        <Footer />
+      </div>
     </div>
   );
 }

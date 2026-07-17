@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, Package, MapPin, Loader2 } from 'lucide-react';
+import { Search, Package, MapPin, Tag, Boxes, CheckCircle2 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
@@ -7,198 +7,228 @@ import { supabase } from '../lib/supabase';
 import { cn } from '../utils/cn';
 
 interface Category {
+  id: string;
   name: string;
 }
 
 interface InventoryItem {
   id: string;
-  code: string | null;
+  code: string;
   name: string;
-  category_id: string | null;
+  category_id: string;
   quantity: number;
-  condition: 'good' | 'fair' | 'poor';
-  location: string | null;
-  image_url: string | null;
-  purchase_date: string | null;
-  price: number | null;
-  description: string | null;
   available_quantity: number;
-  manager_name: string | null;
-  manager_role: string | null;
-  categories: Category | null;
+  condition: 'good' | 'fair' | 'poor';
+  location: string;
+  image_url: string;
+  purchase_date: string;
+  price: number;
+  description: string;
+  manager_name: string;
+  manager_role: string;
+  categories: { name: string } | null;
 }
 
-const conditionConfig: Record<string, { label: string; classes: string }> = {
-  good: { label: 'Baik', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  fair: { label: 'Cukup', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  poor: { label: 'Rusak', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+const conditionConfig: Record<string, { label: string; badge: string; dot: string }> = {
+  good: {
+    label: 'Baik',
+    badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  fair: {
+    label: 'Layak',
+    badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    dot: 'bg-amber-500',
+  },
+  poor: {
+    label: 'Rusak',
+    badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    dot: 'bg-red-500',
+  },
 };
 
-function ItemSkeleton() {
-  return (
-    <div className="card p-5 space-y-3">
-      <div className="w-1/3 h-5 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-      <div className="w-full h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-      <div className="w-1/2 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-      <div className="w-1/4 h-6 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
-    </div>
-  );
-}
+const FALLBACK_IMAGE = 'https://images.pexels.com/photos/2280571/pexels-photo-2280571.jpeg?auto=compress&cs=tinysrgb&w=800';
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
   useEffect(() => {
-    async function load() {
+    (async () => {
       try {
-        const [inv, cats] = await Promise.all([
+        const [invRes, catRes] = await Promise.all([
           supabase
             .from('inventory')
             .select('*, categories!category_id(name)')
             .order('created_at', { ascending: false }),
           supabase.from('categories').select('id, name').order('name', { ascending: true }),
         ]);
-        if (inv.error) throw inv.error;
-        setItems((inv.data as unknown as InventoryItem[]) || []);
-        setCategories((cats.data as unknown as { id: string; name: string }[]) || []);
-      } catch (e) {
+
+        if (invRes.error) throw invRes.error;
+        setItems((invRes.data as unknown as InventoryItem[]) || []);
+        setCategories((catRes.data as unknown as Category[]) || []);
+      } catch {
         // ignore
       } finally {
         setLoading(false);
       }
-    }
-    load();
+    })();
   }, []);
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    return items.filter((it) => {
-      const matchSearch =
-        !q ||
-        it.name.toLowerCase().includes(q) ||
-        (it.code || '').toLowerCase().includes(q) ||
-        (it.description || '').toLowerCase().includes(q);
-      const matchCat = categoryFilter === 'all' || it.category_id === categoryFilter;
-      return matchSearch && matchCat;
-    });
+    let result = items;
+    if (categoryFilter !== 'all') {
+      result = result.filter((i) => i.category_id === categoryFilter);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (i) =>
+          i.name?.toLowerCase().includes(q) ||
+          i.code?.toLowerCase().includes(q) ||
+          i.location?.toLowerCase().includes(q)
+      );
+    }
+    return result;
   }, [items, search, categoryFilter]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-          <p className="mt-1 text-slate-500 dark:text-slate-400">
-            Daftar barang inventaris yang tersedia.
-          </p>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Inventaris</h1>
+          <p className="text-slate-500 dark:text-slate-400">Daftar barang yang tersedia untuk dipinjam</p>
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari barang..."
-              className="input pl-10"
+              placeholder="Cari barang berdasarkan nama, kode, atau lokasi..."
+              className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="input sm:w-56"
-          >
-            <option value="all">Semua Kategori</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          <div className="relative sm:w-64">
+            <Tag className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer"
+            >
+              <option value="all">Semua Kategori</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <ItemSkeleton key={i} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm">
+                <div className="h-40 bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="p-4 space-y-3">
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
+                  <div className="h-3 w-2/3 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
+                  <div className="h-3 w-1/2 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
+                </div>
+              </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="card">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
             <EmptyState
               icon={Package}
               title="Tidak ada barang ditemukan"
-              description={search || categoryFilter !== 'all' ? 'Coba filter lain.' : 'Belum ada data inventaris.'}
+              description={search || categoryFilter !== 'all' ? "Coba ubah filter pencarian" : "Belum ada barang yang ditambahkan"}
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map((it) => {
-              const cond = conditionConfig[it.condition] || conditionConfig.good;
-              const available = it.available_quantity ?? 0;
-              const total = it.quantity ?? 0;
-              return (
-                <div key={it.id} className="card p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{it.name}</h3>
-                      {it.code && (
-                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Kode: {it.code}</p>
-                      )}
-                    </div>
-                    <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap', cond.classes)}>
-                      {cond.label}
-                    </span>
-                  </div>
-
-                  {it.categories?.name && (
-                    <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">{it.categories.name}</p>
-                  )}
-                  {it.description && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{it.description}</p>
-                  )}
-
-                  {it.location && (
-                    <div className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300 mt-3">
-                      <MapPin className="w-4 h-4 text-slate-400" />
-                      <span>{it.location}</span>
-                    </div>
-                  )}
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Tersedia</span>
-                      <span className="font-semibold text-slate-900 dark:text-white">
-                        {available} <span className="text-slate-400 font-normal">/ {total}</span>
+          <>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Menampilkan {filtered.length} barang
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filtered.map((item) => {
+                const cond = conditionConfig[item.condition] || conditionConfig.fair;
+                const available = item.available_quantity ?? 0;
+                const isAvailable = available > 0;
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-lg transition-all hover:scale-[1.02]"
+                  >
+                    <div className="h-40 bg-slate-200 dark:bg-slate-700 overflow-hidden relative">
+                      <img
+                        src={item.image_url || FALLBACK_IMAGE}
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = FALLBACK_IMAGE;
+                        }}
+                      />
+                      <span className={cn(
+                        'absolute top-3 right-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium',
+                        cond.badge
+                      )}>
+                        <span className={cn('w-1.5 h-1.5 rounded-full', cond.dot)} />
+                        {cond.label}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-500"
-                        style={{ width: `${total > 0 ? Math.min(100, (available / total) * 100) : 0}%` }}
-                      />
+                    <div className="p-4">
+                      {item.code && (
+                        <p className="text-xs text-slate-400 dark:text-slate-500 font-mono mb-1">{item.code}</p>
+                      )}
+                      <h3 className="font-semibold text-slate-900 dark:text-white mb-1 line-clamp-1">{item.name}</h3>
+                      {item.categories?.name && (
+                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 mb-2">
+                          {item.categories.name}
+                        </span>
+                      )}
+                      {item.location && (
+                        <div className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 mb-2">
+                          <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="truncate">{item.location}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700">
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <Boxes className="w-4 h-4 text-slate-400" />
+                          <span className={cn(
+                            'font-medium',
+                            isAvailable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'
+                          )}>
+                            {available} / {item.quantity} tersedia
+                          </span>
+                        </div>
+                        {isAvailable && (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        )}
+                      </div>
                     </div>
                   </div>
-
-                  {it.manager_name && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
-                      PJ: <span className="font-medium text-slate-700 dark:text-slate-300">{it.manager_name}</span>
-                      {it.manager_role && ` (${it.manager_role})`}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
-      </main>
-      <Footer />
+      </div>
+
+      <div className="mt-auto">
+        <Footer />
+      </div>
     </div>
   );
 }

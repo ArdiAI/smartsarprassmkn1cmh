@@ -5,22 +5,11 @@ import {
   Clock,
   CheckCircle2,
   Boxes,
-  TrendingUp,
   ArrowRight,
   AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
-import { showToast } from '../../components/Toast';
-
-interface Borrowing {
-  id: string;
-  borrower_name: string;
-  borrower_class: string;
-  status: string;
-  borrow_date: string;
-  current_status_label: string | null;
-}
 
 interface Stats {
   totalBorrowings: number;
@@ -29,13 +18,30 @@ interface Stats {
   inventoryCount: number;
 }
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  completed: 'bg-slate-100 text-slate-700 dark:bg-slate-700/50 dark:text-slate-300',
-  cancelled: 'bg-slate-100 text-slate-500 dark:bg-slate-700/30 dark:text-slate-400',
+interface Borrowing {
+  id: string;
+  borrower_name: string;
+  item_type: string;
+  status: string;
+  created_at: string;
+}
+
+const statusStyles: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  completed: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
+  cancelled: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+};
+
+const statusLabels: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  returned: 'Dikembalikan',
+  rejected: 'Ditolak',
+  completed: 'Selesai',
+  cancelled: 'Dibatalkan',
 };
 
 export default function DashboardPage() {
@@ -45,179 +51,163 @@ export default function DashboardPage() {
     approved: 0,
     inventoryCount: 0,
   });
-  const [recentBorrowings, setRecentBorrowings] = useState<Borrowing[]>([]);
+  const [recent, setRecent] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [borrowingsRes, pendingRes, approvedRes, inventoryRes] = await Promise.all([
-          supabase.from('borrowings').select('*', { count: 'exact', head: true }),
-          supabase.from('borrowings').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-          supabase.from('borrowings').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
-          supabase.from('inventory').select('*', { count: 'exact', head: true }),
-        ]);
-
-        setStats({
-          totalBorrowings: borrowingsRes.count ?? 0,
-          pending: pendingRes.count ?? 0,
-          approved: approvedRes.count ?? 0,
-          inventoryCount: inventoryRes.count ?? 0,
-        });
-
-        const { data: recent } = await supabase
+    const fetchData = async () => {
+      const [
+        { count: totalBorrowings },
+        { count: pending },
+        { count: approved },
+        { count: inventoryCount },
+        { data: recentData },
+      ] = await Promise.all([
+        supabase.from('borrowings').select('*', { count: 'exact', head: true }),
+        supabase.from('borrowings').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('borrowings').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
+        supabase.from('inventory').select('*', { count: 'exact', head: true }),
+        supabase
           .from('borrowings')
-          .select('id, borrower_name, borrower_class, status, borrow_date, current_status_label')
+          .select('id, borrower_name, item_type, status, created_at')
           .order('created_at', { ascending: false })
-          .limit(5);
-        setRecentBorrowings((recent as unknown as Borrowing[]) || []);
-      } catch {
-        showToast('Gagal memuat data dashboard', 'error');
-      } finally {
-        setLoading(false);
-      }
+          .limit(5),
+      ]);
+
+      setStats({
+        totalBorrowings: totalBorrowings ?? 0,
+        pending: pending ?? 0,
+        approved: approved ?? 0,
+        inventoryCount: inventoryCount ?? 0,
+      });
+      setRecent((recentData as unknown as Borrowing[]) || []);
+      setLoading(false);
     };
-    load();
+    fetchData();
   }, []);
 
-  const statCards = [
+  const cards = [
     {
       label: 'Total Peminjaman',
       value: stats.totalBorrowings,
       icon: PackageOpen,
-      color: 'from-blue-500 to-cyan-500',
+      color: 'from-blue-500 to-cyan-400',
+      to: '/admin/borrowings',
     },
     {
       label: 'Menunggu Persetujuan',
       value: stats.pending,
       icon: Clock,
-      color: 'from-amber-500 to-orange-500',
+      color: 'from-amber-500 to-orange-400',
+      to: '/admin/borrowings',
     },
     {
       label: 'Disetujui',
       value: stats.approved,
       icon: CheckCircle2,
-      color: 'from-emerald-500 to-teal-500',
+      color: 'from-emerald-500 to-green-400',
+      to: '/admin/borrowings',
     },
     {
       label: 'Total Inventaris',
       value: stats.inventoryCount,
       icon: Boxes,
-      color: 'from-violet-500 to-purple-500',
+      color: 'from-violet-500 to-purple-400',
+      to: '/admin/inventory',
     },
   ];
 
   const quickActions = [
-    { label: 'Kelola Peminjaman', to: '/admin/borrowings', icon: PackageOpen },
     { label: 'Kelola Inventaris', to: '/admin/inventory', icon: Boxes },
-    { label: 'Lihat Laporan', to: '/admin/reports', icon: AlertTriangle },
-    { label: 'Statistik', to: '/admin/statistics', icon: TrendingUp },
+    { label: 'Kelola Fasilitas', to: '/admin/facilities', icon: PackageOpen },
+    { label: 'Tinjau Laporan', to: '/admin/reports', icon: AlertTriangle },
+    { label: 'Lihat Statistik', to: '/admin/statistics', icon: CheckCircle2 },
   ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Dashboard</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Ringkasan aktivitas sistem SMART SARPRAS
+          Ringkasan aktivitas dan statistik sistem
         </p>
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map(card => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.label}
-              className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200/50 dark:border-slate-700/50 shadow-sm"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{card.label}</p>
-                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
-                    {loading ? '—' : card.value}
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    'w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center',
-                    card.color
-                  )}
-                >
-                  <Icon className="w-6 h-6 text-white" />
-                </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {cards.map((card) => (
+          <Link
+            key={card.label}
+            to={card.to}
+            className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center', card.color)}>
+                <card.icon className="w-6 h-6 text-white" />
               </div>
+              <ArrowRight className="w-5 h-5 text-slate-300 dark:text-slate-600" />
             </div>
-          );
-        })}
+            <p className="text-3xl font-bold text-slate-800 dark:text-white">
+              {loading ? '...' : card.value}
+            </p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{card.label}</p>
+          </Link>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent borrowings */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700/50">
-            <h2 className="font-semibold text-slate-900 dark:text-white">Peminjaman Terbaru</h2>
+      {/* Quick actions */}
+      <div>
+        <h3 className="text-lg font-semibold text-slate-800 dark:text-white mb-4">Aksi Cepat</h3>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {quickActions.map((action) => (
             <Link
-              to="/admin/borrowings"
-              className="text-sm text-blue-500 hover:text-blue-600 flex items-center gap-1"
+              key={action.label}
+              to={action.to}
+              className="flex items-center gap-3 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
             >
-              Lihat semua <ArrowRight className="w-4 h-4" />
+              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                <action.icon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{action.label}</span>
             </Link>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {loading ? (
-              <div className="p-8 text-center text-slate-400 text-sm">Memuat...</div>
-            ) : recentBorrowings.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">Belum ada peminjaman</div>
-            ) : (
-              recentBorrowings.map(b => (
-                <div key={b.id} className="flex items-center justify-between px-5 py-3">
-                  <div className="min-w-0">
-                    <p className="font-medium text-slate-900 dark:text-white text-sm truncate">
-                      {b.borrower_name ?? '—'}
-                    </p>
-                    <p className="text-xs text-slate-400 truncate">
-                      {b.borrower_class ?? '—'} • {b.borrow_date ?? '—'}
-                    </p>
-                  </div>
-                  <span
-                    className={cn(
-                      'px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0',
-                      statusColors[b.status] ?? statusColors.pending
-                    )}
-                  >
-                    {b.current_status_label ?? b.status}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
+          ))}
         </div>
+      </div>
 
-        {/* Quick actions */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm p-5">
-          <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Aksi Cepat</h2>
-          <div className="space-y-2">
-            {quickActions.map(action => {
-              const Icon = action.icon;
-              return (
-                <Link
-                  key={action.to}
-                  to={action.to}
-                  className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/30 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors group"
-                >
-                  <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-700 flex items-center justify-center group-hover:bg-blue-500 transition-colors">
-                    <Icon className="w-5 h-5 text-blue-500 group-hover:text-white transition-colors" />
+      {/* Recent borrowings */}
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+          <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Peminjaman Terbaru</h3>
+          <Link
+            to="/admin/borrowings"
+            className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+          >
+            Lihat semua <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+        <div className="divide-y divide-slate-100 dark:divide-slate-700">
+          {recent.length === 0 ? (
+            <p className="p-5 text-center text-sm text-slate-400 dark:text-slate-500">Belum ada peminjaman</p>
+          ) : (
+            recent.map((b) => (
+              <div key={b.id} className="flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                    <PackageOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                   </div>
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200 flex-1">
-                    {action.label}
-                  </span>
-                  <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500" />
-                </Link>
-              );
-            })}
-          </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-white">{b.borrower_name ?? 'N/A'}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {b.item_type ?? 'Item'} • {new Date(b.created_at ?? '').toLocaleDateString('id-ID')}
+                    </p>
+                  </div>
+                </div>
+                <span className={cn('px-3 py-1 rounded-full text-xs font-medium', statusStyles[b.status] ?? statusStyles.pending)}>
+                  {statusLabels[b.status] ?? b.status}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
