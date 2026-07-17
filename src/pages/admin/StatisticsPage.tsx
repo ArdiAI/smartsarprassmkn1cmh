@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  PackageOpen,
-  Boxes,
-  Building2,
-  FileWarning,
-  TrendingUp,
-} from 'lucide-react';
+import { Loader2, ClipboardList, Package, Building2, FileWarning, TrendingUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
 
@@ -20,9 +14,18 @@ interface StatusData {
 }
 
 interface CategoryData {
-  name: string;
+  category: string;
   count: number;
 }
+
+const statusColors: Record<string, string> = {
+  pending: 'bg-amber-500',
+  approved: 'bg-blue-500',
+  returned: 'bg-emerald-500',
+  rejected: 'bg-red-500',
+  completed: 'bg-cyan-500',
+  cancelled: 'bg-slate-500',
+};
 
 const statusLabels: Record<string, string> = {
   pending: 'Menunggu',
@@ -33,14 +36,7 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Dibatalkan',
 };
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-amber-500',
-  approved: 'bg-blue-500',
-  returned: 'bg-emerald-500',
-  rejected: 'bg-red-500',
-  completed: 'bg-cyan-500',
-  cancelled: 'bg-slate-500',
-};
+const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
 export default function StatisticsPage() {
   const [loading, setLoading] = useState(true);
@@ -56,94 +52,91 @@ export default function StatisticsPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      const [
-        { count: totalBorrowings },
-        { count: totalInventory },
-        { count: totalFacilities },
-        { count: totalReports },
-        { data: borrowingsData },
-        { data: inventoryData },
-      ] = await Promise.all([
-        supabase.from('borrowings').select('*', { count: 'exact', head: true }),
-        supabase.from('inventory').select('*', { count: 'exact', head: true }),
-        supabase.from('facilities').select('*', { count: 'exact', head: true }),
-        supabase.from('damage_reports').select('*', { count: 'exact', head: true }),
-        supabase.from('borrowings').select('created_at, status'),
-        supabase.from('inventory').select('category_id'),
+      const [borrowingsRes, inventoryRes, facilitiesRes, reportsRes] = await Promise.all([
+        supabase.from('borrowings').select('status, created_at'),
+        supabase.from('inventory').select('id, category_id'),
+        supabase.from('facilities').select('id', { count: 'exact', head: true }),
+        supabase.from('damage_reports').select('id', { count: 'exact', head: true }),
       ]);
 
+      const borrowings = (borrowingsRes.data as unknown as { status: string; created_at: string }[]) ?? [];
+      const inventory = (inventoryRes.data as unknown as { id: string; category_id: string | null }[]) ?? [];
+
       setSummary({
-        totalBorrowings: totalBorrowings ?? 0,
-        totalInventory: totalInventory ?? 0,
-        totalFacilities: totalFacilities ?? 0,
-        totalReports: totalReports ?? 0,
+        totalBorrowings: borrowings.length,
+        totalInventory: inventory.length,
+        totalFacilities: facilitiesRes.count ?? 0,
+        totalReports: reportsRes.count ?? 0,
       });
 
-      // Monthly trends (last 6 months)
-      const borrowings = (borrowingsData as unknown as { created_at: string; status: string }[]) || [];
-      const now = new Date();
-      const months: MonthlyData[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const monthLabel = d.toLocaleDateString('id-ID', { month: 'short' });
-        const count = borrowings.filter((b) => {
-          const bDate = new Date(b.created_at ?? '');
-          const bKey = `${bDate.getFullYear()}-${String(bDate.getMonth() + 1).padStart(2, '0')}`;
-          return bKey === monthKey;
-        }).length;
-        months.push({ month: monthLabel, count });
-      }
-      setMonthlyData(months);
+      // Monthly trends (current year)
+      const currentYear = new Date().getFullYear();
+      const monthlyMap: Record<number, number> = {};
+      borrowings.forEach(b => {
+        const d = new Date(b.created_at);
+        if (d.getFullYear() === currentYear) {
+          monthlyMap[d.getMonth()] = (monthlyMap[d.getMonth()] ?? 0) + 1;
+        }
+      });
+      const monthly: MonthlyData[] = monthLabels.map((label, idx) => ({
+        month: label,
+        count: monthlyMap[idx] ?? 0,
+      }));
+      setMonthlyData(monthly);
 
       // Borrowings by status
-      const statusCounts: Record<string, number> = {};
-      borrowings.forEach((b) => {
-        const s = b.status ?? 'pending';
-        statusCounts[s] = (statusCounts[s] ?? 0) + 1;
+      const statusMap: Record<string, number> = {};
+      borrowings.forEach(b => {
+        statusMap[b.status] = (statusMap[b.status] ?? 0) + 1;
       });
-      setStatusData(Object.entries(statusCounts).map(([status, count]) => ({ status, count })));
+      const statusArr: StatusData[] = Object.entries(statusMap).map(([status, count]) => ({ status, count }));
+      setStatusData(statusArr);
 
       // Inventory by category
-      const { data: categories } = await supabase.from('categories').select('id, name');
-      const cats = (categories as unknown as { id: string; name: string }[]) || [];
-      const invItems = (inventoryData as unknown as { category_id: string | null }[]) || [];
-      const catCounts: Record<string, number> = {};
-      invItems.forEach((item) => {
-        const key = item.category_id ?? 'uncategorized';
-        catCounts[key] = (catCounts[key] ?? 0) + 1;
+      const categoryIds = new Set<string>();
+      inventory.forEach(i => {
+        if (i.category_id) categoryIds.add(i.category_id);
       });
-      const catData: CategoryData[] = cats.map((c) => ({
-        name: c.name,
-        count: catCounts[c.id] ?? 0,
-      }));
-      // Add uncategorized if any
-      if (catCounts['uncategorized']) {
-        catData.push({ name: 'Tanpa Kategori', count: catCounts['uncategorized'] });
-      }
-      setCategoryData(catData);
+      const { data: categoriesData } = await supabase
+        .from('categories')
+        .select('id, name')
+        .in('id', Array.from(categoryIds));
+
+      const categoryMap: Record<string, string> = {};
+      ((categoriesData as unknown as { id: string; name: string }[]) ?? []).forEach(c => {
+        categoryMap[c.id] = c.name;
+      });
+
+      const catCountMap: Record<string, number> = {};
+      inventory.forEach(i => {
+        const catName = i.category_id ? (categoryMap[i.category_id] ?? 'Lainnya') : 'Tanpa Kategori';
+        catCountMap[catName] = (catCountMap[catName] ?? 0) + 1;
+      });
+      const catArr: CategoryData[] = Object.entries(catCountMap)
+        .map(([category, count]) => ({ category, count }))
+        .sort((a, b) => b.count - a.count);
+      setCategoryData(catArr);
 
       setLoading(false);
     };
     fetchAll();
   }, []);
 
-  const maxMonthly = Math.max(...monthlyData.map((m) => m.count), 1);
-  const maxStatus = Math.max(...statusData.map((s) => s.count), 1);
-  const maxCategory = Math.max(...categoryData.map((c) => c.count), 1);
-  const totalStatus = statusData.reduce((sum, s) => sum + s.count, 0) || 1;
+  const maxMonthly = Math.max(...monthlyData.map(d => d.count), 1);
+  const maxStatus = Math.max(...statusData.map(d => d.count), 1);
+  const maxCategory = Math.max(...categoryData.map(d => d.count), 1);
 
   const summaryCards = [
-    { label: 'Total Peminjaman', value: summary.totalBorrowings, icon: PackageOpen, color: 'from-blue-500 to-cyan-400' },
-    { label: 'Total Inventaris', value: summary.totalInventory, icon: Boxes, color: 'from-violet-500 to-purple-400' },
-    { label: 'Total Fasilitas', value: summary.totalFacilities, icon: Building2, color: 'from-emerald-500 to-green-400' },
-    { label: 'Laporan Kerusakan', value: summary.totalReports, icon: FileWarning, color: 'from-amber-500 to-orange-400' },
+    { label: 'Total Peminjaman', value: summary.totalBorrowings, icon: ClipboardList, color: 'from-blue-500 to-blue-600' },
+    { label: 'Total Inventaris', value: summary.totalInventory, icon: Package, color: 'from-cyan-500 to-cyan-600' },
+    { label: 'Total Fasilitas', value: summary.totalFacilities, icon: Building2, color: 'from-purple-500 to-purple-600' },
+    { label: 'Laporan Kerusakan', value: summary.totalReports, icon: FileWarning, color: 'from-amber-500 to-amber-600' },
   ];
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
       </div>
     );
   }
@@ -151,69 +144,89 @@ export default function StatisticsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Statistik</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Ringkasan dan tren data sistem</p>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Statistik</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Ringkasan dan tren data SMART SARPRAS
+        </p>
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {summaryCards.map((card) => (
-          <div key={card.label} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700">
-            <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center mb-4', card.color)}>
-              <card.icon className="w-6 h-6 text-white" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {summaryCards.map(card => {
+          const Icon = card.icon;
+          return (
+            <div
+              key={card.label}
+              className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div
+                  className={cn(
+                    'w-11 h-11 rounded-xl bg-gradient-to-br flex items-center justify-center text-white',
+                    card.color
+                  )}
+                >
+                  <Icon className="w-5 h-5" />
+                </div>
+              </div>
+              <p className="text-2xl font-bold text-slate-800 dark:text-white">{card.value}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{card.label}</p>
             </div>
-            <p className="text-3xl font-bold text-slate-800 dark:text-white">{card.value}</p>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{card.label}</p>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Monthly trends bar chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-          <div className="flex items-center gap-2 mb-5">
-            <TrendingUp className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Tren Peminjaman (6 Bulan)</h3>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-blue-500" />
+            <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
+              Tren Peminjaman Bulanan ({new Date().getFullYear()})
+            </h2>
           </div>
-          <div className="flex items-end justify-between gap-3 h-48">
-            {monthlyData.map((m, idx) => (
-              <div key={idx} className="flex-1 flex flex-col items-center gap-2">
-                <div className="w-full flex items-end justify-center h-full">
+          <div className="flex items-end justify-between gap-1.5 h-48">
+            {monthlyData.map(d => (
+              <div key={d.month} className="flex-1 flex flex-col items-center gap-1.5">
+                <div className="w-full flex-1 flex items-end">
                   <div
-                    className="w-full max-w-[3rem] rounded-t-lg bg-gradient-to-t from-blue-600 to-cyan-400 transition-all duration-500 flex items-start justify-center pt-2"
-                    style={{ height: `${(m.count / maxMonthly) * 100}%`, minHeight: m.count > 0 ? '8px' : '2px' }}
-                  >
-                    {m.count > 0 && (
-                      <span className="text-xs font-bold text-white">{m.count}</span>
+                    className={cn(
+                      'w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-cyan-400 transition-all hover:opacity-80',
+                      d.count === 0 && 'opacity-30'
                     )}
-                  </div>
+                    style={{ height: `${(d.count / maxMonthly) * 100}%`, minHeight: d.count > 0 ? '4px' : '2px' }}
+                    title={`${d.count} peminjaman`}
+                  />
                 </div>
-                <span className="text-xs text-slate-500 dark:text-slate-400">{m.month}</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500">{d.month}</span>
+                {d.count > 0 && (
+                  <span className="text-[10px] font-medium text-slate-600 dark:text-slate-300">{d.count}</span>
+                )}
               </div>
             ))}
           </div>
         </div>
 
         {/* Borrowings by status */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-          <h3 className="text-lg font-semibold text-slate-800 dark:text-white mb-5">Peminjaman per Status</h3>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-800 dark:text-white mb-4">
+            Peminjaman per Status
+          </h2>
           {statusData.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500 text-center py-12">Tidak ada data</p>
+            <p className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Belum ada data</p>
           ) : (
-            <div className="space-y-4">
-              {statusData.map((s) => (
+            <div className="space-y-3">
+              {statusData.map(s => (
                 <div key={s.status}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-slate-600 dark:text-slate-300">
                       {statusLabels[s.status] ?? s.status}
                     </span>
-                    <span className="text-sm text-slate-500 dark:text-slate-400">
-                      {s.count} ({Math.round((s.count / totalStatus) * 100)}%)
-                    </span>
+                    <span className="text-sm font-semibold text-slate-800 dark:text-white">{s.count}</span>
                   </div>
-                  <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                  <div className="h-3 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
                     <div
-                      className={cn('h-full rounded-full transition-all duration-500', statusColors[s.status] ?? 'bg-slate-500')}
+                      className={cn('h-full rounded-full transition-all', statusColors[s.status] ?? 'bg-slate-500')}
                       style={{ width: `${(s.count / maxStatus) * 100}%` }}
                     />
                   </div>
@@ -225,21 +238,23 @@ export default function StatisticsPage() {
       </div>
 
       {/* Inventory by category */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-        <h3 className="text-lg font-semibold text-slate-800 dark:text-white mb-5">Inventaris per Kategori</h3>
+      <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-800 dark:text-white mb-4">
+          Inventaris per Kategori
+        </h2>
         {categoryData.length === 0 ? (
-          <p className="text-sm text-slate-400 dark:text-slate-500 text-center py-12">Tidak ada data</p>
+          <p className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Belum ada data</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {categoryData.map((c, idx) => (
-              <div key={idx} className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{c.name}</span>
-                  <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{c.count}</span>
+          <div className="space-y-3">
+            {categoryData.map(c => (
+              <div key={c.category}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-slate-600 dark:text-slate-300">{c.category}</span>
+                  <span className="text-sm font-semibold text-slate-800 dark:text-white">{c.count}</span>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                <div className="h-3 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-500"
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all"
                     style={{ width: `${(c.count / maxCategory) * 100}%` }}
                   />
                 </div>

@@ -13,6 +13,7 @@ import HistoryPage from './pages/HistoryPage';
 import ReportPage from './pages/ReportPage';
 import AboutPage from './pages/AboutPage';
 import BorrowPage from './pages/BorrowPage';
+import RekapPage from './pages/RekapPage';
 
 import AdminLayout from './layouts/AdminLayout';
 import DashboardPage from './pages/admin/DashboardPage';
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/laporan" element={<RequireAuth><ReportPage /></RequireAuth>} />
         <Route path="/tentang" element={<RequireAuth><AboutPage /></RequireAuth>} />
         <Route path="/pinjam" element={<RequireAuth><BorrowPage /></RequireAuth>} />
+        <Route path="/rekap" element={<RequireAuth><RekapPage /></RequireAuth>} />
 
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
           <Route index element={<DashboardPage />} />

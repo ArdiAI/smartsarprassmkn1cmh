@@ -1,39 +1,44 @@
-import { useEffect, useState } from 'react';
-import { FileWarning, Filter, CheckCircle2, Clock, AlertTriangle, X } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Loader2, FileWarning, MapPin, User, X, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
+import { cn } from '../../utils/cn';
 
-interface DamageReport {
+interface DamageReportRow {
   id: string;
   inventory_id: string | null;
   reporter_name: string;
   description: string;
-  image_url: string;
+  image_url: string | null;
   severity: string;
   status: string;
-  resolution_notes: string;
+  resolution_notes: string | null;
   created_at: string;
-  resolved_at: string;
-  reporter_unit: string;
-  reporter_email: string;
-  reporter_phone: string;
-  location: string;
+  resolved_at: string | null;
+  reporter_unit: string | null;
+  reporter_email: string | null;
+  reporter_phone: string | null;
+  location: string | null;
 }
 
-const severityStyles: Record<string, string> = {
+interface InventoryRow {
+  id: string;
+  name: string;
+}
+
+const severityColors: Record<string, string> = {
   minor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   moderate: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   severe: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
 };
 
 const severityLabels: Record<string, string> = {
-  minor: 'Ringan',
-  moderate: 'Sedang',
-  severe: 'Berat',
+  minor: 'Minor',
+  moderate: 'Moderate',
+  severe: 'Severe',
 };
 
-const statusStyles: Record<string, string> = {
+const statusColors: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   in_progress: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
   resolved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
@@ -41,218 +46,329 @@ const statusStyles: Record<string, string> = {
 
 const statusLabels: Record<string, string> = {
   pending: 'Menunggu',
-  in_progress: 'Diproses',
+  in_progress: 'Sedang Diproses',
   resolved: 'Selesai',
 };
 
+const nextStatus: Record<string, string> = {
+  pending: 'in_progress',
+  in_progress: 'resolved',
+};
+
 export default function ReportsAdminPage() {
-  const [reports, setReports] = useState<DamageReport[]>([]);
+  const [reports, setReports] = useState<DamageReportRow[]>([]);
+  const [inventoryMap, setInventoryMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [severityFilter, setSeverityFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [activeReport, setActiveReport] = useState<DamageReport | null>(null);
-  const [resolutionNotes, setResolutionNotes] = useState('');
-  const [newStatus, setNewStatus] = useState('pending');
+  const [filterSeverity, setFilterSeverity] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [resolutionText, setResolutionText] = useState('');
+  const [updating, setUpdating] = useState<string | null>(null);
 
-  const fetchReports = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('damage_reports').select('*').order('created_at', { ascending: false });
-    setReports((data as unknown as DamageReport[]) || []);
-    setLoading(false);
-  };
+    const { data, error } = await supabase
+      .from('damage_reports')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  useEffect(() => {
-    fetchReports();
+    if (error) {
+      showToast('Gagal memuat laporan', 'error');
+    } else {
+      const rows = (data as unknown as DamageReportRow[]) ?? [];
+      setReports(rows);
+
+      const invIds = new Set<string>();
+      rows.forEach(r => {
+        if (r.inventory_id) invIds.add(r.inventory_id);
+      });
+      if (invIds.size > 0) {
+        const { data: invData } = await supabase
+          .from('inventory')
+          .select('id, name')
+          .in('id', Array.from(invIds));
+        const map: Record<string, string> = {};
+        ((invData as unknown as InventoryRow[]) ?? []).forEach(i => {
+          map[i.id] = i.name;
+        });
+        setInventoryMap(map);
+      }
+    }
+    setLoading(false);
   }, []);
 
-  const filtered = reports.filter((r) => {
-    if (severityFilter !== 'all' && r.severity !== severityFilter) return false;
-    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const filtered = reports.filter(r => {
+    if (filterSeverity !== 'all' && r.severity !== filterSeverity) return false;
+    if (filterStatus !== 'all' && r.status !== filterStatus) return false;
     return true;
   });
 
-  const openModal = (report: DamageReport) => {
-    setActiveReport(report);
-    setResolutionNotes(report.resolution_notes ?? '');
-    setNewStatus(report.status ?? 'pending');
-    setModalOpen(true);
+  const handleUpdateStatus = async (report: DamageReportRow, newStatus: string) => {
+    setUpdating(report.id);
+    const updates: Record<string, unknown> = {
+      status: newStatus,
+    };
+
+    if (newStatus === 'resolved') {
+      updates.resolved_at = new Date().toISOString();
+      if (resolutionText.trim()) {
+        updates.resolution_notes = resolutionText.trim();
+      }
+    }
+
+    const { error } = await supabase.from('damage_reports').update(updates).eq('id', report.id);
+
+    if (error) {
+      showToast('Gagal memperbarui status', 'error');
+    } else {
+      showToast(`Status diperbarui ke: ${statusLabels[newStatus] ?? newStatus}`, 'success');
+      setDetailId(null);
+      setResolutionText('');
+      fetchData();
+    }
+    setUpdating(null);
   };
 
-  const handleUpdate = async () => {
-    if (!activeReport) return;
-    const isResolved = newStatus === 'resolved';
-    const { error } = await supabase
-      .from('damage_reports')
-      .update({
-        status: newStatus,
-        resolution_notes: resolutionNotes || null,
-        resolved_at: isResolved ? new Date().toISOString() : null,
-      })
-      .eq('id', activeReport.id);
-    if (error) {
-      showToast('Gagal memperbarui laporan', 'error');
-      return;
-    }
-    showToast('Laporan diperbarui', 'success');
-    setModalOpen(false);
-    await fetchReports();
-  };
+  const detailReport = detailId ? reports.find(r => r.id === detailId) : null;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Laporan Kerusakan</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Tinjau dan tangani laporan kerusakan</p>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Laporan Kerusakan</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Kelola laporan kerusakan barang dan fasilitas
+        </p>
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-          <Filter className="w-4 h-4" /> Filter:
+      <div className="flex flex-wrap gap-3">
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Severity</label>
+          <select
+            value={filterSeverity}
+            onChange={e => setFilterSeverity(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+          >
+            <option value="all">Semua</option>
+            <option value="minor">Minor</option>
+            <option value="moderate">Moderate</option>
+            <option value="severe">Severe</option>
+          </select>
         </div>
-        <select
-          value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none"
-        >
-          <option value="all">Semua Tingkat</option>
-          <option value="minor">Ringan</option>
-          <option value="moderate">Sedang</option>
-          <option value="severe">Berat</option>
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none"
-        >
-          <option value="all">Semua Status</option>
-          <option value="pending">Menunggu</option>
-          <option value="in_progress">Diproses</option>
-          <option value="resolved">Selesai</option>
-        </select>
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Status</label>
+          <select
+            value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+          >
+            <option value="all">Semua</option>
+            <option value="pending">Menunggu</option>
+            <option value="in_progress">Sedang Diproses</option>
+            <option value="resolved">Selesai</option>
+          </select>
+        </div>
       </div>
 
       {/* List */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
-          <FileWarning className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada laporan</p>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 border border-slate-200 dark:border-slate-700 text-center">
+          <FileWarning className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-2" />
+          <p className="text-slate-400 dark:text-slate-500">Tidak ada laporan ditemukan</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtered.map((report) => (
+        <div className="space-y-3">
+          {filtered.map(report => (
             <div
               key={report.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5"
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4"
             >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    'w-10 h-10 rounded-xl flex items-center justify-center',
-                    report.severity === 'severe' ? 'bg-red-50 dark:bg-red-900/20' : report.severity === 'moderate' ? 'bg-amber-50 dark:bg-amber-900/20' : 'bg-emerald-50 dark:bg-emerald-900/20'
-                  )}>
-                    <AlertTriangle className={cn(
-                      'w-5 h-5',
-                      report.severity === 'severe' ? 'text-red-600 dark:text-red-400' : report.severity === 'moderate' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
-                    )} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 dark:text-white">{report.reporter_name ?? 'N/A'}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {report.reporter_unit ?? ''} • {new Date(report.created_at ?? '').toLocaleDateString('id-ID')}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  {report.image_url ? (
+                    <img
+                      src={report.image_url}
+                      alt="damage"
+                      className="w-16 h-16 rounded-xl object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                      <FileWarning className="w-6 h-6 text-slate-400" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span
+                        className={cn(
+                          'px-2 py-0.5 rounded-lg text-xs font-medium',
+                          severityColors[report.severity] ?? severityColors.minor
+                        )}
+                      >
+                        {severityLabels[report.severity] ?? report.severity}
+                      </span>
+                      <span
+                        className={cn(
+                          'px-2 py-0.5 rounded-lg text-xs font-medium',
+                          statusColors[report.status] ?? statusColors.pending
+                        )}
+                      >
+                        {statusLabels[report.status] ?? report.status}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-white">
+                      {report.inventory_id ? (inventoryMap[report.inventory_id] ?? 'Item') : 'Item tidak diketahui'}
                     </p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
+                      {report.description}
+                    </p>
+                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 dark:text-slate-500">
+                      <span className="flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        {report.reporter_name}
+                      </span>
+                      {report.location && (
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          {report.location}
+                        </span>
+                      )}
+                      <span>{new Date(report.created_at).toLocaleDateString('id-ID')}</span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', severityStyles[report.severity] ?? severityStyles.minor)}>
-                    {severityLabels[report.severity] ?? report.severity}
-                  </span>
-                  <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', statusStyles[report.status] ?? statusStyles.pending)}>
-                    {statusLabels[report.status] ?? report.status}
-                  </span>
-                </div>
+                <button
+                  onClick={() => {
+                    setDetailId(report.id);
+                    setResolutionText(report.resolution_notes ?? '');
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-sm font-medium text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors flex-shrink-0"
+                >
+                  Kelola
+                </button>
               </div>
-
-              <p className="text-sm text-slate-600 dark:text-slate-300 mb-3">{report.description ?? ''}</p>
-
-              {report.location && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Lokasi: {report.location}</p>
-              )}
-
-              {report.resolution_notes && (
-                <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                  <p className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Catatan Penyelesaian:</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{report.resolution_notes}</p>
-                </div>
-              )}
-
-              <button
-                onClick={() => openModal(report)}
-                className="w-full mt-4 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-              >
-                <Clock className="w-4 h-4" /> Tangani Laporan
-              </button>
             </div>
           ))}
         </div>
       )}
 
-      {/* Modal */}
-      {modalOpen && activeReport && (
+      {/* Detail Modal */}
+      {detailReport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Tangani Laporan</h3>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <h2 className="text-lg font-semibold text-slate-800 dark:text-white">Detail Laporan</h2>
+              <button onClick={() => setDetailId(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <div className="text-sm text-slate-600 dark:text-slate-300">
-                <p className="font-medium text-slate-800 dark:text-white">{activeReport.reporter_name ?? 'N/A'}</p>
-                <p className="text-xs mt-1">{activeReport.description ?? ''}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-1 block">Status</label>
-                <select
-                  value={newStatus}
-                  onChange={(e) => setNewStatus(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none"
-                >
-                  <option value="pending">Menunggu</option>
-                  <option value="in_progress">Diproses</option>
-                  <option value="resolved">Selesai</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-1 block">Catatan Penyelesaian</label>
-                <textarea
-                  value={resolutionNotes}
-                  onChange={(e) => setResolutionNotes(e.target.value)}
-                  rows={4}
-                  placeholder="Tulis catatan penyelesaian..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none"
+              {detailReport.image_url && (
+                <img
+                  src={detailReport.image_url}
+                  alt="damage"
+                  className="w-full h-48 rounded-xl object-cover"
                 />
+              )}
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-medium',
+                    severityColors[detailReport.severity] ?? severityColors.minor
+                  )}
+                >
+                  {severityLabels[detailReport.severity] ?? detailReport.severity}
+                </span>
+                <span
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-medium',
+                    statusColors[detailReport.status] ?? statusColors.pending
+                  )}
+                >
+                  {statusLabels[detailReport.status] ?? detailReport.status}
+                </span>
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleUpdate}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                <CheckCircle2 className="w-4 h-4" /> Simpan
-              </button>
+              <div className="space-y-2 text-sm">
+                <div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">Pelapor</p>
+                  <p className="text-slate-700 dark:text-slate-200">{detailReport.reporter_name}</p>
+                </div>
+                {detailReport.reporter_unit && (
+                  <div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Unit</p>
+                    <p className="text-slate-700 dark:text-slate-200">{detailReport.reporter_unit}</p>
+                  </div>
+                )}
+                {detailReport.reporter_email && (
+                  <div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Email</p>
+                    <p className="text-slate-700 dark:text-slate-200">{detailReport.reporter_email}</p>
+                  </div>
+                )}
+                {detailReport.reporter_phone && (
+                  <div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Telepon</p>
+                    <p className="text-slate-700 dark:text-slate-200">{detailReport.reporter_phone}</p>
+                  </div>
+                )}
+                {detailReport.location && (
+                  <div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Lokasi</p>
+                    <p className="text-slate-700 dark:text-slate-200">{detailReport.location}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">Deskripsi</p>
+                  <p className="text-slate-700 dark:text-slate-200">{detailReport.description}</p>
+                </div>
+                {detailReport.resolution_notes && (
+                  <div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Catatan Resolusi</p>
+                    <p className="text-slate-700 dark:text-slate-200">{detailReport.resolution_notes}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Resolution notes input */}
+              {detailReport.status !== 'resolved' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                    Catatan Resolusi
+                  </label>
+                  <textarea
+                    value={resolutionText}
+                    onChange={e => setResolutionText(e.target.value)}
+                    rows={3}
+                    placeholder="Tambahkan catatan resolusi..."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                  />
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {detailReport.status !== 'resolved' && nextStatus[detailReport.status] && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handleUpdateStatus(detailReport, nextStatus[detailReport.status])}
+                    disabled={updating === detailReport.id}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+                  >
+                    {updating === detailReport.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : nextStatus[detailReport.status] === 'resolved' ? (
+                      <CheckCircle2 className="w-4 h-4" />
+                    ) : null}
+                    {nextStatus[detailReport.status] === 'in_progress' ? 'Proses' : 'Selesaikan'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

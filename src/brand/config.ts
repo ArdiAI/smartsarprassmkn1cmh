@@ -1,15 +1,15 @@
 export const brandConfig = {
   system: {
     name: 'SMART SARPRAS',
-    fullName: 'Sistem Manajemen Administrasi Ruang Tata Sarana dan Prasarana SMKN 1 Cimahi',
-    tagline: 'Sistem Manajemen Administrasi Ruang Tata Sarana dan Prasarana SMKN 1 Cimahi',
+    fullName: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
+    tagline: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
     shortName: 'SMART SARPRAS',
   },
   school: {
     name: 'SMART SARPRAS',
-    address: 'Jl. Mahar Martanegara No. 48, Kelurahan Leuwigajah, Kecamatan Cimahi Selatan, Kota Cimahi, Jawa Barat',
-    phone: '(022) 6629683',
-    email: 'info@smkn1-cmi.sch.id',
+    address: 'Indonesia',
+    phone: '',
+    email: '',
     website: '',
   },
   colors: {

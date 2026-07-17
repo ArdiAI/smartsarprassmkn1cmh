@@ -1,64 +1,48 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
-  Search,
-  Package,
-  Building2,
-  Plus,
-  Minus,
-  Trash2,
-  ShoppingCart,
-  User,
-  Mail,
-  Phone,
-  Calendar,
-  Clock,
-  FileText,
-  Loader2,
-  CheckCircle2,
-  ArrowLeft,
-  Boxes,
-  X,
+  ClipboardList, Search, Plus, Minus, Trash2, Package, Building2,
+  Loader2, CheckCircle2, ShoppingCart, Send, Calendar, Clock, User,
+  Mail, Phone, AlertCircle,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { supabase } from '../lib/supabase';
-import { getDefaultWorkflow } from '../lib/workflow';
 import { showToast } from '../components/Toast';
+import { supabase } from '../lib/supabase';
+import { getDefaultWorkflow, WorkflowTemplate } from '../lib/workflow';
 import { cn } from '../utils/cn';
 
 interface InventoryItem {
   id: string;
-  code: string;
+  code: string | null;
   name: string;
-  category_id: string;
   quantity: number;
-  available_quantity: number;
   condition: 'good' | 'fair' | 'poor';
-  location: string;
-  image_url: string;
+  location: string | null;
+  image_url: string | null;
+  available_quantity: number | null;
   categories: { name: string } | null;
 }
 
 interface Facility {
   id: string;
   name: string;
-  description: string;
-  location: string;
-  capacity: number;
-  image_url: string;
-  facility_type: string;
+  description: string | null;
+  location: string | null;
+  capacity: number | null;
+  image_url: string | null;
+  facility_type: string | null;
 }
 
 interface CartItem {
   id: string;
   type: 'barang' | 'fasilitas';
   name: string;
-  maxQty: number;
-  qty: number;
+  quantity: number;
+  maxAvailable: number;
 }
 
-interface BorrowerForm {
+interface FormState {
   borrower_name: string;
   borrower_class: string;
   borrower_email: string;
@@ -71,19 +55,18 @@ interface BorrowerForm {
   notes: string;
 }
 
-const FALLBACK_IMG = 'https://images.pexels.com/photos/2280571/pexels-photo-2280571.jpeg?auto=compress&cs=tinysrgb&w=400';
-const FALLBACK_FACILITY_IMG = 'https://images.pexels.com/photos/207692/pexels-photo-207692.jpeg?auto=compress&cs=tinysrgb&w=400';
+const FALLBACK_IMAGE = 'https://images.pexels.com/photos/4226119/pexels-photo-4226119.jpeg?auto=compress&cs=tinysrgb&w=400';
 
-function todayStr(): string {
+function todayISO(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-const emptyForm: BorrowerForm = {
+const emptyForm: FormState = {
   borrower_name: '',
   borrower_class: '',
   borrower_email: '',
   borrower_phone: '',
-  borrow_date: todayStr(),
+  borrow_date: todayISO(),
   return_date: '',
   start_time: '08:00',
   end_time: '16:00',
@@ -98,120 +81,119 @@ export default function BorrowPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [form, setForm] = useState<BorrowerForm>(emptyForm);
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<{ id: string; name: string; email: string; items: CartItem[] } | null>(null);
+  const [submitted, setSubmitted] = useState<{ id: string; name: string; email: string; items: CartItem[] } | null>(null);
 
   useEffect(() => {
-    (async () => {
+    const fetchAll = async () => {
       try {
         const [invRes, facRes] = await Promise.all([
           supabase
             .from('inventory')
-            .select('*, categories!category_id(name)')
-            .gt('available_quantity', 0)
+            .select('id, code, name, quantity, condition, location, image_url, available_quantity, categories!category_id(name)')
             .eq('condition', 'good')
-            .order('name', { ascending: true }),
+            .gt('available_quantity', 0),
           supabase
             .from('facilities')
-            .select('*')
-            .order('name', { ascending: true }),
+            .select('id, name, description, location, capacity, image_url, facility_type'),
         ]);
-
+        if (invRes.error) throw invRes.error;
+        if (facRes.error) throw facRes.error;
         setInventory((invRes.data as unknown as InventoryItem[]) || []);
         setFacilities((facRes.data as unknown as Facility[]) || []);
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error('Failed to fetch borrow data:', err);
+        showToast('Gagal memuat data. Muat ulang halaman.', 'error');
       } finally {
         setLoading(false);
       }
-    })();
+    };
+    fetchAll();
   }, []);
 
   const filteredInventory = useMemo(() => {
-    if (!search.trim()) return inventory;
-    const q = search.toLowerCase();
-    return inventory.filter(
-      (i) => i.name?.toLowerCase().includes(q) || i.code?.toLowerCase().includes(q) || i.location?.toLowerCase().includes(q)
-    );
+    const q = search.trim().toLowerCase();
+    if (!q) return inventory;
+    return inventory.filter((it) => it.name?.toLowerCase().includes(q) || it.code?.toLowerCase().includes(q));
   }, [inventory, search]);
 
   const filteredFacilities = useMemo(() => {
-    if (!search.trim()) return facilities;
-    const q = search.toLowerCase();
-    return facilities.filter(
-      (f) => f.name?.toLowerCase().includes(q) || f.location?.toLowerCase().includes(q) || f.facility_type?.toLowerCase().includes(q)
-    );
+    const q = search.trim().toLowerCase();
+    if (!q) return facilities;
+    return facilities.filter((f) => f.name?.toLowerCase().includes(q) || f.location?.toLowerCase().includes(q));
   }, [facilities, search]);
 
-  const addToCart = (item: Omit<CartItem, 'qty'>) => {
+  const addToCart = (item: { id: string; name: string; available_quantity?: number | null; quantity?: number; capacity?: number | null }, type: 'barang' | 'fasilitas') => {
+    const maxAvailable = type === 'barang' ? (item.available_quantity ?? item.quantity ?? 1) : (item.capacity ?? 1);
     setCart((prev) => {
-      const existing = prev.find((c) => c.id === item.id && c.type === item.type);
+      const existing = prev.find((c) => c.id === item.id && c.type === type);
       if (existing) {
-        return prev.map((c) =>
-          c.id === item.id && c.type === item.type
-            ? { ...c, qty: Math.min(c.qty + 1, c.maxQty) }
-            : c
-        );
+        if (existing.quantity >= maxAvailable) {
+          showToast('Mencapai batas maksimum tersedia', 'warning');
+          return prev;
+        }
+        return prev.map((c) => (c.id === item.id && c.type === type ? { ...c, quantity: c.quantity + 1 } : c));
       }
-      return [...prev, { ...item, qty: 1 }];
+      return [...prev, { id: item.id, type, name: item.name, quantity: 1, maxAvailable }];
     });
   };
 
-  const removeFromCart = (id: string, type: string) => {
-    setCart((prev) => prev.filter((c) => !(c.id === id && c.type === type)));
-  };
-
-  const updateQty = (id: string, type: string, delta: number) => {
+  const updateQty = (id: string, type: 'barang' | 'fasilitas', delta: number) => {
     setCart((prev) =>
       prev.map((c) => {
         if (c.id === id && c.type === type) {
-          const newQty = Math.max(1, Math.min(c.qty + delta, c.maxQty));
-          return { ...c, qty: newQty };
+          const next = c.quantity + delta;
+          if (next < 1) return c;
+          if (next > c.maxAvailable) {
+            showToast('Mencapai batas maksimum tersedia', 'warning');
+            return c;
+          }
+          return { ...c, quantity: next };
         }
         return c;
       })
     );
   };
 
-  const cartCount = cart.length;
+  const removeFromCart = (id: string, type: 'barang' | 'fasilitas') => {
+    setCart((prev) => prev.filter((c) => !(c.id === id && c.type === type)));
+  };
 
-  const validateForm = (): string | null => {
-    if (!form.borrower_name.trim()) return 'Nama peminjam wajib diisi';
-    if (!form.borrower_class.trim()) return 'Kelas/Unit wajib diisi';
-    if (!form.borrower_email.trim()) return 'Email wajib diisi';
-    if (!/^\S+@\S+\.\S+$/.test(form.borrower_email)) return 'Format email tidak valid';
-    if (!form.borrow_date) return 'Tanggal pinjam wajib diisi';
-    if (!form.return_date) return 'Tanggal kembali wajib diisi';
-    if (form.return_date < form.borrow_date) return 'Tanggal kembali harus setelah tanggal pinjam';
-    if (!form.purpose.trim()) return 'Keperluan wajib diisi';
-    if (form.purpose.trim().length < 10) return 'Keperluan minimal 10 karakter';
-    return null;
+  const validate = (): boolean => {
+    const e: Partial<Record<keyof FormState, string>> = {};
+    if (!form.borrower_name.trim()) e.borrower_name = 'Nama wajib diisi';
+    if (!form.borrower_class.trim()) e.borrower_class = 'Kelas/Unit wajib diisi';
+    if (!form.borrower_email.trim()) e.borrower_email = 'Email wajib diisi';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.borrower_email)) e.borrower_email = 'Format email tidak valid';
+    if (!form.borrow_date) e.borrow_date = 'Tanggal pinjam wajib diisi';
+    if (!form.return_date) e.return_date = 'Tanggal kembali wajib diisi';
+    else if (form.borrow_date && form.return_date < form.borrow_date) e.return_date = 'Tanggal kembali harus setelah tanggal pinjam';
+    if (!form.purpose.trim()) e.purpose = 'Keperluan wajib diisi';
+    else if (form.purpose.trim().length < 10) e.purpose = 'Keperluan minimal 10 karakter';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (cart.length === 0) {
       showToast('Keranjang masih kosong. Pilih minimal 1 item.', 'warning');
       return;
     }
-
-    const validationError = validateForm();
-    if (validationError) {
-      showToast(validationError, 'warning');
+    if (!validate()) {
+      showToast('Mohon lengkapi semua field yang wajib diisi', 'warning');
       return;
     }
-
     setSubmitting(true);
     try {
       // 1. Fetch default workflow
-      const workflow = await getDefaultWorkflow();
+      const workflow: WorkflowTemplate | null = await getDefaultWorkflow();
+      const workflowId = workflow?.id ?? null;
 
-      // 2. Determine item_type from cart
-      const itemType = cart.some((c) => c.type === 'fasilitas') && !cart.some((c) => c.type === 'barang')
-        ? 'fasilitas'
-        : 'barang';
+      // 2. Determine item_type from cart (use first item's type or 'barang' if mixed)
+      const primaryType: 'barang' | 'fasilitas' = cart[0]?.type ?? 'barang';
 
       // 3. Insert into borrowings
       const borrowingPayload = {
@@ -225,46 +207,41 @@ export default function BorrowPage() {
         end_time: form.end_time || null,
         purpose: form.purpose.trim(),
         notes: form.notes.trim() || null,
-        status: 'pending',
+        status: 'pending' as const,
         current_step: 1,
         current_status_label: 'Menunggu Persetujuan',
-        item_type: itemType,
-        workflow_template_id: workflow?.id || null,
+        item_type: primaryType,
+        workflow_template_id: workflowId,
       };
-
       const { data: borrowingData, error: borrowingError } = await supabase
         .from('borrowings')
         .insert(borrowingPayload)
         .select('id')
         .single();
-
       if (borrowingError) throw borrowingError;
       const borrowingId = (borrowingData as unknown as { id: string }).id;
 
-      // 4. Insert borrowing_items
+      // 4. Insert each cart item into borrowing_items
       const itemPayloads = cart.map((c) => ({
         borrowing_id: borrowingId,
         inventory_id: c.type === 'barang' ? c.id : null,
         facility_id: c.type === 'fasilitas' ? c.id : null,
         item_type: c.type,
         item_name: c.name,
-        quantity: c.qty,
+        quantity: c.quantity,
         status: 'pending',
         current_step: 1,
         current_status_label: 'Menunggu Persetujuan',
-        workflow_template_id: workflow?.id || null,
+        workflow_template_id: workflowId,
       }));
-
       const { error: itemsError } = await supabase
         .from('borrowing_items')
         .insert(itemPayloads);
-
       if (itemsError) throw itemsError;
 
-      // 5. Send email notification
+      // 5. POST to edge function for email
       try {
-        const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v2/send-borrowing-email`;
-        await fetch(apiUrl, {
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v2/send-borrowing-email`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -274,98 +251,39 @@ export default function BorrowPage() {
             borrower_email: form.borrower_email.trim(),
           }),
         });
-      } catch {
-        // Email is best-effort; don't fail the submission
+      } catch (emailErr) {
+        console.warn('Email notification failed (non-blocking):', emailErr);
       }
 
       // 6. Success state
-      setSuccess({
+      setSubmitted({
         id: borrowingId,
         name: form.borrower_name.trim(),
         email: form.borrower_email.trim(),
-        items: [...cart],
+        items: cart,
       });
       setCart([]);
       setForm(emptyForm);
-      showToast('Peminjaman berhasil diajukan!', 'success');
-    } catch {
-      showToast('Gagal mengajukan peminjaman. Silakan coba lagi.', 'error');
+      setErrors({});
+      showToast('Pengajuan peminjaman berhasil dikirim!', 'success');
+    } catch (err) {
+      console.error('Failed to submit borrowing:', err);
+      showToast('Gagal mengirim pengajuan. Silakan coba lagi.', 'error');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleReset = () => {
-    setSuccess(null);
+  const handleChange = (field: keyof FormState, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
-  const inputClass = 'w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors';
+  const handleAnother = () => {
+    setSubmitted(null);
+  };
 
-  // Success state
-  if (success) {
-    return (
-      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
-        <Navbar />
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-sm text-center">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
-            </div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Peminjaman Berhasil Diajukan!</h2>
-            <p className="text-slate-500 dark:text-slate-400 mb-6">
-              Pengajuan peminjaman Anda telah berhasil dikirim dan sedang menunggu persetujuan.
-            </p>
-
-            <div className="text-left bg-slate-50 dark:bg-slate-700/30 rounded-2xl p-5 mb-6 space-y-3">
-              <div className="flex items-center gap-3">
-                <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <div>
-                  <p className="text-xs text-slate-400">Peminjam</p>
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{success.name}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <div>
-                  <p className="text-xs text-slate-400">Email</p>
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{success.email}</p>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 mb-2">Item Dipinjam</p>
-                <div className="space-y-1.5">
-                  {success.items.map((item, i) => (
-                    <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-800">
-                      <div className="flex items-center gap-2">
-                        {item.type === 'fasilitas' ? (
-                          <Building2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                        ) : (
-                          <Package className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                        )}
-                        <span className="text-sm text-slate-700 dark:text-slate-300">{item.name}</span>
-                      </div>
-                      <span className="text-sm font-medium text-slate-500 dark:text-slate-400">×{item.qty}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleReset}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-              Kembali ke Peminjaman
-            </button>
-          </div>
-        </div>
-        <div className="mt-auto">
-          <Footer />
-        </div>
-      </div>
-    );
-  }
+  const cartCount = cart.length;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
@@ -373,342 +291,290 @@ export default function BorrowPage() {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Ajukan Peminjaman</h1>
-          <p className="text-slate-500 dark:text-slate-400">Pilih barang atau fasilitas yang ingin Anda pinjam</p>
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+              <ClipboardList className="w-5 h-5 text-white" />
+            </div>
+            Ajukan Peminjaman
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-2 ml-13">
+            Pilih barang atau fasilitas, isi data, lalu kirim pengajuan.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Selection */}
-          <div className="lg:col-span-2 space-y-4">
-            {/* Tabs */}
-            <div className="flex gap-2 p-1 bg-slate-200 dark:bg-slate-700/50 rounded-xl">
-              <button
-                onClick={() => setTab('barang')}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all',
-                  tab === 'barang'
-                    ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-                )}
-              >
-                <Package className="w-4 h-4" />
-                Barang
-              </button>
-              <button
-                onClick={() => setTab('fasilitas')}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all',
-                  tab === 'fasilitas'
-                    ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-                )}
-              >
-                <Building2 className="w-4 h-4" />
-                Fasilitas
-              </button>
+        {/* Success state */}
+        {submitted ? (
+          <div className="max-w-xl mx-auto card p-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle2 className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
             </div>
-
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={tab === 'barang' ? 'Cari barang...' : 'Cari fasilitas...'}
-                className="w-full pl-12 pr-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Grid */}
-            {loading ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <div key={i} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
-                    <div className="h-24 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse mb-3" />
-                    <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
-                  </div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Pengajuan Terkirim!</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Pengajuan peminjaman Anda telah berhasil dikirim dan sedang menunggu persetujuan. Notifikasi akan dikirim ke email Anda.
+            </p>
+            <div className="text-left bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4 mb-6 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-slate-500">ID Pengajuan</span><span className="font-mono text-xs text-slate-700 dark:text-slate-200">{submitted.id.slice(0, 8)}...</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Peminjam</span><span className="font-medium text-slate-700 dark:text-slate-200">{submitted.name}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Email</span><span className="font-medium text-slate-700 dark:text-slate-200">{submitted.email}</span></div>
+              <div className="border-t border-slate-200 dark:border-slate-700 pt-2 mt-2">
+                <p className="text-slate-500 mb-1">Item:</p>
+                {submitted.items.map((it, i) => (
+                  <p key={i} className="text-slate-700 dark:text-slate-200">• {it.name} × {it.quantity}</p>
                 ))}
               </div>
-            ) : tab === 'barang' ? (
-              filteredInventory.length === 0 ? (
-                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
-                  <EmptyState icon={Package} title="Tidak ada barang tersedia" description="Belum ada barang yang bisa dipinjam" />
+            </div>
+            <button onClick={handleAnother} className="btn-primary inline-flex items-center gap-2">
+              <Plus className="w-4 h-4" /> Buat Pengajuan Lain
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left: Selection */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Tabs */}
+              <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl w-fit">
+                <button
+                  onClick={() => setTab('barang')}
+                  className={cn(
+                    'px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-2',
+                    tab === 'barang' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'
+                  )}
+                >
+                  <Package className="w-4 h-4" /> Barang
+                </button>
+                <button
+                  onClick={() => setTab('fasilitas')}
+                  className={cn(
+                    'px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-2',
+                    tab === 'fasilitas' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'
+                  )}
+                >
+                  <Building2 className="w-4 h-4" /> Fasilitas
+                </button>
+              </div>
+
+              {/* Search */}
+              <div className="relative max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={tab === 'barang' ? 'Cari barang...' : 'Cari fasilitas...'}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="input pl-10"
+                />
+              </div>
+
+              {/* Grid */}
+              {loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="card p-4 animate-pulse">
+                      <div className="h-20 bg-slate-200 dark:bg-slate-700 rounded-lg mb-3" />
+                      <div className="h-4 w-2/3 bg-slate-200 dark:bg-slate-700 rounded mb-2" />
+                      <div className="h-3 w-1/2 bg-slate-200 dark:bg-slate-700 rounded" />
+                    </div>
+                  ))}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {filteredInventory.map((item) => {
-                    const inCart = cart.find((c) => c.id === item.id && c.type === 'barang');
-                    return (
-                      <div
-                        key={item.id}
-                        className="bg-white dark:bg-slate-800 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm"
-                      >
-                        <div className="h-24 bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                          <img
-                            src={item.image_url || FALLBACK_IMG}
-                            alt={item.name}
-                            className="w-full h-full object-cover"
-                            onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_IMG; }}
-                          />
-                        </div>
-                        <div className="p-3">
-                          <h3 className="text-sm font-medium text-slate-900 dark:text-white line-clamp-1">{item.name}</h3>
-                          {item.categories?.name && (
-                            <p className="text-xs text-slate-400 mb-1">{item.categories.name}</p>
-                          )}
-                          <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 mb-2">
-                            <Boxes className="w-3 h-3" />
-                            {item.available_quantity} tersedia
+              ) : tab === 'barang' ? (
+                filteredInventory.length === 0 ? (
+                  <div className="card p-8">
+                    <EmptyState icon={Package} title="Tidak ada barang tersedia" description="Belum ada barang dengan kondisi baik dan stok tersedia." />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {filteredInventory.map((it) => {
+                      const inCart = cart.find((c) => c.id === it.id && c.type === 'barang');
+                      const available = it.available_quantity ?? it.quantity;
+                      return (
+                        <div key={it.id} className="card p-4 flex items-center gap-3">
+                          <div className="w-16 h-16 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden flex-shrink-0">
+                            <img src={it.image_url || FALLBACK_IMAGE} alt={it.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_IMAGE; }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-medium text-slate-900 dark:text-white text-sm truncate">{it.name}</h3>
+                            {it.categories?.name && <p className="text-xs text-slate-400">{it.categories.name}</p>}
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Tersedia: {available} unit</p>
                           </div>
                           <button
-                            onClick={() => addToCart({ id: item.id, type: 'barang', name: item.name, maxQty: item.available_quantity })}
-                            disabled={!!inCart}
+                            onClick={() => addToCart(it, 'barang')}
                             className={cn(
-                              'w-full flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                              inCart
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 cursor-default'
-                                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                              'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 inline-flex items-center gap-1',
+                              inCart ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-blue-500 text-white hover:bg-blue-600'
                             )}
                           >
-                            {inCart ? (
-                              <><CheckCircle2 className="w-3.5 h-3.5" /> Dipilih</>
-                            ) : (
-                              <><Plus className="w-3.5 h-3.5" /> Tambah</>
-                            )}
+                            {inCart ? <><CheckCircle2 className="w-3.5 h-3.5" /> {inCart.quantity}</> : <><Plus className="w-3.5 h-3.5" /> Tambah</>}
                           </button>
                         </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : filteredFacilities.length === 0 ? (
+                <div className="card p-8">
+                  <EmptyState icon={Building2} title="Tidak ada fasilitas tersedia" description="Belum ada fasilitas yang terdaftar." />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {filteredFacilities.map((f) => {
+                    const inCart = cart.find((c) => c.id === f.id && c.type === 'fasilitas');
+                    return (
+                      <div key={f.id} className="card p-4 flex items-center gap-3">
+                        <div className="w-16 h-16 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden flex-shrink-0">
+                          <img src={f.image_url || FALLBACK_IMAGE} alt={f.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_IMAGE; }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-medium text-slate-900 dark:text-white text-sm truncate">{f.name}</h3>
+                          {f.location && <p className="text-xs text-slate-400 truncate">{f.location}</p>}
+                          {f.capacity != null && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Kapasitas: {f.capacity}</p>}
+                        </div>
+                        <button
+                          onClick={() => addToCart(f, 'fasilitas')}
+                          className={cn(
+                            'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 inline-flex items-center gap-1',
+                            inCart ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-blue-500 text-white hover:bg-blue-600'
+                          )}
+                        >
+                          {inCart ? <><CheckCircle2 className="w-3.5 h-3.5" /> Dipilih</> : <><Plus className="w-3.5 h-3.5" /> Pilih</>}
+                        </button>
                       </div>
                     );
                   })}
                 </div>
-              )
-            ) : filteredFacilities.length === 0 ? (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
-                <EmptyState icon={Building2} title="Tidak ada fasilitas tersedia" description="Belum ada fasilitas yang bisa dipinjam" />
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredFacilities.map((f) => {
-                  const inCart = cart.find((c) => c.id === f.id && c.type === 'fasilitas');
-                  return (
-                    <div
-                      key={f.id}
-                      className="bg-white dark:bg-slate-800 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm flex"
-                    >
-                      <div className="w-24 h-full bg-slate-200 dark:bg-slate-700 overflow-hidden flex-shrink-0">
-                        <img
-                          src={f.image_url || FALLBACK_FACILITY_IMG}
-                          alt={f.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_FACILITY_IMG; }}
-                        />
-                      </div>
-                      <div className="p-3 flex-1 min-w-0">
-                        <h3 className="text-sm font-medium text-slate-900 dark:text-white line-clamp-1">{f.name}</h3>
-                        {f.location && (
-                          <p className="text-xs text-slate-400 mb-2 truncate">{f.location}</p>
-                        )}
-                        <button
-                          onClick={() => addToCart({ id: f.id, type: 'fasilitas', name: f.name, maxQty: 1 })}
-                          disabled={!!inCart}
-                          className={cn(
-                            'w-full flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                            inCart
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 cursor-default'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
-                          )}
-                        >
-                          {inCart ? (
-                            <><CheckCircle2 className="w-3.5 h-3.5" /> Dipilih</>
-                          ) : (
-                            <><Plus className="w-3.5 h-3.5" /> Tambah</>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* Right: Cart + Form */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-20 space-y-4">
-              {/* Cart */}
-              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-700">
-                  <div className="flex items-center gap-2">
-                    <ShoppingCart className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                    <h3 className="font-semibold text-slate-900 dark:text-white">Keranjang</h3>
-                    {cartCount > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                        {cartCount}
-                      </span>
+            {/* Right: Cart + Form */}
+            <div className="lg:col-span-1">
+              <div className="lg:sticky lg:top-20 space-y-4">
+                {/* Cart */}
+                <div className="card p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                      <ShoppingCart className="w-4 h-4 text-blue-500" /> Keranjang
+                      {cartCount > 0 && <span className="px-2 py-0.5 rounded-full text-xs bg-blue-500 text-white">{cartCount}</span>}
+                    </h3>
+                    {cart.length > 0 && (
+                      <button onClick={() => setCart([])} className="text-xs text-red-500 hover:underline">Kosongkan</button>
                     )}
                   </div>
-                </div>
-
-                {cart.length === 0 ? (
-                  <div className="p-6 text-center">
-                    <ShoppingCart className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                    <p className="text-sm text-slate-400">Keranjang kosong</p>
-                  </div>
-                ) : (
-                  <div className="p-3 space-y-2 max-h-64 overflow-y-auto">
-                    {cart.map((c) => (
-                      <div key={`${c.type}-${c.id}`} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-700/30">
-                        {c.type === 'fasilitas' ? (
-                          <Building2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
-                        ) : (
-                          <Package className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{c.name}</p>
-                        </div>
-                        {/* Stepper */}
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => updateQty(c.id, c.type, -1)}
-                            className="w-6 h-6 rounded-lg bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 flex items-center justify-center text-slate-600 dark:text-slate-300"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
-                          <span className="w-8 text-center text-sm font-medium text-slate-700 dark:text-slate-300">{c.qty}</span>
-                          <button
-                            onClick={() => updateQty(c.id, c.type, 1)}
-                            disabled={c.qty >= c.maxQty}
-                            className="w-6 h-6 rounded-lg bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-slate-600 dark:text-slate-300"
-                          >
-                            <Plus className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <button
-                          onClick={() => removeFromCart(c.id, c.type)}
-                          className="p-1 text-red-400 hover:text-red-600"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Borrower Form */}
-              <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-5 space-y-4">
-                <h3 className="font-semibold text-slate-900 dark:text-white">Data Peminjam</h3>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Nama Peminjam <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input type="text" value={form.borrower_name} onChange={(e) => setForm({ ...form, borrower_name: e.target.value })} placeholder="Nama lengkap" className={inputClass} required />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Kelas/Unit <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input type="text" value={form.borrower_class} onChange={(e) => setForm({ ...form, borrower_class: e.target.value })} placeholder="Contoh: XII IPA 1" className={inputClass} required />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Email <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input type="email" value={form.borrower_email} onChange={(e) => setForm({ ...form, borrower_email: e.target.value })} placeholder="email@sekolah.sch.id" className={inputClass} required />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">No. Telepon <span className="text-slate-400">(opsional)</span></label>
-                  <div className="relative">
-                    <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input type="text" value={form.borrower_phone} onChange={(e) => setForm({ ...form, borrower_phone: e.target.value })} placeholder="08xxxxxxxxxx" className={inputClass} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Tgl Pinjam <span className="text-red-500">*</span></label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input type="date" value={form.borrow_date} onChange={(e) => setForm({ ...form, borrow_date: e.target.value })} className={inputClass} required />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Tgl Kembali <span className="text-red-500">*</span></label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input type="date" value={form.return_date} min={form.borrow_date} onChange={(e) => setForm({ ...form, return_date: e.target.value })} className={inputClass} required />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Waktu Mulai</label>
-                    <div className="relative">
-                      <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} className={inputClass} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Waktu Selesai</label>
-                    <div className="relative">
-                      <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} className={inputClass} />
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Keperluan/Tujuan <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <FileText className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-                    <textarea value={form.purpose} onChange={(e) => setForm({ ...form, purpose: e.target.value })} placeholder="Jelaskan keperluan (min 10 karakter)" rows={3} className={inputClass} required minLength={10} />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Catatan Tambahan <span className="text-slate-400">(opsional)</span></label>
-                  <div className="relative">
-                    <FileText className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-                    <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Catatan tambahan" rows={2} className={inputClass} />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={submitting || cart.length === 0}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold transition-colors"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Mengirim...
-                    </>
+                  {cart.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-6">Keranjang kosong. Pilih item dari kiri.</p>
                   ) : (
-                    <>
-                      <ShoppingCart className="w-5 h-5" />
-                      Ajukan Peminjaman
-                    </>
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {cart.map((c) => (
+                        <div key={`${c.type}-${c.id}`} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{c.name}</p>
+                            <p className="text-xs text-slate-400 capitalize">{c.type}</p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => updateQty(c.id, c.type, -1)} className="w-6 h-6 rounded-md bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-600">
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="w-8 text-center text-sm font-medium text-slate-700 dark:text-slate-200">{c.quantity}</span>
+                            <button onClick={() => updateQty(c.id, c.type, 1)} className="w-6 h-6 rounded-md bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-600">
+                              <Plus className="w-3 h-3" />
+                            </button>
+                            <button onClick={() => removeFromCart(c.id, c.type)} className="w-6 h-6 rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center justify-center ml-1">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </button>
-              </form>
+                </div>
+
+                {/* Borrower form */}
+                <form onSubmit={handleSubmit} className="card p-4 space-y-3">
+                  <h3 className="font-semibold text-slate-900 dark:text-white">Data Peminjam</h3>
+
+                  <div>
+                    <label className="label text-xs">Nama Peminjam <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input type="text" value={form.borrower_name} onChange={(e) => handleChange('borrower_name', e.target.value)} className={cn('input pl-9 text-sm', errors.borrower_name && 'border-red-400')} placeholder="Nama lengkap" />
+                    </div>
+                    {errors.borrower_name && <p className="text-xs text-red-500 mt-0.5">{errors.borrower_name}</p>}
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">Kelas/Unit <span className="text-red-500">*</span></label>
+                    <input type="text" value={form.borrower_class} onChange={(e) => handleChange('borrower_class', e.target.value)} className={cn('input text-sm', errors.borrower_class && 'border-red-400')} placeholder="Contoh: XII IPA 1" />
+                    {errors.borrower_class && <p className="text-xs text-red-500 mt-0.5">{errors.borrower_class}</p>}
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">Email <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input type="email" value={form.borrower_email} onChange={(e) => handleChange('borrower_email', e.target.value)} className={cn('input pl-9 text-sm', errors.borrower_email && 'border-red-400')} placeholder="email@contoh.com" />
+                    </div>
+                    {errors.borrower_email && <p className="text-xs text-red-500 mt-0.5">{errors.borrower_email}</p>}
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">No. Telepon <span className="text-slate-400 text-[10px]">(opsional)</span></label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input type="text" value={form.borrower_phone} onChange={(e) => handleChange('borrower_phone', e.target.value)} className="input pl-9 text-sm" placeholder="08xxxxxxxxxx" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="label text-xs">Tanggal Pinjam <span className="text-red-500">*</span></label>
+                      <input type="date" value={form.borrow_date} onChange={(e) => handleChange('borrow_date', e.target.value)} className={cn('input text-sm', errors.borrow_date && 'border-red-400')} />
+                      {errors.borrow_date && <p className="text-xs text-red-500 mt-0.5">{errors.borrow_date}</p>}
+                    </div>
+                    <div>
+                      <label className="label text-xs">Tanggal Kembali <span className="text-red-500">*</span></label>
+                      <input type="date" value={form.return_date} min={form.borrow_date} onChange={(e) => handleChange('return_date', e.target.value)} className={cn('input text-sm', errors.return_date && 'border-red-400')} />
+                      {errors.return_date && <p className="text-xs text-red-500 mt-0.5">{errors.return_date}</p>}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="label text-xs">Waktu Mulai</label>
+                      <input type="time" value={form.start_time} onChange={(e) => handleChange('start_time', e.target.value)} className="input text-sm" />
+                    </div>
+                    <div>
+                      <label className="label text-xs">Waktu Selesai</label>
+                      <input type="time" value={form.end_time} onChange={(e) => handleChange('end_time', e.target.value)} className="input text-sm" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">Keperluan/Tujuan <span className="text-red-500">*</span></label>
+                    <textarea value={form.purpose} onChange={(e) => handleChange('purpose', e.target.value)} rows={3} className={cn('input text-sm resize-none', errors.purpose && 'border-red-400')} placeholder="Jelaskan keperluan peminjaman (min. 10 karakter)" />
+                    {errors.purpose && <p className="text-xs text-red-500 mt-0.5">{errors.purpose}</p>}
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">Catatan Tambahan <span className="text-slate-400 text-[10px]">(opsional)</span></label>
+                    <textarea value={form.notes} onChange={(e) => handleChange('notes', e.target.value)} rows={2} className="input text-sm resize-none" placeholder="Catatan tambahan..." />
+                  </div>
+
+                  <button type="submit" disabled={submitting || cart.length === 0} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm">
+                    {submitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Mengirim...</> : <><Send className="w-4 h-4" /> Kirim Pengajuan</>}
+                  </button>
+                  {cart.length === 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 text-center inline-flex items-center justify-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Pilih minimal 1 item untuk mengirim
+                    </p>
+                  )}
+                </form>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="mt-auto">
-        <Footer />
-      </div>
+      <div className="flex-1" />
+      <Footer />
     </div>
   );
 }
