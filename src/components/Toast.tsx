@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, AlertCircle, Info, X } from 'lucide-react';
 
-export interface ToastData {
-  id: string;
-  message: string;
-  type: 'success' | 'error' | 'warning' | 'info';
-}
-
+export interface ToastData { id: string; message: string; type: 'success' | 'error' | 'warning' | 'info'; }
 let toastCallback: ((toast: ToastData) => void) | null = null;
 
 export function showToast(message: string, type: ToastData['type'] = 'info') {
@@ -15,7 +10,6 @@ export function showToast(message: string, type: ToastData['type'] = 'info') {
 
 export default function Toast() {
   const [toasts, setToasts] = useState<ToastData[]>([]);
-
   useEffect(() => {
     toastCallback = (toast: ToastData) => {
       setToasts(prev => [...prev, toast]);
@@ -40,7 +34,7 @@ export default function Toast() {
           <div key={t.id} className={`flex items-start gap-3 p-4 rounded-xl border shadow-lg animate-slide-in max-w-sm ${colors[t.type]}`}>
             <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <p className="text-sm flex-1">{t.message}</p>
-            <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))} className="flex-shrink-0"><X className="w-4 h-4" /></button>
+            <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}><X className="w-4 h-4" /></button>
           </div>
         );
       })}

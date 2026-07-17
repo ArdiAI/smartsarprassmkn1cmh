@@ -1,10 +1,15 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, ShoppingCart, Plus, Minus, Trash2, Send, CheckCircle, Loader2, Package, X } from 'lucide-react';
+import {
+  ClipboardList, Search, Plus, Minus, Trash2, Package, Building2,
+  Loader2, CheckCircle2, RotateCcw, ShoppingCart, Calendar, Clock,
+  User, Mail, Phone, FileText, AlertCircle, Send,
+} from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
+import { showToast } from '../components/Toast';
 import { supabase } from '../lib/supabase';
-import { getDefaultWorkflow, type WorkflowTemplate } from '../lib/workflow';
+import { getDefaultWorkflow } from '../lib/workflow';
 import { cn } from '../utils/cn';
 
 interface InventoryItem {
@@ -12,170 +17,207 @@ interface InventoryItem {
   name: string;
   description: string | null;
   quantity: number;
+  available_quantity: number;
   condition: string;
-  category_id: string | null;
-  categories: { name: string } | null;
+  location: string | null;
+}
+
+interface Facility {
+  id: string;
+  name: string;
+  description: string | null;
+  location: string | null;
+  capacity: number | null;
 }
 
 interface CartItem {
   id: string;
   name: string;
+  type: 'barang' | 'fasilitas';
   quantity: number;
   maxQuantity: number;
 }
 
-interface BorrowerForm {
+interface BorrowingResult {
+  id: string;
+  borrower_name: string;
+  borrow_date: string;
+  return_date: string;
+  items: CartItem[];
+}
+
+type Tab = 'barang' | 'fasilitas';
+
+interface FormState {
   borrower_name: string;
   borrower_class: string;
   borrower_email: string;
   borrower_phone: string;
   borrow_date: string;
   return_date: string;
+  start_time: string;
+  end_time: string;
   purpose: string;
+  notes: string;
 }
 
-const inputClass =
-  'w-full px-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all';
+const emptyForm: FormState = {
+  borrower_name: '',
+  borrower_class: '',
+  borrower_email: '',
+  borrower_phone: '',
+  borrow_date: new Date().toISOString().split('T')[0],
+  return_date: '',
+  start_time: '08:00',
+  end_time: '16:00',
+  purpose: '',
+  notes: '',
+};
 
 export default function BorrowPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [tab, setTab] = useState<Tab>('barang');
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [workflowTemplate, setWorkflowTemplate] = useState<WorkflowTemplate | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState<BorrowerForm>({
-    borrower_name: '',
-    borrower_class: '',
-    borrower_email: '',
-    borrower_phone: '',
-    borrow_date: '',
-    return_date: '',
-    purpose: '',
-  });
+  const [success, setSuccess] = useState<BorrowingResult | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      const [invRes, wf] = await Promise.all([
-        supabase
-          .from('inventory')
-          .select('id, name, description, quantity, condition, category_id, categories (name)')
-          .order('name', { ascending: true }),
-        getDefaultWorkflow(),
-      ]);
-      setItems((invRes.data as unknown as InventoryItem[]) || []);
-      setWorkflowTemplate(wf);
-      setLoading(false);
-    };
-    fetchData();
+    (async () => {
+      try {
+        const [invRes, facRes] = await Promise.all([
+          supabase
+            .from('inventory')
+            .select('id, name, description, quantity, available_quantity, condition, location')
+            .order('name', { ascending: true }),
+          supabase
+            .from('facilities')
+            .select('id, name, description, location, capacity')
+            .order('name', { ascending: true }),
+        ]);
+        setInventory((invRes.data ?? []) as unknown as InventoryItem[]);
+        setFacilities((facRes.data ?? []) as unknown as Facility[]);
+      } catch { /* ignore */ } finally { setLoading(false); }
+    })();
   }, []);
 
-  const availableItems = useMemo(() => {
-    return items.filter((item) => {
-      const condition = (item.condition || '').toLowerCase();
-      return condition === 'good' && item.quantity > 0;
-    });
-  }, [items]);
+  const availableInventory = useMemo(
+    () => inventory.filter(i => i.available_quantity > 0 && i.condition === 'good'),
+    [inventory],
+  );
 
-  const filteredItems = useMemo(() => {
-    if (!search.trim()) return availableItems;
-    const q = search.toLowerCase();
-    return availableItems.filter(
-      (item) => item.name?.toLowerCase().includes(q) || item.description?.toLowerCase().includes(q)
-    );
-  }, [availableItems, search]);
+  const filteredInventory = useMemo(
+    () => availableInventory.filter(i => i.name.toLowerCase().includes(search.toLowerCase())),
+    [availableInventory, search],
+  );
 
-  const addToCart = (item: InventoryItem) => {
-    setCart((prev) => {
-      const existing = prev.find((c) => c.id === item.id);
+  const filteredFacilities = useMemo(
+    () => facilities.filter(f => f.name.toLowerCase().includes(search.toLowerCase())),
+    [facilities, search],
+  );
+
+  const update = (field: keyof FormState, value: string) => setForm(prev => ({ ...prev, [field]: value }));
+
+  const addToCart = (item: InventoryItem | Facility, type: Tab) => {
+    const id = item.id;
+    const maxQty = type === 'barang' ? (item as InventoryItem).available_quantity : 1;
+    setCart(prev => {
+      const existing = prev.find(c => c.id === id && c.type === type);
       if (existing) {
-        if (existing.quantity >= item.quantity) return prev;
-        return prev.map((c) => (c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c));
+        return prev.map(c => c.id === id && c.type === type ? { ...c, quantity: Math.min(c.quantity + 1, c.maxQuantity) } : c);
       }
-      return [...prev, { id: item.id, name: item.name, quantity: 1, maxQuantity: item.quantity }];
+      return [...prev, { id, name: item.name, type, quantity: 1, maxQuantity: maxQty }];
     });
   };
 
-  const updateCartQuantity = (id: string, delta: number) => {
-    setCart((prev) =>
-      prev
-        .map((c) => {
-          if (c.id !== id) return c;
-          const newQty = c.quantity + delta;
-          if (newQty < 1) return c;
-          if (newQty > c.maxQuantity) return c;
-          return { ...c, quantity: newQty };
-        })
-    );
+  const updateQty = (id: string, type: Tab, delta: number) => {
+    setCart(prev => prev.map(c => {
+      if (c.id === id && c.type === type) {
+        const next = Math.max(1, Math.min(c.maxQuantity, c.quantity + delta));
+        return { ...c, quantity: next };
+      }
+      return c;
+    }));
   };
 
-  const setCartQuantity = (id: string, qty: number) => {
-    setCart((prev) =>
-      prev.map((c) => {
-        if (c.id !== id) return c;
-        const clamped = Math.max(1, Math.min(qty, c.maxQuantity));
-        return { ...c, quantity: clamped };
-      })
-    );
+  const removeFromCart = (id: string, type: Tab) => {
+    setCart(prev => prev.filter(c => !(c.id === id && c.type === type)));
   };
 
-  const removeFromCart = (id: string) => {
-    setCart((prev) => prev.filter((c) => c.id !== id));
-  };
+  const inCart = (id: string, type: Tab) => cart.some(c => c.id === id && c.type === type);
 
-  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  const cartCount = cart.length;
+
+  const validate = (): string | null => {
+    if (cart.length === 0) return 'Keranjang masih kosong';
+    if (!form.borrower_name.trim()) return 'Nama peminjam wajib diisi';
+    if (!form.borrower_class.trim()) return 'Kelas/Unit wajib diisi';
+    if (!form.borrower_email.trim()) return 'Email wajib diisi';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.borrower_email)) return 'Format email tidak valid';
+    if (!form.borrow_date) return 'Tanggal pinjam wajib diisi';
+    if (!form.return_date) return 'Tanggal kembali wajib diisi';
+    if (new Date(form.return_date) < new Date(form.borrow_date)) return 'Tanggal kembali harus setelah tanggal pinjam';
+    if (form.purpose.trim().length < 10) return 'Keperluan minimal 10 karakter';
+    return null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (cart.length === 0) {
-      setError('Keranjang masih kosong. Pilih minimal satu barang.');
-      return;
-    }
+    const err = validate();
+    if (err) { showToast(err, 'error'); return; }
+
     setSubmitting(true);
-    setError(null);
-
     try {
-      // 1. Create borrowing record
-      const { data: borrowing, error: borrowingError } = await supabase
-        .from('borrowings')
-        .insert({
-          borrower_name: form.borrower_name,
-          borrower_class: form.borrower_class,
-          borrower_email: form.borrower_email,
-          borrower_phone: form.borrower_phone,
-          borrow_date: form.borrow_date,
-          return_date: form.return_date,
-          purpose: form.purpose,
-          status: 'pending',
-          current_step: 1,
-          current_status_label: 'Menunggu Persetujuan',
-        })
-        .select('id')
-        .single();
+      // 1. Fetch default workflow
+      const workflow = await getDefaultWorkflow();
+      const workflowId = workflow?.id ?? null;
 
-      if (borrowingError || !borrowing) throw borrowingError || new Error('Gagal membuat peminjaman');
+      // 2. Determine item_type from cart
+      const itemType = cart.some(c => c.type === 'fasilitas') && !cart.some(c => c.type === 'barang') ? 'fasilitas' : 'barang';
 
-      // 2. Create borrowing_items for each cart item
-      const borrowingItems = cart.map((item) => ({
-        borrowing_id: borrowing.id,
-        item_name: item.name,
-        item_type: 'inventory',
-        quantity: item.quantity,
+      // 3. Create borrowing record
+      const borrowingPayload = {
+        borrower_name: form.borrower_name.trim(),
+        borrower_class: form.borrower_class.trim(),
+        borrower_email: form.borrower_email.trim(),
+        borrower_phone: form.borrower_phone.trim() || null,
+        borrow_date: form.borrow_date,
+        return_date: form.return_date,
+        start_time: form.start_time,
+        end_time: form.end_time,
+        purpose: form.purpose.trim(),
+        notes: form.notes.trim() || null,
         status: 'pending',
         current_step: 1,
         current_status_label: 'Menunggu Persetujuan',
-        workflow_template_id: workflowTemplate?.id || null,
-      }));
+        item_type: itemType,
+      };
+      const { data: brwData, error: brwError } = await supabase
+        .from('borrowings')
+        .insert(borrowingPayload)
+        .select('id')
+        .single();
+      if (brwError) throw brwError;
+      const borrowingId = (brwData as unknown as { id: string }).id;
 
-      const { error: itemsError } = await supabase.from('borrowing_items').insert(borrowingItems);
+      // 4. Create borrowing_items
+      const itemsPayload = cart.map(c => ({
+        borrowing_id: borrowingId,
+        item_name: c.name,
+        item_type: c.type,
+        quantity: c.quantity,
+        status: 'pending',
+        current_step: 1,
+        current_status_label: 'Menunggu Persetujuan',
+        workflow_template_id: workflowId,
+      }));
+      const { error: itemsError } = await supabase.from('borrowing_items').insert(itemsPayload);
       if (itemsError) throw itemsError;
 
-      // 3. Send email notification via edge function
+      // 5. Send email notification
       try {
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         await fetch(`${supabaseUrl}/functions/v2/send-borrowing-email`, {
@@ -183,199 +225,206 @@ export default function BorrowPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'new_request',
-            borrowing_id: borrowing.id,
-            borrower_name: form.borrower_name,
-            borrower_email: form.borrower_email,
-            items: cart.map((c) => ({ name: c.name, quantity: c.quantity })),
+            borrowing_id: borrowingId,
+            borrower_name: form.borrower_name.trim(),
+            borrower_email: form.borrower_email.trim(),
           }),
         });
       } catch {
-        // Email failure is non-blocking
+        /* email failure is non-blocking */
       }
 
-      setSuccess(true);
-      setCart([]);
-      setForm({
-        borrower_name: '',
-        borrower_class: '',
-        borrower_email: '',
-        borrower_phone: '',
-        borrow_date: '',
-        return_date: '',
-        purpose: '',
+      // 6. Success state
+      setSuccess({
+        id: borrowingId,
+        borrower_name: form.borrower_name.trim(),
+        borrow_date: form.borrow_date,
+        return_date: form.return_date,
+        items: cart,
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Terjadi kesalahan saat mengajukan peminjaman.');
+      showToast('Peminjaman berhasil diajukan!', 'success');
+      setCart([]);
+      setForm(emptyForm);
+    } catch (err: any) {
+      showToast(err?.message ?? 'Gagal mengajukan peminjaman', 'error');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const resetForm = () => { setSuccess(null); setCart([]); setForm(emptyForm); setTab('barang'); };
+
+  // Success state
   if (success) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
         <Navbar />
-        <main className="flex-1 max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16 w-full flex items-center justify-center">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/50 dark:border-slate-700/50 text-center max-w-md w-full animate-slide-up">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12 w-full">
+          <div className="card p-8 text-center">
             <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-emerald-500" />
+              <CheckCircle2 className="w-8 h-8 text-emerald-500" />
             </div>
-            <h2 className="text-2xl font-bold mb-2">Peminjaman Berhasil Diajukan!</h2>
-            <p className="text-slate-500 dark:text-slate-400 mb-6">
-              Permintaan peminjaman Anda telah dikirim. Anda akan menerima notifikasi
-              setelah permintaan ditinjau. Pantau status di halaman Riwayat.
-            </p>
-            <button
-              onClick={() => setSuccess(false)}
-              className="px-6 py-3 rounded-2xl bg-blue-500 hover:bg-blue-600 text-white font-medium transition-colors"
-            >
-              Ajukan Peminjaman Lain
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Peminjaman Diajukan!</h2>
+            <p className="text-slate-500 dark:text-slate-400 mt-2">Permintaan peminjaman Anda telah berhasil dikirim dan menunggu persetujuan.</p>
+
+            <div className="mt-6 text-left space-y-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-5">
+              <div className="flex justify-between"><span className="text-sm text-slate-500">Peminjam</span><span className="text-sm font-medium text-slate-900 dark:text-white">{success.borrower_name}</span></div>
+              <div className="flex justify-between"><span className="text-sm text-slate-500">Tanggal Pinjam</span><span className="text-sm font-medium text-slate-900 dark:text-white">{new Date(success.borrow_date).toLocaleDateString('id-ID')}</span></div>
+              <div className="flex justify-between"><span className="text-sm text-slate-500">Tanggal Kembali</span><span className="text-sm font-medium text-slate-900 dark:text-white">{new Date(success.return_date).toLocaleDateString('id-ID')}</span></div>
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <p className="text-sm text-slate-500 mb-2">Item Dipinjam</p>
+                <div className="space-y-1">
+                  {success.items.map((item, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span className="text-slate-700 dark:text-slate-200">{item.name}</span>
+                      <span className="text-slate-500">×{item.quantity}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <button onClick={resetForm} className="btn-primary mt-6 inline-flex items-center gap-2">
+              <RotateCcw className="w-4 h-4" /> Pinjam Lagi
             </button>
           </div>
-        </main>
+        </div>
         <Footer />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <ShoppingCart className="w-6 h-6 text-blue-500" />
-            <h1 className="text-3xl font-bold">Ajukan Peminjaman</h1>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 flex items-center justify-center">
+            <ClipboardList className="w-5 h-5 text-white" />
           </div>
-          <p className="text-slate-500 dark:text-slate-400">
-            Pilih barang dari inventaris, isi formulir, lalu kirim permintaan peminjaman.
-          </p>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Ajukan Peminjaman</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Pilih barang/fasilitas dan isi formulir peminjaman</p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left panel: Item selection */}
-          <div className="lg:col-span-2">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200/50 dark:border-slate-700/50">
-              {/* Search */}
-              <div className="relative mb-4">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Cari barang..."
-                  className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                />
-              </div>
+          {/* Left: selection */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Tabs */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setTab('barang')}
+                className={cn('flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors',
+                  tab === 'barang' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700')}
+              >
+                <Package className="w-4 h-4" /> Barang
+              </button>
+              <button
+                onClick={() => setTab('fasilitas')}
+                className={cn('flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors',
+                  tab === 'fasilitas' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700')}
+              >
+                <Building2 className="w-4 h-4" /> Fasilitas
+              </button>
+            </div>
 
-              {/* Items */}
-              {loading ? (
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder={`Cari ${tab === 'barang' ? 'barang' : 'fasilitas'}...`} className="input pl-10" />
+            </div>
+
+            {/* Grid */}
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="card p-4 animate-pulse space-y-2">
+                    <div className="w-2/3 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
+                    <div className="w-full h-4 bg-slate-200 dark:bg-slate-700 rounded" />
+                    <div className="w-20 h-8 bg-slate-200 dark:bg-slate-700 rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : tab === 'barang' ? (
+              filteredInventory.length === 0 ? (
+                <EmptyState icon={Package} title="Tidak ada barang tersedia" description="Belum ada barang yang bisa dipinjam." />
+              ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="h-20 bg-slate-200 dark:bg-slate-700 rounded-xl animate-pulse" />
+                  {filteredInventory.map(item => (
+                    <div key={item.id} className="card p-4 flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-slate-900 dark:text-white truncate">{item.name}</h3>
+                        {item.description && <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{item.description}</p>}
+                        <p className="text-xs text-slate-400 mt-2">Tersedia: {item.available_quantity}</p>
+                      </div>
+                      <button
+                        onClick={() => addToCart(item, 'barang')}
+                        disabled={inCart(item.id, 'barang')}
+                        className={cn('flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+                          inCart(item.id, 'barang') ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-blue-500 text-white hover:bg-blue-600')}
+                      >
+                        {inCart(item.id, 'barang') ? <><CheckCircle2 className="w-4 h-4" /> Ditambah</> : <><Plus className="w-4 h-4" /> Tambah</>}
+                      </button>
+                    </div>
                   ))}
                 </div>
-              ) : filteredItems.length === 0 ? (
-                <EmptyState icon={Package} title="Tidak ada barang tersedia" description="Coba ubah kata kunci pencarian." />
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto pr-1">
-                  {filteredItems.map((item) => {
-                    const inCart = cart.find((c) => c.id === item.id);
-                    return (
-                      <div
-                        key={item.id}
-                        className={cn(
-                          'flex items-center justify-between gap-3 p-4 rounded-xl border transition-all',
-                          inCart
-                            ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20'
-                            : 'border-slate-200 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700'
-                        )}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{item.name}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            {item.categories?.name || 'Tanpa kategori'} &middot; {item.quantity} unit
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => addToCart(item)}
-                          disabled={!!inCart && inCart.quantity >= item.quantity}
-                          className={cn(
-                            'flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex-shrink-0',
-                            inCart
-                              ? 'bg-blue-500 text-white'
-                              : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50'
-                          )}
-                        >
-                          {inCart ? (
-                            <>{inCart.quantity} di Keranjang</>
-                          ) : (
-                            <>
-                              <Plus className="w-4 h-4" />
-                              Tambah
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+              )
+            ) : filteredFacilities.length === 0 ? (
+              <EmptyState icon={Building2} title="Tidak ada fasilitas tersedia" description="Belum ada fasilitas terdaftar." />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {filteredFacilities.map(fac => (
+                  <div key={fac.id} className="card p-4 flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-slate-900 dark:text-white truncate">{fac.name}</h3>
+                      {fac.location && <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{fac.location}</p>}
+                      {fac.capacity != null && <p className="text-xs text-slate-400 mt-1">Kapasitas: {fac.capacity}</p>}
+                    </div>
+                    <button
+                      onClick={() => addToCart(fac, 'fasilitas')}
+                      disabled={inCart(fac.id, 'fasilitas')}
+                      className={cn('flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+                        inCart(fac.id, 'fasilitas') ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-blue-500 text-white hover:bg-blue-600')}
+                    >
+                      {inCart(fac.id, 'fasilitas') ? <><CheckCircle2 className="w-4 h-4" /> Ditambah</> : <><Plus className="w-4 h-4" /> Tambah</>}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Right panel: Cart + form */}
+          {/* Right: cart + form */}
           <div className="lg:col-span-1">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200/50 dark:border-slate-700/50 sticky top-20">
-              {/* Cart */}
+            <div className="card p-5 lg:sticky lg:top-20">
               <div className="flex items-center gap-2 mb-4">
                 <ShoppingCart className="w-5 h-5 text-blue-500" />
-                <h2 className="font-semibold text-lg">Keranjang</h2>
-                {cart.length > 0 && (
-                  <span className="ml-auto px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">
-                    {cart.length} item
-                  </span>
-                )}
+                <h2 className="font-bold text-slate-900 dark:text-white">Keranjang</h2>
+                {cartCount > 0 && <span className="ml-auto px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-medium">{cartCount}</span>}
               </div>
 
+              {/* Cart items */}
               {cart.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-6">Keranjang kosong. Pilih barang di sebelah kiri.</p>
+                <p className="text-sm text-slate-400 text-center py-6">Keranjang kosong. Pilih item dari daftar.</p>
               ) : (
                 <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
-                  {cart.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-700/50">
+                  {cart.map(item => (
+                    <div key={`${item.type}-${item.id}`} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{item.name}</p>
-                        <p className="text-xs text-slate-400">Max: {item.maxQuantity}</p>
+                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{item.name}</p>
+                        <p className="text-xs text-slate-400 capitalize">{item.type}</p>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={() => updateCartQuantity(item.id, -1)}
-                          className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                        >
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => updateQty(item.id, item.type, -1)} className="w-6 h-6 rounded-md bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600">
                           <Minus className="w-3.5 h-3.5" />
                         </button>
-                        <input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) => setCartQuantity(item.id, parseInt(e.target.value) || 1)}
-                          min={1}
-                          max={item.maxQuantity}
-                          className="w-12 text-center text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <button
-                          onClick={() => updateCartQuantity(item.id, 1)}
-                          disabled={item.quantity >= item.maxQuantity}
-                          className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors"
-                        >
+                        <span className="w-8 text-center text-sm font-medium text-slate-900 dark:text-white">{item.quantity}</span>
+                        <button onClick={() => updateQty(item.id, item.type, 1)} disabled={item.quantity >= item.maxQuantity} className="w-6 h-6 rounded-md bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 disabled:opacity-40">
                           <Plus className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => removeFromCart(item.id)}
-                          className="p-1 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        >
+                        <button onClick={() => removeFromCart(item.id, item.type)} className="w-6 h-6 rounded-md flex items-center justify-center text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -385,105 +434,64 @@ export default function BorrowPage() {
               )}
 
               {/* Borrower form */}
-              <form onSubmit={handleSubmit} className="space-y-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50">
-                <input
-                  type="text"
-                  name="borrower_name"
-                  value={form.borrower_name}
-                  onChange={handleFormChange}
-                  required
-                  placeholder="Nama peminjam"
-                  className={inputClass + ' text-sm'}
-                />
-                <input
-                  type="text"
-                  name="borrower_class"
-                  value={form.borrower_class}
-                  onChange={handleFormChange}
-                  required
-                  placeholder="Kelas / unit"
-                  className={inputClass + ' text-sm'}
-                />
-                <input
-                  type="email"
-                  name="borrower_email"
-                  value={form.borrower_email}
-                  onChange={handleFormChange}
-                  required
-                  placeholder="Email"
-                  className={inputClass + ' text-sm'}
-                />
-                <input
-                  type="tel"
-                  name="borrower_phone"
-                  value={form.borrower_phone}
-                  onChange={handleFormChange}
-                  required
-                  placeholder="No. telepon"
-                  className={inputClass + ' text-sm'}
-                />
+              <div className="space-y-3 border-t border-slate-100 dark:border-slate-700 pt-4">
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5"><User className="w-4 h-4" /> Data Peminjam</h3>
+
+                <div>
+                  <label className="label text-xs">Nama Peminjam <span className="text-red-500">*</span></label>
+                  <input type="text" value={form.borrower_name} onChange={e => update('borrower_name', e.target.value)} className="input text-sm" placeholder="Nama lengkap" />
+                </div>
+                <div>
+                  <label className="label text-xs">Kelas/Unit <span className="text-red-500">*</span></label>
+                  <input type="text" value={form.borrower_class} onChange={e => update('borrower_class', e.target.value)} className="input text-sm" placeholder="Kelas atau unit" />
+                </div>
+                <div>
+                  <label className="label text-xs">Email <span className="text-red-500">*</span></label>
+                  <input type="email" value={form.borrower_email} onChange={e => update('borrower_email', e.target.value)} className="input text-sm" placeholder="email@contoh.com" />
+                </div>
+                <div>
+                  <label className="label text-xs">No. Telepon (opsional)</label>
+                  <input type="text" value={form.borrower_phone} onChange={e => update('borrower_phone', e.target.value)} className="input text-sm" placeholder="08xx..." />
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Tgl Pinjam</label>
-                    <input
-                      type="date"
-                      name="borrow_date"
-                      value={form.borrow_date}
-                      onChange={handleFormChange}
-                      required
-                      className={inputClass + ' text-sm'}
-                    />
+                    <label className="label text-xs">Tgl Pinjam <span className="text-red-500">*</span></label>
+                    <input type="date" value={form.borrow_date} onChange={e => update('borrow_date', e.target.value)} className="input text-sm" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Tgl Kembali</label>
-                    <input
-                      type="date"
-                      name="return_date"
-                      value={form.return_date}
-                      onChange={handleFormChange}
-                      required
-                      className={inputClass + ' text-sm'}
-                    />
+                    <label className="label text-xs">Tgl Kembali <span className="text-red-500">*</span></label>
+                    <input type="date" value={form.return_date} onChange={e => update('return_date', e.target.value)} className="input text-sm" />
                   </div>
                 </div>
-                <textarea
-                  name="purpose"
-                  value={form.purpose}
-                  onChange={handleFormChange}
-                  required
-                  rows={2}
-                  placeholder="Keperluan"
-                  className={inputClass + ' text-sm resize-none'}
-                />
-
-                {error && (
-                  <div className="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-xs">
-                    {error}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="label text-xs">Waktu Mulai</label>
+                    <input type="time" value={form.start_time} onChange={e => update('start_time', e.target.value)} className="input text-sm" />
                   </div>
-                )}
+                  <div>
+                    <label className="label text-xs">Waktu Selesai</label>
+                    <input type="time" value={form.end_time} onChange={e => update('end_time', e.target.value)} className="input text-sm" />
+                  </div>
+                </div>
 
-                <button
-                  type="submit"
-                  disabled={submitting || cart.length === 0}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Mengirim...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Ajukan Peminjaman
-                    </>
-                  )}
+                <div>
+                  <label className="label text-xs">Keperluan/Tujuan <span className="text-red-500">*</span></label>
+                  <textarea value={form.purpose} onChange={e => update('purpose', e.target.value)} rows={2} className="input text-sm resize-none" placeholder="Minimal 10 karakter..." />
+                </div>
+                <div>
+                  <label className="label text-xs">Catatan Tambahan (opsional)</label>
+                  <textarea value={form.notes} onChange={e => update('notes', e.target.value)} rows={2} className="input text-sm resize-none" placeholder="Catatan..." />
+                </div>
+
+                <button onClick={handleSubmit} disabled={submitting} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm">
+                  {submitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Mengirim...</> : <><Send className="w-4 h-4" /> Ajukan Peminjaman</>}
                 </button>
-              </form>
+              </div>
             </div>
           </div>
         </div>
-      </main>
+      </div>
 
       <Footer />
     </div>

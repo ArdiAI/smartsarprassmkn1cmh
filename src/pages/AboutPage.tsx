@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Info, CheckCircle, Users, Building, Package, ClipboardList, Shield, Zap } from 'lucide-react';
+import {
+  Info, Target, Eye, ShieldCheck, Zap, BarChart3, Users, Smartphone,
+  CheckCircle2, Building2,
+} from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
+import { brandConfig } from '../brand/config';
 
 interface Organization {
   id: string;
@@ -14,130 +17,119 @@ interface Organization {
   email: string | null;
 }
 
-const FEATURES = [
-  { icon: Building, title: 'Manajemen Fasilitas', description: 'Kelola semua fasilitas sekolah dengan informasi lokasi, kapasitas, dan kategori yang terorganisir.' },
-  { icon: Package, title: 'Inventaris Terpadu', description: 'Pantau seluruh inventaris dengan status kondisi barang dan kategori yang jelas.' },
-  { icon: ClipboardList, title: 'Peminjaman Online', description: 'Ajukan peminjaman barang dengan sistem keranjang dan alur persetujuan multi-langkah.' },
-  { icon: Shield, title: 'Laporan Kerusakan', description: 'Laporkan kerusakan fasilitas atau inventaris dengan tingkat keparahan yang terukur.' },
-  { icon: Zap, title: 'Notifikasi Otomatis', description: 'Pemberitahuan otomatis untuk setiap perubahan status peminjaman dan laporan.' },
-  { icon: Users, title: 'Transparansi', description: 'Riwayat peminjaman dan laporan dapat dipantau oleh seluruh warga sekolah.' },
+const features = [
+  { icon: Zap, title: 'Peminjaman Cepat', desc: 'Ajukan peminjaman barang dan fasilitas dengan mudah dalam hitungan menit.' },
+  { icon: ShieldCheck, title: 'Alur Persetujuan', desc: 'Sistem persetujuan multi-langkah yang transparan dan dapat dilacak.' },
+  { icon: BarChart3, title: 'Pelaporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan detail dan tingkat keparahan yang jelas.' },
+  { icon: Users, title: 'Manajemen Tim', desc: 'Kelola peran dan akses tim untuk pengelolaan yang terorganisir.' },
+  { icon: Smartphone, title: 'Responsif', desc: 'Akses dari berbagai perangkat dengan tampilan yang menyesuaikan layar.' },
+  { icon: CheckCircle2, title: 'Notifikasi Otomatis', desc: 'Pemberitahuan otomatis untuk status peminjaman dan laporan.' },
 ];
 
 export default function AboutPage() {
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [org, setOrg] = useState<Organization | null>(null);
 
   useEffect(() => {
-    const fetchOrg = async () => {
-      const { data } = await supabase
-        .from('organizations')
-        .select('id, name, description, address, phone, email')
-        .limit(1)
-        .single();
-      setOrganization((data as unknown as Organization) || null);
-      setLoading(false);
-    };
-    fetchOrg().catch(() => setLoading(false));
+    (async () => {
+      try {
+        const { data } = await supabase.from('organizations').select('id, name, description, address, phone, email').limit(1).single();
+        if (data) setOrg(data as unknown as Organization);
+      } catch { /* table may not exist */ }
+    })();
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Header */}
-        <div className="text-center max-w-3xl mx-auto mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-sm font-medium mb-4">
-            <Info className="w-4 h-4" />
-            Tentang Kami
+        <div className="text-center py-8">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mx-auto mb-4">
+            <Info className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
-            SMART SARPRAS
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white">
+            <span className="bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">{brandConfig.system.name}</span>
           </h1>
-          <p className="text-lg text-slate-600 dark:text-slate-300">
-            Sistem Manajemen Sarana dan Prasarana — platform terpadu untuk pengelolaan fasilitas,
-            inventaris, peminjaman, dan pelaporan kerusakan di lingkungan sekolah.
+          <p className="mt-3 text-lg text-slate-600 dark:text-slate-300">{brandConfig.system.fullName}</p>
+        </div>
+
+        {/* Org info */}
+        {org && (
+          <div className="card p-6 mt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Building2 className="w-5 h-5 text-blue-500" />
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{org.name}</h2>
+            </div>
+            {org.description && <p className="text-sm text-slate-600 dark:text-slate-300">{org.description}</p>}
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              {org.address && <div><p className="text-slate-400">Alamat</p><p className="text-slate-700 dark:text-slate-200">{org.address}</p></div>}
+              {org.phone && <div><p className="text-slate-400">Telepon</p><p className="text-slate-700 dark:text-slate-200">{org.phone}</p></div>}
+              {org.email && <div><p className="text-slate-400">Email</p><p className="text-slate-700 dark:text-slate-200">{org.email}</p></div>}
+            </div>
+          </div>
+        )}
+
+        {/* About text */}
+        <div className="card p-6 mt-6">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">Tentang Sistem</h2>
+          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+            {brandConfig.system.name} adalah platform terpadu untuk pengelolaan sarana dan prasarana.
+            Sistem ini memungkinkan pengguna untuk meminjam barang dan fasilitas, melaporkan kerusakan,
+            serta memantau status persetujuan secara real-time. Dengan alur kerja yang transparan dan
+            notifikasi otomatis, {brandConfig.system.name} membantu menjaga inventaris tetap terorganisir
+            dan dapat dilacak oleh semua pihak yang berkepentingan.
           </p>
         </div>
 
         {/* Features */}
-        <section className="mb-12">
-          <h2 className="text-2xl font-bold mb-6 text-center">Fitur Utama</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {FEATURES.map((feature, i) => (
-              <div
-                key={i}
-                className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all animate-slide-up"
-                style={{ animationDelay: `${i * 0.1}s` }}
-              >
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-4">
-                  <feature.icon className="w-6 h-6 text-white" />
+        <div className="mt-8">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Fitur Utama</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {features.map(f => {
+              const Icon = f.icon;
+              return (
+                <div key={f.title} className="card p-5 hover:shadow-md transition-all">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-3">
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  <h3 className="font-semibold text-slate-900 dark:text-white">{f.title}</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{f.desc}</p>
                 </div>
-                <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{feature.description}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </section>
+        </div>
 
-        {/* Organization info */}
-        <section>
-          <h2 className="text-2xl font-bold mb-6 text-center">Informasi Organisasi</h2>
-          {loading ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/50 dark:border-slate-700/50 animate-pulse h-48" />
-          ) : organization ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/50 dark:border-slate-700/50 max-w-3xl mx-auto animate-slide-up">
-              <div className="flex items-start gap-4 mb-4">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                  <Building className="w-7 h-7 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold">{organization.name}</h3>
-                  {organization.description && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{organization.description}</p>
-                  )}
-                </div>
+        {/* Vision & Mission */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8">
+          <div className="card p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                <Eye className="w-5 h-5 text-blue-500" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 pt-6 border-t border-slate-100 dark:border-slate-700/50">
-                {organization.address && (
-                  <div>
-                    <p className="text-xs font-medium text-slate-400 mb-1">Alamat</p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">{organization.address}</p>
-                  </div>
-                )}
-                {organization.phone && (
-                  <div>
-                    <p className="text-xs font-medium text-slate-400 mb-1">Telepon</p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">{organization.phone}</p>
-                  </div>
-                )}
-                {organization.email && (
-                  <div>
-                    <p className="text-xs font-medium text-slate-400 mb-1">Email</p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">{organization.email}</p>
-                  </div>
-                )}
-              </div>
+              <h3 className="font-bold text-slate-900 dark:text-white">Visi</h3>
             </div>
-          ) : (
-            <div className="max-w-3xl mx-auto">
-              <EmptyState icon={Building} title="Informasi organisasi belum tersedia" description="Data organisasi akan ditampilkan di sani setelah dikonfigurasi." />
-            </div>
-          )}
-        </section>
-
-        {/* Mission */}
-        <section className="mt-12">
-          <div className="bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl p-8 text-center text-white max-w-3xl mx-auto">
-            <CheckCircle className="w-12 h-12 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold mb-3">Misi Kami</h2>
-            <p className="text-blue-50">
-              Menciptakan ekosistem pengelolaan sarana dan prasarana sekolah yang efisien, transparan,
-              dan akuntabel melalui teknologi digital.
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Menjadi sistem manajemen sarana dan prasarana yang terdepan, transparan, dan
+              mudah diakses oleh seluruh warga sekolah untuk mendukung kegiatan belajar mengajar.
             </p>
           </div>
-        </section>
-      </main>
+          <div className="card p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-cyan-100 dark:bg-cyan-900/30 flex items-center justify-center">
+                <Target className="w-5 h-5 text-cyan-500" />
+              </div>
+              <h3 className="font-bold text-slate-900 dark:text-white">Misi</h3>
+            </div>
+            <ul className="text-sm text-slate-600 dark:text-slate-300 space-y-2">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" /> Mempermudah proses peminjaman sarana.</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" /> Menjamin transparansi alur persetujuan.</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" /> Mempercepat pelaporan dan penanganan kerusakan.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
 
       <Footer />
     </div>

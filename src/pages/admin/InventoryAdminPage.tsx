@@ -1,285 +1,241 @@
-import { useEffect, useState, FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Package,
-  Plus,
-  Pencil,
-  Trash2,
-  X,
-  Search,
-  Loader2,
-  AlertTriangle,
+  Plus, Search, Edit2, Trash2, X, Loader2, Package, AlertCircle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
 
+interface InventoryItem {
+  id: string;
+  name: string;
+  code: string;
+  description: string | null;
+  category_id: string | null;
+  quantity: number;
+  available_quantity: number;
+  condition: string;
+  location: string | null;
+  created_at: string;
+  categories?: { id: string; name: string } | null;
+}
+
 interface Category {
   id: string;
   name: string;
-  description: string | null;
 }
 
-interface InventoryItem {
-  id: string;
-  code: string;
+interface FormData {
   name: string;
-  category_id: string | null;
-  quantity: number | null;
-  available_quantity: number | null;
-  condition: string | null;
-  location: string | null;
-  image_url: string | null;
-  description: string | null;
-  purchase_date: string | null;
-  price: number | null;
+  code: string;
+  description: string;
+  category_id: string;
+  quantity: string;
+  available_quantity: string;
+  condition: string;
+  location: string;
 }
 
-interface InventoryWithCategory extends InventoryItem {
-  category_name: string | null;
-}
-
-const conditionStyles: Record<string, string> = {
-  baik: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  rusak_ringan: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  rusak_berat: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+const emptyForm: FormData = {
+  name: '', code: '', description: '', category_id: '',
+  quantity: '0', available_quantity: '0', condition: 'good', location: '',
 };
 
-const conditionLabel: Record<string, string> = {
-  baik: 'Baik',
-  rusak_ringan: 'Rusak Ringan',
-  rusak_berat: 'Rusak Berat',
-};
-
-const emptyForm: Partial<InventoryItem> = {
-  code: '',
-  name: '',
-  category_id: '',
-  quantity: 0,
-  available_quantity: 0,
-  condition: 'baik',
-  location: '',
-  description: '',
-  purchase_date: '',
-  price: 0,
+const conditionBadge = (condition: string) => {
+  const map: Record<string, string> = {
+    new: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    good: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+    fair: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    damaged: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  };
+  return map[condition] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
 };
 
 export default function InventoryAdminPage() {
-  const [items, setItems] = useState<InventoryWithCategory[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
-  const [form, setForm] = useState<Partial<InventoryItem>>(emptyForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const loadData = async () => {
-    setLoading(true);
-    const [invRes, catRes] = await Promise.all([
-      supabase.from('inventory').select('*').order('created_at', { ascending: false }),
-      supabase.from('categories').select('*').order('name'),
-    ]);
-
-    const cats = (catRes.data || []) as unknown as Category[];
-    setCategories(cats);
-
-    const invData = (invRes.data || []) as unknown as InventoryItem[];
-    const withCategory: InventoryWithCategory[] = invData.map((item) => ({
-      ...item,
-      category_name:
-        cats.find((c) => c.id === item.category_id)?.name ?? null,
-    }));
-    setItems(withCategory);
-    setLoading(false);
-  };
 
   useEffect(() => {
-    loadData();
+    fetchData();
   }, []);
 
-  const openAdd = () => {
-    setEditingItem(null);
-    setForm(emptyForm);
-    setModalOpen(true);
-  };
+  const fetchData = async () => {
+    try {
+      const [itemsRes, catRes] = await Promise.all([
+        supabase
+          .from('inventory')
+          .select('id, name, code, description, category_id, quantity, available_quantity, condition, location, created_at, categories(id, name)')
+          .order('created_at', { ascending: false }),
+        supabase.from('categories').select('id, name').order('name'),
+      ]);
 
-  const openEdit = (item: InventoryItem) => {
-    setEditingItem(item);
-    setForm({
-      ...item,
-      purchase_date: item.purchase_date || '',
-      price: item.price ?? 0,
-    });
-    setModalOpen(true);
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!form.name?.trim() || !form.code?.trim()) {
-      showToast('Kode dan nama wajib diisi', 'warning');
-      return;
-    }
-    setSaving(true);
-
-    const payload = {
-      code: form.code,
-      name: form.name,
-      category_id: form.category_id || null,
-      quantity: Number(form.quantity) || 0,
-      available_quantity: Number(form.available_quantity) || 0,
-      condition: form.condition || 'baik',
-      location: form.location || null,
-      description: form.description || null,
-      purchase_date: form.purchase_date || null,
-      price: form.price ? Number(form.price) : null,
-    };
-
-    if (editingItem) {
-      const { error } = await supabase
-        .from('inventory')
-        .update(payload)
-        .eq('id', editingItem.id);
-      if (error) {
-        showToast('Gagal memperbarui item', 'error');
-      } else {
-        showToast('Item berhasil diperbarui', 'success');
-        setModalOpen(false);
-        loadData();
-      }
-    } else {
-      const { error } = await supabase.from('inventory').insert(payload);
-      if (error) {
-        showToast('Gagal menambahkan item', 'error');
-      } else {
-        showToast('Item berhasil ditambahkan', 'success');
-        setModalOpen(false);
-        loadData();
-      }
-    }
-    setSaving(false);
-  };
-
-  const handleDelete = async () => {
-    if (!deleteId) return;
-    const { error } = await supabase.from('inventory').delete().eq('id', deleteId);
-    if (error) {
-      showToast('Gagal menghapus item', 'error');
-    } else {
-      showToast('Item berhasil dihapus', 'success');
-      setDeleteId(null);
-      loadData();
+      if (itemsRes.error) throw itemsRes.error;
+      setItems((itemsRes.data as unknown as InventoryItem[]) || []);
+      setCategories((catRes.data as unknown as Category[]) || []);
+    } catch {
+      showToast('Gagal memuat inventaris', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
   const filtered = items.filter(
-    (item) =>
-      item.name.toLowerCase().includes(search.toLowerCase()) ||
-      item.code.toLowerCase().includes(search.toLowerCase())
+    (i) =>
+      i.name.toLowerCase().includes(search.toLowerCase()) ||
+      i.code.toLowerCase().includes(search.toLowerCase())
   );
+
+  const openAdd = () => {
+    setForm(emptyForm);
+    setEditingId(null);
+    setModalOpen(true);
+  };
+
+  const openEdit = (item: InventoryItem) => {
+    setForm({
+      name: item.name,
+      code: item.code,
+      description: item.description || '',
+      category_id: item.category_id || '',
+      quantity: String(item.quantity),
+      available_quantity: String(item.available_quantity),
+      condition: item.condition,
+      location: item.location || '',
+    });
+    setEditingId(item.id);
+    setModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name || !form.code) {
+      showToast('Nama dan kode wajib diisi', 'warning');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        name: form.name,
+        code: form.code,
+        description: form.description || null,
+        category_id: form.category_id || null,
+        quantity: parseInt(form.quantity) || 0,
+        available_quantity: parseInt(form.available_quantity) || 0,
+        condition: form.condition,
+        location: form.location || null,
+      };
+
+      if (editingId) {
+        const { error } = await supabase.from('inventory').update(payload).eq('id', editingId);
+        if (error) throw error;
+        showToast('Inventaris diperbarui', 'success');
+      } else {
+        const { error } = await supabase.from('inventory').insert(payload);
+        if (error) throw error;
+        showToast('Inventaris ditambahkan', 'success');
+      }
+      setModalOpen(false);
+      fetchData();
+    } catch {
+      showToast('Gagal menyimpan inventaris', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (item: InventoryItem) => {
+    if (!confirm(`Hapus "${item.name}"?`)) return;
+    try {
+      const { error } = await supabase.from('inventory').delete().eq('id', item.id);
+      if (error) throw error;
+      showToast('Inventaris dihapus', 'success');
+      fetchData();
+    } catch {
+      showToast('Gagal menghapus inventaris', 'error');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Inventaris
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Kelola data barang inventaris
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola barang inventaris</p>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-        >
-          <Plus className="w-5 h-5" /> Tambah Item
+        <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Tambah Barang
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari item..."
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        />
-      </div>
+      <div className="card p-4">
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            className="input pl-10"
+            placeholder="Cari nama atau kode..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
 
-      {/* Table */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-12 text-center">
-            <Package className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-            <p className="text-slate-400">Tidak ada item inventaris</p>
+        {filtered.length === 0 ? (
+          <div className="text-center py-10">
+            <AlertCircle className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+            <p className="text-sm text-slate-500 dark:text-slate-400">Tidak ada inventaris</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-700 text-left text-slate-500 dark:text-slate-400">
-                  <th className="px-4 py-3 font-medium">Kode</th>
-                  <th className="px-4 py-3 font-medium">Nama</th>
-                  <th className="px-4 py-3 font-medium">Kategori</th>
-                  <th className="px-4 py-3 font-medium">Jumlah</th>
-                  <th className="px-4 py-3 font-medium">Tersedia</th>
-                  <th className="px-4 py-3 font-medium">Kondisi</th>
-                  <th className="px-4 py-3 font-medium">Lokasi</th>
-                  <th className="px-4 py-3 font-medium text-right">Aksi</th>
+                <tr className="text-left text-xs text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+                  <th className="pb-3 font-medium">Nama</th>
+                  <th className="pb-3 font-medium">Kode</th>
+                  <th className="pb-3 font-medium">Kategori</th>
+                  <th className="pb-3 font-medium">Jumlah</th>
+                  <th className="pb-3 font-medium">Tersedia</th>
+                  <th className="pb-3 font-medium">Kondisi</th>
+                  <th className="pb-3 font-medium">Lokasi</th>
+                  <th className="pb-3 font-medium text-right">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                 {filtered.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-                  >
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">
-                      {item.code}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
-                      {item.name}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                      {item.category_name || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                      {item.quantity ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                      {item.available_quantity ?? 0}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          'px-2 py-0.5 rounded-md text-xs font-medium',
-                          conditionStyles[item.condition || 'baik'] || conditionStyles.baik
-                        )}
-                      >
-                        {conditionLabel[item.condition || 'baik'] || item.condition}
+                  <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                    <td className="py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
+                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.code}</td>
+                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.categories?.name || '—'}</td>
+                    <td className="py-3 text-slate-900 dark:text-white">{item.quantity}</td>
+                    <td className="py-3 text-slate-900 dark:text-white">{item.available_quantity}</td>
+                    <td className="py-3">
+                      <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', conditionBadge(item.condition))}>
+                        {item.condition}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                      {item.location || '—'}
-                    </td>
-                    <td className="px-4 py-3">
+                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.location || '—'}</td>
+                    <td className="py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => openEdit(item)}
-                          className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                          className="p-2 rounded-lg text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                         >
-                          <Pencil className="w-4 h-4" />
+                          <Edit2 className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => setDeleteId(item.id)}
-                          className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          onClick={() => handleDelete(item)}
+                          className="p-2 rounded-lg text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -293,204 +249,72 @@ export default function InventoryAdminPage() {
         )}
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="font-semibold text-slate-900 dark:text-white">
-                {editingItem ? 'Edit Item' : 'Tambah Item'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setModalOpen(false)} />
+          <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editingId ? 'Edit Inventaris' : 'Tambah Inventaris'}
               </h2>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
-              >
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Kode *
-                  </label>
-                  <input
-                    type="text"
-                    value={form.code || ''}
-                    onChange={(e) => setForm({ ...form, code: e.target.value })}
-                    required
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Nama *
-                  </label>
-                  <input
-                    type="text"
-                    value={form.name || ''}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    required
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-              </div>
-
+            <div className="p-5 space-y-4">
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Kategori
-                </label>
-                <select
-                  value={form.category_id || ''}
-                  onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                >
-                  <option value="">— Pilih kategori —</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="label">Nama Barang *</label>
+                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
-
+              <div>
+                <label className="label">Kode *</label>
+                <input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">Deskripsi</label>
+                <textarea className="input min-h-[80px] resize-y" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Jumlah
-                  </label>
-                  <input
-                    type="number"
-                    value={form.quantity ?? 0}
-                    onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Tersedia
-                  </label>
-                  <input
-                    type="number"
-                    value={form.available_quantity ?? 0}
-                    onChange={(e) => setForm({ ...form, available_quantity: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Kondisi
-                  </label>
-                  <select
-                    value={form.condition || 'baik'}
-                    onChange={(e) => setForm({ ...form, condition: e.target.value })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  >
-                    <option value="baik">Baik</option>
-                    <option value="rusak_ringan">Rusak Ringan</option>
-                    <option value="rusak_berat">Rusak Berat</option>
+                  <label className="label">Kategori</label>
+                  <select className="input" value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                    <option value="">— Pilih —</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Lokasi
-                  </label>
-                  <input
-                    type="text"
-                    value={form.location || ''}
-                    onChange={(e) => setForm({ ...form, location: e.target.value })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <label className="label">Kondisi</label>
+                  <select className="input" value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })}>
+                    <option value="new">Baru</option>
+                    <option value="good">Baik</option>
+                    <option value="fair">Cukup</option>
+                    <option value="damaged">Rusak</option>
+                  </select>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Tanggal Beli
-                  </label>
-                  <input
-                    type="date"
-                    value={form.purchase_date || ''}
-                    onChange={(e) => setForm({ ...form, purchase_date: e.target.value })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <label className="label">Jumlah</label>
+                  <input type="number" className="input" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                    Harga
-                  </label>
-                  <input
-                    type="number"
-                    value={form.price ?? 0}
-                    onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <label className="label">Tersedia</label>
+                  <input type="number" className="input" value={form.available_quantity} onChange={(e) => setForm({ ...form, available_quantity: e.target.value })} />
                 </div>
               </div>
-
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Deskripsi
-                </label>
-                <textarea
-                  value={form.description || ''}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  rows={3}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-                />
+                <label className="label">Lokasi</label>
+                <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
               </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  {editingItem ? 'Simpan' : 'Tambah'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delete confirmation */}
-      {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6">
-            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
-              <AlertTriangle className="w-6 h-6 text-red-500" />
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white text-center mb-2">
-              Hapus Item?
-            </h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 text-center mb-6">
-              Tindakan ini tidak dapat dibatalkan.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setDeleteId(null)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleDelete}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
-              >
-                Hapus
+            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700 sticky bottom-0 bg-white dark:bg-slate-800">
+              <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
+              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                Simpan
               </button>
             </div>
           </div>

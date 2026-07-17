@@ -1,121 +1,113 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
 import {
-  Shield,
-  Plus,
-  Pencil,
-  Trash2,
-  X,
-  Loader2,
-  ShieldCheck,
-  Lock,
-  Info,
+  Shield, Plus, Pencil, Trash2, X, Loader2, RefreshCw,
+  Lock, Crown, Star, ShieldCheck,
 } from 'lucide-react';
 
-// ---- Types ----
-
+/* ----------------------------- Types ----------------------------- */
 interface Role {
   id: string;
   name: string;
   level: number;
-  description: string;
+  description: string | null;
   is_system: boolean;
   is_active: boolean;
-  created_at: string;
 }
+type RoleForm = Omit<Role, 'id' | 'is_system'> & { is_system?: boolean };
 
-// ---- Component ----
+const emptyForm: RoleForm = {
+  name: '',
+  level: 1,
+  description: '',
+  is_active: true,
+};
 
+/* --------------------------- Component ---------------------------- */
 export default function RolesPermissionsPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editingRole, setEditingRole] = useState<Role | null>(null);
-
-  // Form state
-  const [formName, setFormName] = useState('');
-  const [formLevel, setFormLevel] = useState<number>(10);
-  const [formDescription, setFormDescription] = useState('');
+  const [editing, setEditing] = useState<Role | null>(null);
+  const [form, setForm] = useState<RoleForm>(emptyForm);
   const [saving, setSaving] = useState(false);
 
-  const fetchRoles = useCallback(async () => {
+  const loadRoles = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('roles')
         .select('*')
         .order('level', { ascending: true });
-
       if (error) throw error;
-      setRoles((data || []) as unknown as Role[]);
+      setRoles((data as unknown as Role[]) || []);
     } catch (err) {
-      console.error('Error fetching roles:', err);
-      showToast('Gagal memuat data role', 'error');
+      const msg = err instanceof Error ? err.message : 'Failed to load roles';
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchRoles();
-  }, [fetchRoles]);
+  useEffect(() => { void loadRoles(); }, [loadRoles]);
 
-  const openAddModal = () => {
-    setEditingRole(null);
-    setFormName('');
-    setFormLevel(10);
-    setFormDescription('');
+  const openAdd = () => {
+    setEditing(null);
+    setForm(emptyForm);
     setShowModal(true);
   };
 
-  const openEditModal = (role: Role) => {
-    setEditingRole(role);
-    setFormName(role.name);
-    setFormLevel(role.level);
-    setFormDescription(role.description);
+  const openEdit = (role: Role) => {
+    setEditing(role);
+    setForm({
+      name: role.name,
+      level: role.level,
+      description: role.description ?? '',
+      is_active: role.is_active,
+      is_system: role.is_system,
+    });
     setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) {
-      showToast('Nama role wajib diisi', 'warning');
+    if (!form.name.trim()) {
+      showToast('Role name is required', 'warning');
       return;
     }
     setSaving(true);
     try {
-      if (editingRole) {
+      const payload = {
+        name: form.name.trim(),
+        level: Number(form.level) || 1,
+        description: form.description?.trim() || null,
+        is_active: form.is_active,
+      };
+      if (editing) {
         const { error } = await supabase
           .from('roles')
-          .update({
-            name: formName.trim(),
-            level: formLevel,
-            description: formDescription.trim(),
-          })
-          .eq('id', editingRole.id);
-
+          .update(payload)
+          .eq('id', editing.id);
         if (error) throw error;
-        showToast('Role berhasil diperbarui', 'success');
+        setRoles((prev) =>
+          prev.map((r) => (r.id === editing.id ? { ...r, ...payload } : r))
+        );
+        showToast('Role updated', 'success');
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('roles')
-          .insert({
-            name: formName.trim(),
-            level: formLevel,
-            description: formDescription.trim(),
-            is_system: false,
-            is_active: true,
-          });
-
+          .insert(payload)
+          .select('*')
+          .single();
         if (error) throw error;
-        showToast('Role berhasil ditambahkan', 'success');
+        setRoles((prev) => [...(prev as Role[]), data as unknown as Role]);
+        showToast('Role created', 'success');
       }
       setShowModal(false);
-      fetchRoles();
     } catch (err) {
-      console.error('Error saving role:', err);
-      showToast('Gagal menyimpan role', 'error');
+      const msg = err instanceof Error ? err.message : 'Failed to save role';
+      showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -123,222 +115,251 @@ export default function RolesPermissionsPage() {
 
   const handleDelete = async (role: Role) => {
     if (role.is_system) {
-      showToast('Role sistem tidak dapat dihapus', 'warning');
+      showToast('System roles cannot be deleted', 'warning');
       return;
     }
-    if (!confirm(`Hapus role "${role.name}"? Tindakan ini tidak dapat dibatalkan.`)) return;
+    if (!confirm(`Delete role "${role.name}"?`)) return;
     try {
       const { error } = await supabase.from('roles').delete().eq('id', role.id);
       if (error) throw error;
-      showToast('Role berhasil dihapus', 'success');
-      fetchRoles();
+      setRoles((prev) => prev.filter((r) => r.id !== role.id));
+      showToast('Role deleted', 'success');
     } catch (err) {
-      console.error('Error deleting role:', err);
-      showToast('Gagal menghapus role', 'error');
+      const msg = err instanceof Error ? err.message : 'Failed to delete role';
+      showToast(msg, 'error');
     }
   };
 
-  const getLevelColor = (level: number) => {
-    if (level >= 90) return 'from-blue-500 to-cyan-500';
-    if (level >= 70) return 'from-cyan-500 to-teal-500';
-    if (level >= 40) return 'from-emerald-500 to-green-500';
-    if (level >= 20) return 'from-amber-500 to-orange-500';
-    return 'from-slate-400 to-slate-500';
+  const levelIcon = (level: number) => {
+    if (level >= 90) return Crown;
+    if (level >= 50) return Star;
+    if (level >= 10) return ShieldCheck;
+    return Shield;
   };
 
-  const getLevelBadge = (level: number) => {
-    if (level >= 90) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
-    if (level >= 70) return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300';
-    if (level >= 40) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300';
-    if (level >= 20) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
-    return 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300';
+  const levelColor = (level: number) => {
+    if (level >= 90) return 'from-amber-500 to-orange-500 text-white';
+    if (level >= 50) return 'from-purple-500 to-pink-500 text-white';
+    if (level >= 10) return 'from-blue-500 to-cyan-500 text-white';
+    return 'from-slate-400 to-slate-500 text-white';
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Shield className="w-6 h-6 text-blue-500" />
-            Roles & Permissions
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Kelola role dan tingkat akses pengguna
-          </p>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 sm:p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-500/20">
+              <Shield className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Roles & Permissions</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Define roles and their permission levels
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void loadRoles()}
+              className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
+            </button>
+            <button
+              onClick={openAdd}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium shadow-lg shadow-blue-500/20 hover:from-blue-600 hover:to-cyan-600 transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              <span className="hidden sm:inline">New Role</span>
+            </button>
+          </div>
         </div>
-        <button
-          onClick={openAddModal}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          Tambah Role
-        </button>
+
+        {/* Grid */}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          </div>
+        ) : roles.length === 0 ? (
+          <div className="text-center py-20 text-slate-500 dark:text-slate-400">
+            <Shield className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p>No roles defined yet.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {roles.map((role) => {
+              const Icon = levelIcon(role.level);
+              return (
+                <div
+                  key={role.id}
+                  className={cn(
+                    'p-5 rounded-2xl border bg-white dark:bg-slate-900 shadow-sm transition-all hover:shadow-md',
+                    role.is_active
+                      ? 'border-slate-200 dark:border-slate-700'
+                      : 'border-slate-200 dark:border-slate-700 opacity-60'
+                  )}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div
+                      className={cn(
+                        'p-2.5 rounded-xl bg-gradient-to-br shadow-sm',
+                        levelColor(role.level)
+                      )}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {role.is_system && (
+                        <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                          <Lock className="w-3 h-3" /> System
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          'text-[10px] font-medium px-2 py-1 rounded-md',
+                          role.is_active
+                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                        )}
+                      >
+                        {role.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+                    {role.name}
+                  </h3>
+                  <p className="text-xs font-medium text-blue-500 dark:text-blue-400 mb-2">
+                    Level {role.level}
+                  </p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 min-h-[2.5rem]">
+                    {role.description || 'No description provided.'}
+                  </p>
+
+                  <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      onClick={() => openEdit(role)}
+                      className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => void handleDelete(role)}
+                      disabled={role.is_system}
+                      className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Cards Grid */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      ) : roles.length === 0 ? (
-        <div className="text-center py-16 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Shield className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Belum ada role</p>
-          <p className="text-sm text-slate-400 mt-1">Tambahkan role pertama untuk sistem</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {roles.map(role => (
-            <div
-              key={role.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg transition-shadow group"
-            >
-              {/* Card Header */}
-              <div className="flex items-start justify-between mb-4">
-                <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center shadow-md', getLevelColor(role.level))}>
-                  <ShieldCheck className="w-6 h-6 text-white" />
-                </div>
-                <div className="flex items-center gap-1">
-                  {role.is_system && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                      <Lock className="w-3 h-3" />
-                      System
-                    </span>
-                  )}
-                  <span className={cn('px-2 py-0.5 rounded-md text-xs font-bold', getLevelBadge(role.level))}>
-                    Lv. {role.level}
-                  </span>
-                </div>
-              </div>
-
-              {/* Card Body */}
-              <h3 className="font-bold text-slate-900 dark:text-white text-lg mb-1">{role.name}</h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-4 min-h-[2.5rem]">
-                {role.description || 'Tidak ada deskripsi'}
-              </p>
-
-              {/* Card Footer */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
-                <span className={cn(
-                  'inline-flex items-center gap-1 text-xs font-medium',
-                  role.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'
-                )}>
-                  <span className={cn('w-2 h-2 rounded-full', role.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
-                  {role.is_active ? 'Aktif' : 'Nonaktif'}
-                </span>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => openEditModal(role)}
-                    className="p-2 rounded-lg text-slate-500 hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-900/20 transition-colors"
-                    title="Edit role"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  {!role.is_system && (
-                    <button
-                      onClick={() => handleDelete(role)}
-                      className="p-2 rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 transition-colors"
-                      title="Hapus role"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Info Banner */}
-      {!loading && roles.length > 0 && (
-        <div className="flex items-start gap-3 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-          <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-700 dark:text-blue-300">
-            <p className="font-medium">Tingkat Akses (Level)</p>
-            <p className="mt-0.5">Semakin tinggi level, semakin tinggi aksesnya. Level 100 = Super Admin, Level 10 = Viewer. Role sistem tidak dapat dihapus.</p>
-          </div>
-        </div>
-      )}
-
-      {/* Add/Edit Modal */}
+      {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowModal(false)}>
-          <div
-            className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-md animate-fade-in"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Shield className="w-5 h-5 text-blue-500" />
-                {editingRole ? 'Edit Role' : 'Tambah Role Baru'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="w-full max-w-md p-6 rounded-2xl bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editing ? 'Edit Role' : 'New Role'}
               </h2>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button
+                onClick={() => setShowModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
-              {/* Name */}
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Nama Role</label>
-                <input
-                  type="text"
-                  value={formName}
-                  onChange={e => setFormName(e.target.value)}
-                  placeholder="contoh: Wakasek Sarpras"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
 
-              {/* Level */}
+            <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Level Akses: <span className="text-blue-500 font-bold">{formLevel}</span>
+                  Name <span className="text-red-500">*</span>
                 </label>
                 <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={formLevel}
-                  onChange={e => setFormLevel(Number(e.target.value))}
-                  className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
+                  disabled={editing?.is_system}
+                  placeholder="e.g. superadmin"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                 />
-                <div className="flex justify-between text-xs text-slate-400 mt-1">
-                  <span>0 (Viewer)</span>
-                  <span>100 (Super Admin)</span>
-                </div>
               </div>
 
-              {/* Description */}
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Deskripsi</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Level (1–100)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={form.level}
+                  onChange={(e) => setForm((s) => ({ ...s, level: Number(e.target.value) }))}
+                  disabled={editing?.is_system}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Higher level = more privileges (e.g. 100 = top).
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Description
+                </label>
                 <textarea
-                  value={formDescription}
-                  onChange={e => setFormDescription(e.target.value)}
+                  value={form.description ?? ''}
+                  onChange={(e) => setForm((s) => ({ ...s, description: e.target.value }))}
                   rows={3}
-                  placeholder="Jelakan tanggung jawab role ini..."
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none"
+                  placeholder="What can this role do?"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => setForm((s) => ({ ...s, is_active: !s.is_active }))}
+                  className={cn(
+                    'relative w-11 h-6 rounded-full transition-colors',
+                    form.is_active ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-700'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform',
+                      form.is_active && 'translate-x-5'
+                    )}
+                  />
+                </button>
+                <span className="text-sm text-slate-700 dark:text-slate-300">Active</span>
+              </label>
             </div>
-            <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 dark:border-slate-700">
+
+            <div className="flex justify-end gap-2 mt-6">
               <button
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
-                Batal
+                Cancel
               </button>
               <button
-                onClick={handleSave}
-                disabled={saving || !formName.trim()}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => void handleSave()}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                {editingRole ? 'Simpan Perubahan' : 'Tambah Role'}
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+                {editing ? 'Update' : 'Create'}
               </button>
             </div>
           </div>

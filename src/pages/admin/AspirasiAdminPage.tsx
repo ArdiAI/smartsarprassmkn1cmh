@@ -1,13 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  MessageSquare,
-  Loader2,
-  Mail,
-  User,
-  Tag,
-  Send,
-  X,
-  Clock,
+  MessageSquare, X, Loader2, AlertCircle, Mail, User, Calendar, Send,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../utils/cn';
@@ -15,299 +8,271 @@ import { showToast } from '../../components/Toast';
 
 interface Aspirasi {
   id: string;
-  nama: string;
-  kelas_unit: string;
-  email: string | null;
-  kategori: string;
-  judul: string;
-  isi: string;
+  title: string;
+  description: string | null;
+  reporter_name: string | null;
+  reporter_email: string | null;
   status: string;
-  tanggapan: string | null;
+  reply: string | null;
   created_at: string;
-  updated_at: string | null;
 }
 
-const statusStyles: Record<string, string> = {
-  baru: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  dibaca: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  diproses: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  selesai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+const statusBadge = (status: string) => {
+  const map: Record<string, string> = {
+    new: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+    in_review: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    replied: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    closed: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+  };
+  return map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
 };
-
-const statusLabel: Record<string, string> = {
-  baru: 'Baru',
-  dibaca: 'Dibaca',
-  diproses: 'Diproses',
-  selesai: 'Selesai',
-};
-
-const statusOptions = ['baru', 'dibaca', 'diproses', 'selesai'];
 
 export default function AspirasiAdminPage() {
-  const [aspirasi, setAspirasi] = useState<Aspirasi[]>([]);
+  const [items, setItems] = useState<Aspirasi[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [replyModal, setReplyModal] = useState<Aspirasi | null>(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Aspirasi | null>(null);
   const [replyText, setReplyText] = useState('');
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-
-  const loadData = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('aspirasi')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      showToast('Gagal memuat aspirasi', 'error');
-    } else {
-      setAspirasi((data || []) as unknown as Aspirasi[]);
-    }
-    setLoading(false);
-  };
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    loadData();
+    fetchItems();
   }, []);
 
-  const updateStatus = async (item: Aspirasi, newStatus: string) => {
-    setUpdatingId(item.id);
-    const { error } = await supabase
-      .from('aspirasi')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', item.id);
+  const fetchItems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('aspirasi')
+        .select('id, title, description, reporter_name, reporter_email, status, reply, created_at')
+        .order('created_at', { ascending: false });
 
-    if (error) {
+      if (error) throw error;
+      setItems((data as unknown as Aspirasi[]) || []);
+    } catch {
+      showToast('Gagal memuat aspirasi', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filtered = items.filter((a) => statusFilter === 'all' || a.status === statusFilter);
+
+  const openReplyModal = (a: Aspirasi) => {
+    setEditing(a);
+    setReplyText(a.reply || '');
+    setModalOpen(true);
+  };
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('aspirasi')
+        .update({ status: newStatus })
+        .eq('id', editing.id);
+
+      if (error) throw error;
+      showToast('Status diperbarui', 'success');
+      setModalOpen(false);
+      fetchItems();
+    } catch {
       showToast('Gagal memperbarui status', 'error');
-    } else {
-      showToast('Status berhasil diperbarui', 'success');
-      loadData();
+    } finally {
+      setSaving(false);
     }
-    setUpdatingId(null);
   };
 
-  const openReply = (item: Aspirasi) => {
-    setReplyModal(item);
-    setReplyText(item.tanggapan || '');
-  };
-
-  const handleReply = async () => {
-    if (!replyModal) return;
-    setUpdatingId(replyModal.id);
-    const { error } = await supabase
-      .from('aspirasi')
-      .update({
-        tanggapan: replyText || null,
-        status: replyModal.status === 'baru' ? 'diproses' : replyModal.status,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', replyModal.id);
-
-    if (error) {
-      showToast('Gagal menyimpan tanggapan', 'error');
-    } else {
-      showToast('Tanggapan berhasil disimpan', 'success');
-      setReplyModal(null);
-      setReplyText('');
-      loadData();
+  const handleSendReply = async () => {
+    if (!editing) return;
+    if (!replyText.trim()) {
+      showToast('Balasan tidak boleh kosong', 'warning');
+      return;
     }
-    setUpdatingId(null);
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('aspirasi')
+        .update({ reply: replyText, status: 'replied' })
+        .eq('id', editing.id);
+
+      if (error) throw error;
+      showToast('Balasan terkirim', 'success');
+      setModalOpen(false);
+      fetchItems();
+    } catch {
+      showToast('Gagal mengirim balasan', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const filtered = aspirasi.filter(
-    (a) => filterStatus === 'all' || a.status === filterStatus
-  );
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aspirasi</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Kelola aspirasi dan saran dari pengguna
-        </p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola aspirasi dan masukan</p>
       </div>
 
-      {/* Filter */}
-      <div className="flex flex-wrap gap-3">
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Status</label>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-          >
-            <option value="all">Semua</option>
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>
-                {statusLabel[s]}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label className="label">Filter Status</label>
+        <select className="input max-w-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">Semua</option>
+          <option value="new">Baru</option>
+          <option value="in_review">Sedang Ditinjau</option>
+          <option value="replied">Dibalas</option>
+          <option value="closed">Ditutup</option>
+        </select>
       </div>
 
-      {/* Aspirasi list */}
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
-          <MessageSquare className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-          <p className="text-slate-400">Belum ada aspirasi</p>
+      {filtered.length === 0 ? (
+        <div className="card p-10 text-center">
+          <AlertCircle className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-500 dark:text-slate-400">Tidak ada aspirasi</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5"
-            >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {filtered.map((a) => (
+            <div key={a.id} className="card p-5">
               <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0">
-                    <MessageSquare className="w-5 h-5 text-blue-500" />
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center flex-shrink-0">
+                    <MessageSquare className="w-5 h-5 text-white" />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold text-slate-900 dark:text-white">
-                      {item.judul}
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <User className="w-3 h-3" /> {item.nama}
-                      </span>
-                      <span>{item.kelas_unit}</span>
-                      {item.email && (
-                        <span className="flex items-center gap-1 truncate">
-                          <Mail className="w-3 h-3" /> {item.email}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <Tag className="w-3 h-3" /> {item.kategori}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {new Date(item.created_at).toLocaleDateString('id-ID', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </span>
-                    </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-slate-900 dark:text-white truncate">{a.title}</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {new Date(a.created_at).toLocaleDateString('id-ID')}
+                    </p>
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    'px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0',
-                    statusStyles[item.status] || statusStyles.baru
-                  )}
-                >
-                  {statusLabel[item.status] || item.status}
+                <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', statusBadge(a.status))}>
+                  {a.status.replace('_', ' ')}
                 </span>
               </div>
 
-              <p className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700/30 rounded-xl p-3">
-                {item.isi}
-              </p>
+              {a.description && (
+                <p className="text-sm text-slate-600 dark:text-slate-300 mb-3 line-clamp-3">{a.description}</p>
+              )}
 
-              {item.tanggapan && (
-                <div className="mt-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 p-3">
-                  <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">
-                    Tanggapan:
-                  </p>
-                  <p className="text-sm text-blue-700 dark:text-blue-300">{item.tanggapan}</p>
+              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400 mb-3">
+                {a.reporter_name && (
+                  <p className="flex items-center gap-1.5"><User className="w-3 h-3" /> {a.reporter_name}</p>
+                )}
+                {a.reporter_email && (
+                  <p className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> {a.reporter_email}</p>
+                )}
+              </div>
+
+              {a.reply && (
+                <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 p-3 mb-3">
+                  <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mb-1">Balasan</p>
+                  <p className="text-sm text-slate-700 dark:text-slate-300">{a.reply}</p>
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-                <select
-                  value={item.status}
-                  onChange={(e) => updateStatus(item, e.target.value)}
-                  disabled={updatingId === item.id}
-                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
-                >
-                  {statusOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {statusLabel[s]}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-2 pt-3 border-t border-slate-100 dark:border-slate-700">
                 <button
-                  onClick={() => openReply(item)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 transition-colors"
+                  onClick={() => openReplyModal(a)}
+                  className="flex items-center gap-1.5 text-sm text-blue-500 hover:text-blue-600 font-medium"
                 >
-                  <Send className="w-4 h-4" />
-                  {item.tanggapan ? 'Edit Tanggapan' : 'Tanggapi'}
+                  <Send className="w-4 h-4" /> Balas / Update
                 </button>
-                {updatingId === item.id && (
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Reply modal */}
-      {replyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="font-semibold text-slate-900 dark:text-white">
-                Tanggapi Aspirasi
-              </h2>
-              <button
-                onClick={() => setReplyModal(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
-              >
+      {/* Modal */}
+      {modalOpen && editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setModalOpen(false)} />
+          <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Kelola Aspirasi</h2>
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-700/30 p-3">
-                <p className="font-medium text-slate-900 dark:text-white text-sm">
-                  {replyModal.judul}
-                </p>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  {replyModal.isi}
-                </p>
-                <p className="text-xs text-slate-400 mt-2">
-                  Dari: {replyModal.nama} ({replyModal.kelas_unit})
-                </p>
-              </div>
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Tanggapan
-                </label>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Judul</p>
+                <p className="text-slate-900 dark:text-white">{editing.title}</p>
+              </div>
+              {editing.description && (
+                <div>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Deskripsi</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">{editing.description}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {editing.reporter_name && (
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Pelapor</p>
+                    <p className="text-slate-900 dark:text-white">{editing.reporter_name}</p>
+                  </div>
+                )}
+                {editing.reporter_email && (
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Email</p>
+                    <p className="text-slate-900 dark:text-white">{editing.reporter_email}</p>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="label">Status</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { val: 'new', label: 'Baru' },
+                    { val: 'in_review', label: 'Ditinjau' },
+                    { val: 'replied', label: 'Dibalas' },
+                    { val: 'closed', label: 'Ditutup' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.val}
+                      onClick={() => handleUpdateStatus(opt.val)}
+                      disabled={saving}
+                      className={cn(
+                        'px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all disabled:opacity-50',
+                        editing.status === opt.val
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Balasan</label>
                 <textarea
+                  className="input min-h-[120px] resize-y"
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
-                  rows={4}
-                  placeholder="Tulis tanggapan..."
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+                  placeholder="Tulis balasan untuk pelapor..."
                 />
               </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setReplyModal(null)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleReply}
-                  disabled={updatingId === replyModal.id}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
-                >
-                  {updatingId === replyModal.id ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
-                  Kirim
-                </button>
-              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700 sticky bottom-0 bg-white dark:bg-slate-800">
+              <button onClick={() => setModalOpen(false)} className="btn-secondary">Tutup</button>
+              <button onClick={handleSendReply} disabled={saving} className="btn-primary flex items-center gap-2">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Kirim Balasan
+              </button>
             </div>
           </div>
         </div>

@@ -24,13 +24,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null);
       setLoading(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -41,18 +39,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, name: string) => {
     const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name } },
+      email, password, options: { data: { name } },
     });
     if (error) return { error: error.message, needsConfirmation: false };
-    const needsConfirmation = !data.session;
-    return { error: null, needsConfirmation };
+    return { error: null, needsConfirmation: !data.session };
   };
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const signOut = async () => { await supabase.auth.signOut(); };
 
   return (
     <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
