@@ -62,9 +62,16 @@ function AdminRoute({ children }: { children: ReactNode }) {
   useEffect(() => {
     const check = async () => {
       if (user) {
-        const { data } = await supabase.from('admin_users').select('id').eq('user_id', user.id).eq('is_active', true).single();
+        const { data } = await supabase
+          .from('admin_users')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .single();
         setIsAdmin(!!data);
-      } else { setIsAdmin(false); }
+      } else {
+        setIsAdmin(false);
+      }
     };
     if (!loading) check();
   }, [user, loading]);

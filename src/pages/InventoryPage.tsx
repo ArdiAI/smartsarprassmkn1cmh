@@ -1,10 +1,16 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, Package, MapPin, Boxes, CheckCircle2, AlertTriangle, Wrench } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
+import {
+  Package,
+  Search,
+  Loader2,
+  MapPin,
+  Tag,
+  CheckCircle2,
+} from 'lucide-react';
 
 interface Category {
   id: string;
@@ -24,83 +30,11 @@ interface InventoryItem {
   categories: { name: string } | null;
 }
 
-const conditionConfig: Record<string, { label: string; color: string; icon: any }> = {
-  good: { label: 'Baik', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  damaged: { label: 'Rusak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', icon: AlertTriangle },
-  maintenance: { label: 'Perbaikan', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Wrench },
+const conditionConfig: Record<string, { label: string; classes: string }> = {
+  good: { label: 'Baik', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+  damaged: { label: 'Rusak', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+  maintenance: { label: 'Maintenance', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
 };
-
-function ConditionBadge({ condition }: { condition: string }) {
-  const cfg = conditionConfig[condition] ?? conditionConfig.good;
-  const Icon = cfg.icon;
-  return (
-    <span className={cn('inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium', cfg.color)}>
-      <Icon className="w-3.5 h-3.5" />
-      {cfg.label}
-    </span>
-  );
-}
-
-function InventoryCard({ item }: { item: InventoryItem }) {
-  const avail = item.available_quantity;
-  const total = item.quantity;
-  const pct = total > 0 ? Math.round((avail / total) * 100) : 0;
-  return (
-    <div className="card p-5 hover:shadow-md transition-all">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-slate-900 dark:text-white truncate">{item.name}</h3>
-          {item.code && <p className="text-xs text-slate-400 mt-0.5">Kode: {item.code}</p>}
-        </div>
-        <ConditionBadge condition={item.condition} />
-      </div>
-
-      {item.description && (
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 line-clamp-2">{item.description}</p>
-      )}
-
-      <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
-        {item.categories?.name && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-xs font-medium">
-            <Boxes className="w-3.5 h-3.5" /> {item.categories.name}
-          </span>
-        )}
-        {item.location && (
-          <span className="inline-flex items-center gap-1">
-            <MapPin className="w-3.5 h-3.5 text-blue-500" /> {item.location}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-4">
-        <div className="flex items-center justify-between text-xs mb-1.5">
-          <span className="text-slate-500 dark:text-slate-400">Tersedia</span>
-          <span className="font-medium text-slate-700 dark:text-slate-200">{avail} / {total}</span>
-        </div>
-        <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-          <div
-            className={cn('h-full rounded-full', pct > 50 ? 'bg-emerald-500' : pct > 20 ? 'bg-amber-500' : 'bg-red-500')}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="card p-5 animate-pulse space-y-3">
-      <div className="flex justify-between">
-        <div className="w-1/2 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="w-16 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
-      </div>
-      <div className="w-full h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-      <div className="w-1/3 h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-      <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded" />
-    </div>
-  );
-}
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -110,7 +44,7 @@ export default function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   useEffect(() => {
-    (async () => {
+    const fetchAll = async () => {
       try {
         const [invRes, catRes] = await Promise.all([
           supabase
@@ -119,79 +53,153 @@ export default function InventoryPage() {
             .order('name', { ascending: true }),
           supabase.from('categories').select('id, name').order('name', { ascending: true }),
         ]);
-        if (invRes.error) throw invRes.error;
-        setItems((invRes.data ?? []) as unknown as InventoryItem[]);
-        setCategories((catRes.data ?? []) as unknown as Category[]);
+
+        setItems((invRes.data as unknown as InventoryItem[]) ?? []);
+        setCategories((catRes.data as unknown as Category[]) ?? []);
       } catch {
-        /* ignore */
+        setItems([]);
       } finally {
         setLoading(false);
       }
-    })();
+    };
+    fetchAll();
   }, []);
 
-  const filtered = useMemo(
-    () => items.filter(i => {
-      const matchSearch = i.name.toLowerCase().includes(search.toLowerCase());
-      const matchCat = categoryFilter === 'all' || i.category_id === categoryFilter;
-      return matchSearch && matchCat;
-    }),
-    [items, search, categoryFilter],
-  );
+  const filtered = useMemo(() => {
+    let result = items;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter((i) => i.name.toLowerCase().includes(q) || (i.code ?? '').toLowerCase().includes(q));
+    }
+    if (categoryFilter !== 'all') {
+      result = result.filter((i) => i.category_id === categoryFilter);
+    }
+    return result;
+  }, [items, search, categoryFilter]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
-            <Package className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Daftar barang inventaris</p>
-          </div>
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Inventaris</h1>
+          <p className="text-slate-500 dark:text-slate-400">
+            Daftar barang inventaris yang tersedia
+          </p>
         </div>
 
         {/* Filters */}
-        <div className="mt-6 flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-4 mb-8">
           <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Cari barang..."
-              className="input pl-10"
+              className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
             />
           </div>
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="input sm:w-56"
+            className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all min-w-[200px]"
           >
             <option value="all">Semua Kategori</option>
-            {categories.map(c => (
+            {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
 
         {/* Grid */}
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {loading ? (
-            Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)
-          ) : filtered.length === 0 ? (
-            <div className="col-span-full">
-              <EmptyState icon={Package} title="Barang tidak ditemukan" description={search || categoryFilter !== 'all' ? 'Coba filter lain.' : 'Belum ada barang terdaftar.'} />
-            </div>
-          ) : (
-            filtered.map(item => <InventoryCard key={item.id} item={item} />)
-          )}
-        </div>
-      </div>
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 animate-pulse">
+                <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-3" />
+                <div className="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-full mb-2" />
+                <div className="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-2/3 mb-4" />
+                <div className="h-8 bg-slate-100 dark:bg-slate-700/50 rounded w-full" />
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+            <EmptyState
+              icon={Package}
+              title={search || categoryFilter !== 'all' ? 'Tidak ada barang ditemukan' : 'Belum ada inventaris'}
+              description={search || categoryFilter !== 'all' ? 'Coba filter lain' : 'Barang inventaris akan tampil di sini'}
+            />
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Menampilkan {filtered.length} barang
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filtered.map((item) => {
+                const cond = conditionConfig[item.condition] ?? conditionConfig.good;
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                          <Package className="w-5 h-5 text-blue-500" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-900 dark:text-white">{item.name}</h3>
+                          {item.code && (
+                            <p className="text-xs text-slate-400 dark:text-slate-500">Kode: {item.code}</p>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${cond.classes}`}>
+                        {cond.label}
+                      </span>
+                    </div>
 
+                    {item.description && (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-3">{item.description}</p>
+                    )}
+
+                    <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-400 mb-4">
+                      {item.categories?.name && (
+                        <div className="flex items-center gap-2">
+                          <Tag className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>{item.categories.name}</span>
+                        </div>
+                      )}
+                      {item.location && (
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>{item.location}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
+                      <div className="flex items-center gap-2 text-sm">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        <span className="text-slate-600 dark:text-slate-400">
+                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">{item.available_quantity}</span>
+                          {' / '}
+                          <span className="text-slate-500">{item.quantity}</span>
+                          {' '}tersedia
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </main>
       <Footer />
     </div>
   );

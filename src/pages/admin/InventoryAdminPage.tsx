@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
-import {
-  Plus, Search, Edit2, Trash2, X, Loader2, Package, AlertCircle,
-} from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Plus, Search, Edit2, Trash2, Package, X, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
+import { cn } from '../../utils/cn';
+
+interface Category {
+  id: string;
+  name: string;
+}
 
 interface InventoryItem {
   id: string;
@@ -16,13 +19,7 @@ interface InventoryItem {
   available_quantity: number;
   condition: string;
   location: string | null;
-  created_at: string;
-  categories?: { id: string; name: string } | null;
-}
-
-interface Category {
-  id: string;
-  name: string;
+  categories: Category | null;
 }
 
 interface FormData {
@@ -48,7 +45,7 @@ const conditionBadge = (condition: string) => {
     fair: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
     damaged: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   };
-  return map[condition] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+  return map[condition] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
 };
 
 export default function InventoryAdminPage() {
@@ -60,44 +57,46 @@ export default function InventoryAdminPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const [itemsRes, catRes] = await Promise.all([
+      const [invRes, catRes] = await Promise.all([
         supabase
           .from('inventory')
-          .select('id, name, code, description, category_id, quantity, available_quantity, condition, location, created_at, categories(id, name)')
+          .select('id, name, code, description, category_id, quantity, available_quantity, condition, location, categories(id, name)')
           .order('created_at', { ascending: false }),
-        supabase.from('categories').select('id, name').order('name'),
+        supabase.from('categories').select('id, name').order('name', { ascending: true }),
       ]);
 
-      if (itemsRes.error) throw itemsRes.error;
-      setItems((itemsRes.data as unknown as InventoryItem[]) || []);
-      setCategories((catRes.data as unknown as Category[]) || []);
+      if (invRes.error) throw invRes.error;
+      setItems((invRes.data ?? []) as unknown as InventoryItem[]);
+      setCategories((catRes.data ?? []) as unknown as Category[]);
     } catch {
       showToast('Gagal memuat inventaris', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const filtered = items.filter(
-    (i) =>
-      i.name.toLowerCase().includes(search.toLowerCase()) ||
-      i.code.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const filtered = items.filter((item) => {
+    const q = search.toLowerCase();
+    return item.name.toLowerCase().includes(q) || item.code.toLowerCase().includes(q);
+  });
 
   const openAdd = () => {
-    setForm(emptyForm);
     setEditingId(null);
+    setForm(emptyForm);
     setModalOpen(true);
   };
 
   const openEdit = (item: InventoryItem) => {
+    setEditingId(item.id);
     setForm({
       name: item.name,
       code: item.code,
@@ -108,26 +107,25 @@ export default function InventoryAdminPage() {
       condition: item.condition,
       location: item.location || '',
     });
-    setEditingId(item.id);
     setModalOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.code) {
+    if (!form.name.trim() || !form.code.trim()) {
       showToast('Nama dan kode wajib diisi', 'warning');
       return;
     }
     setSaving(true);
     try {
       const payload = {
-        name: form.name,
-        code: form.code,
-        description: form.description || null,
+        name: form.name.trim(),
+        code: form.code.trim(),
+        description: form.description.trim() || null,
         category_id: form.category_id || null,
-        quantity: parseInt(form.quantity) || 0,
-        available_quantity: parseInt(form.available_quantity) || 0,
+        quantity: parseInt(form.quantity, 10) || 0,
+        available_quantity: parseInt(form.available_quantity, 10) || 0,
         condition: form.condition,
-        location: form.location || null,
+        location: form.location.trim() || null,
       };
 
       if (editingId) {
@@ -140,7 +138,7 @@ export default function InventoryAdminPage() {
         showToast('Inventaris ditambahkan', 'success');
       }
       setModalOpen(false);
-      fetchData();
+      await load();
     } catch {
       showToast('Gagal menyimpan inventaris', 'error');
     } finally {
@@ -148,95 +146,91 @@ export default function InventoryAdminPage() {
     }
   };
 
-  const handleDelete = async (item: InventoryItem) => {
-    if (!confirm(`Hapus "${item.name}"?`)) return;
+  const handleDelete = async (id: string) => {
     try {
-      const { error } = await supabase.from('inventory').delete().eq('id', item.id);
+      const { error } = await supabase.from('inventory').delete().eq('id', id);
       if (error) throw error;
       showToast('Inventaris dihapus', 'success');
-      fetchData();
+      setConfirmDelete(null);
+      await load();
     } catch {
       showToast('Gagal menghapus inventaris', 'error');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola barang inventaris</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola data inventaris</p>
         </div>
-        <button onClick={openAdd} className="btn-primary flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Tambah Barang
+        <button
+          onClick={openAdd}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          <Plus className="w-4 h-4" /> Tambah Inventaris
         </button>
       </div>
 
-      <div className="card p-4">
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            className="input pl-10"
-            placeholder="Cari nama atau kode..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Cari nama atau kode..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
 
-        {filtered.length === 0 ? (
-          <div className="text-center py-10">
-            <AlertCircle className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-            <p className="text-sm text-slate-500 dark:text-slate-400">Tidak ada inventaris</p>
+      {/* Table */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center">
+            <Package className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
+            <p className="text-slate-500 dark:text-slate-400">Belum ada inventaris</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full">
               <thead>
-                <tr className="text-left text-xs text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-                  <th className="pb-3 font-medium">Nama</th>
-                  <th className="pb-3 font-medium">Kode</th>
-                  <th className="pb-3 font-medium">Kategori</th>
-                  <th className="pb-3 font-medium">Jumlah</th>
-                  <th className="pb-3 font-medium">Tersedia</th>
-                  <th className="pb-3 font-medium">Kondisi</th>
-                  <th className="pb-3 font-medium">Lokasi</th>
-                  <th className="pb-3 font-medium text-right">Aksi</th>
+                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Nama</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Kode</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Kategori</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Qty</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Tersedia</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Kondisi</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Lokasi</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+              <tbody>
                 {filtered.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
-                    <td className="py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
-                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.code}</td>
-                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.categories?.name || '—'}</td>
-                    <td className="py-3 text-slate-900 dark:text-white">{item.quantity}</td>
-                    <td className="py-3 text-slate-900 dark:text-white">{item.available_quantity}</td>
-                    <td className="py-3">
-                      <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', conditionBadge(item.condition))}>
+                  <tr key={item.id} className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                    <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">{item.name}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">{item.code}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">{item.categories?.name || '-'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-900 dark:text-white">{item.quantity}</td>
+                    <td className="px-4 py-3 text-sm text-slate-900 dark:text-white">{item.available_quantity}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium capitalize', conditionBadge(item.condition))}>
                         {item.condition}
                       </span>
                     </td>
-                    <td className="py-3 text-slate-500 dark:text-slate-400">{item.location || '—'}</td>
-                    <td className="py-3 text-right">
+                    <td className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">{item.location || '-'}</td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEdit(item)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                        >
+                        <button onClick={() => openEdit(item)} className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20">
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(item)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        >
+                        <button onClick={() => setConfirmDelete(item.id)} className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -251,71 +245,105 @@ export default function InventoryAdminPage() {
 
       {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setModalOpen(false)} />
-          <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div
+            className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                 {editingId ? 'Edit Inventaris' : 'Tambah Inventaris'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600">
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <div>
-                <label className="label">Nama Barang *</label>
-                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              </div>
-              <div>
-                <label className="label">Kode *</label>
-                <input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-              </div>
-              <div>
-                <label className="label">Deskripsi</label>
-                <textarea className="input min-h-[80px] resize-y" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Kategori</label>
-                  <select className="input" value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
-                    <option value="">— Pilih —</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Nama *</label>
+                  <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
-                  <label className="label">Kondisi</label>
-                  <select className="input" value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })}>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Kode *</label>
+                  <input type="text" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Deskripsi</label>
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Kategori</label>
+                <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Pilih kategori</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Jumlah</label>
+                  <input type="number" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Tersedia</label>
+                  <input type="number" value={form.available_quantity} onChange={(e) => setForm({ ...form, available_quantity: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Kondisi</label>
+                  <select value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="new">Baru</option>
                     <option value="good">Baik</option>
                     <option value="fair">Cukup</option>
                     <option value="damaged">Rusak</option>
                   </select>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Jumlah</label>
-                  <input type="number" className="input" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Lokasi</label>
+                  <input type="text" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div>
-                  <label className="label">Tersedia</label>
-                  <input type="number" className="input" value={form.available_quantity} onChange={(e) => setForm({ ...form, available_quantity: e.target.value })} />
-                </div>
-              </div>
-              <div>
-                <label className="label">Lokasi</label>
-                <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
               </div>
             </div>
-            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700 sticky bottom-0 bg-white dark:bg-slate-800">
-              <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-                Simpan
+            <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-800 sticky bottom-0 bg-white dark:bg-slate-900">
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
+                Batal
               </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {editingId ? 'Simpan' : 'Tambah'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setConfirmDelete(null)}>
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Inventaris?</h3>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">Tindakan ini tidak dapat dibatalkan.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmDelete(null)} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">Batal</button>
+              <button onClick={() => handleDelete(confirmDelete)} className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Hapus</button>
             </div>
           </div>
         </div>

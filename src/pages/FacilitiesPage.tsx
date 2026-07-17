@@ -1,10 +1,17 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, Building2, MapPin, Users, Tag, Layers } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
+import {
+  Building2,
+  Search,
+  MapPin,
+  Users,
+  Loader2,
+  Package,
+  Layers,
+} from 'lucide-react';
 
 interface Facility {
   id: string;
@@ -18,72 +25,7 @@ interface Facility {
   department: string | null;
 }
 
-const FALLBACK_IMG = 'https://images.pexels.com/photos/2079249/pexels-photo-2079249.jpeg?auto=compress&cs=tinysrgb&w=600';
-
-function FacilityCard({ facility }: { facility: Facility }) {
-  return (
-    <div className="card overflow-hidden group hover:shadow-lg transition-all">
-      <div className="relative h-48 overflow-hidden bg-slate-100 dark:bg-slate-700">
-        <img
-          src={facility.image_url || FALLBACK_IMG}
-          alt={facility.name}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG; }}
-        />
-        {facility.facility_type && (
-          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 text-xs font-medium text-slate-700 dark:text-slate-200 backdrop-blur">
-            {facility.facility_type}
-          </span>
-        )}
-      </div>
-      <div className="p-5">
-        <h3 className="font-bold text-lg text-slate-900 dark:text-white">{facility.name}</h3>
-        {facility.description && (
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{facility.description}</p>
-        )}
-        <div className="mt-4 space-y-2 text-sm">
-          {facility.location && (
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-              <MapPin className="w-4 h-4 text-blue-500 flex-shrink-0" />
-              <span>{facility.location}</span>
-            </div>
-          )}
-          {facility.capacity != null && (
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-              <Users className="w-4 h-4 text-cyan-500 flex-shrink-0" />
-              <span>Kapasitas: {facility.capacity} orang</span>
-            </div>
-          )}
-          {facility.category && (
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-              <Tag className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-              <span>{facility.category}</span>
-            </div>
-          )}
-          {facility.department && (
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-              <Layers className="w-4 h-4 text-slate-400 flex-shrink-0" />
-              <span>{facility.department}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="card overflow-hidden animate-pulse">
-      <div className="h-48 bg-slate-200 dark:bg-slate-700" />
-      <div className="p-5 space-y-3">
-        <div className="w-2/3 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="w-full h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="w-1/2 h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-      </div>
-    </div>
-  );
-}
+const FALLBACK_IMAGE = 'https://images.pexels.com/photos/2079249/pexels-photo-2079249.jpeg?auto=compress&cs=tinysrgb&w=600';
 
 export default function FacilitiesPage() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
@@ -91,68 +33,139 @@ export default function FacilitiesPage() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    (async () => {
+    const fetchFacilities = async () => {
       try {
         const { data, error } = await supabase
           .from('facilities')
           .select('id, name, description, location, capacity, image_url, facility_type, category, department')
           .order('name', { ascending: true });
         if (error) throw error;
-        setFacilities((data ?? []) as unknown as Facility[]);
+        setFacilities((data as unknown as Facility[]) ?? []);
       } catch {
-        /* ignore */
+        setFacilities([]);
       } finally {
         setLoading(false);
       }
-    })();
+    };
+    fetchFacilities();
   }, []);
 
-  const filtered = useMemo(
-    () => facilities.filter(f => f.name.toLowerCase().includes(search.toLowerCase())),
-    [facilities, search],
-  );
+  const filtered = useMemo(() => {
+    if (!search.trim()) return facilities;
+    const q = search.toLowerCase();
+    return facilities.filter((f) => f.name.toLowerCase().includes(q));
+  }, [facilities, search]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Daftar fasilitas yang tersedia</p>
-          </div>
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Fasilitas</h1>
+          <p className="text-slate-500 dark:text-slate-400">
+            Daftar fasilitas yang tersedia untuk peminjaman
+          </p>
         </div>
 
         {/* Search */}
-        <div className="mt-6 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <div className="relative mb-8 max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari fasilitas..."
-            className="input pl-10"
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
           />
         </div>
 
         {/* Grid */}
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {loading ? (
-            Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-          ) : filtered.length === 0 ? (
-            <div className="col-span-full">
-              <EmptyState icon={Building2} title="Fasilitas tidak ditemukan" description={search ? 'Coba kata kunci lain.' : 'Belum ada fasilitas terdaftar.'} />
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 animate-pulse">
+                <div className="h-48 bg-slate-200 dark:bg-slate-700" />
+                <div className="p-5 space-y-3">
+                  <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
+                  <div className="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-full" />
+                  <div className="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-2/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+            <EmptyState
+              icon={Building2}
+              title={search ? 'Tidak ada fasilitas ditemukan' : 'Belum ada fasilitas'}
+              description={search ? 'Coba kata kunci lain' : 'Fasilitas akan tampil di sini'}
+            />
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Menampilkan {filtered.length} fasilitas
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filtered.map((f) => (
+                <div
+                  key={f.id}
+                  className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow group"
+                >
+                  <div className="relative h-48 bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                    <img
+                      src={f.image_url || FALLBACK_IMAGE}
+                      alt={f.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = FALLBACK_IMAGE;
+                      }}
+                    />
+                    {f.facility_type && (
+                      <span className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-medium bg-white/90 dark:bg-slate-900/90 text-slate-700 dark:text-slate-200 backdrop-blur">
+                        {f.facility_type}
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-5">
+                    <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{f.name}</h3>
+                    {f.description && (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-3">{f.description}</p>
+                    )}
+                    <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-400">
+                      {f.location && (
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>{f.location}</span>
+                        </div>
+                      )}
+                      {f.capacity != null && (
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>Kapasitas: {f.capacity} orang</span>
+                        </div>
+                      )}
+                      {f.category && (
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>{f.category}</span>
+                        </div>
+                      )}
+                      {f.department && (
+                        <div className="flex items-center gap-2">
+                          <Package className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span>{f.department}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ) : (
-            filtered.map(f => <FacilityCard key={f.id} facility={f} />)
-          )}
-        </div>
-      </div>
-
+          </>
+        )}
+      </main>
       <Footer />
     </div>
   );

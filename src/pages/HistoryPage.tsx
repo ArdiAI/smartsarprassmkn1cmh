@@ -1,122 +1,51 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, History, Calendar, User, Mail, Package, Clock, ChevronRight } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
+import {
+  History,
+  Search,
+  Loader2,
+  Calendar,
+  User,
+  Package,
+  Clock,
+} from 'lucide-react';
 
 interface BorrowingItem {
   id: string;
   borrowing_id: string;
   item_name: string;
-  item_type: string;
+  item_type: string | null;
   quantity: number;
   status: string;
-  current_step: number;
+  current_step: number | null;
   current_status_label: string | null;
 }
 
 interface Borrowing {
   id: string;
-  borrower_name: string;
+  borrower_name: string | null;
   borrower_email: string | null;
   borrower_class: string | null;
-  borrow_date: string;
-  return_date: string;
-  status: string;
+  borrow_date: string | null;
+  return_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   purpose: string | null;
+  status: string;
+  current_status_label: string | null;
   created_at: string;
   borrowing_items: BorrowingItem[];
 }
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  approved: { label: 'Disetujui', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  returned: { label: 'Dikembalikan', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+const statusConfig: Record<string, { label: string; classes: string }> = {
+  pending: { label: 'Menunggu', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
+  approved: { label: 'Disetujui', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+  rejected: { label: 'Ditolak', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+  returned: { label: 'Dikembalikan', classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
 };
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = statusConfig[status] ?? { label: status, color: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300' };
-  return <span className={cn('inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium', cfg.color)}>{cfg.label}</span>;
-}
-
-function BorrowingCard({ borrowing }: { borrowing: Borrowing }) {
-  return (
-    <div className="card p-5 hover:shadow-md transition-all">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-slate-900 dark:text-white">{borrowing.borrower_name}</h3>
-            <StatusBadge status={borrowing.status} />
-          </div>
-          <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-500 dark:text-slate-400">
-            {borrowing.borrower_class && (
-              <span className="inline-flex items-center gap-1"><User className="w-3.5 h-3.5" /> {borrowing.borrower_class}</span>
-            )}
-            {borrowing.borrower_email && (
-              <span className="inline-flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> {borrowing.borrower_email}</span>
-            )}
-          </div>
-        </div>
-        <ChevronRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-300">
-        <span className="inline-flex items-center gap-1.5">
-          <Calendar className="w-4 h-4 text-blue-500" />
-          Pinjam: {new Date(borrowing.borrow_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <Calendar className="w-4 h-4 text-cyan-500" />
-          Kembali: {new Date(borrowing.return_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <Clock className="w-4 h-4 text-slate-400" />
-          {new Date(borrowing.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-        </span>
-      </div>
-
-      {borrowing.purpose && (
-        <p className="mt-3 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{borrowing.purpose}</p>
-      )}
-
-      {/* Items */}
-      <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">Item Dipinjam</p>
-        <div className="space-y-2">
-          {borrowing.borrowing_items.map(item => (
-            <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                <Package className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <span className="text-slate-700 dark:text-slate-200 truncate">{item.item_name}</span>
-                <span className="text-xs text-slate-400">×{item.quantity}</span>
-              </div>
-              <span className="text-xs text-slate-500 dark:text-slate-400 flex-shrink-0">
-                {item.current_status_label ?? item.status}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="card p-5 animate-pulse space-y-3">
-      <div className="flex justify-between">
-        <div className="w-1/3 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="w-16 h-5 bg-slate-200 dark:bg-slate-700 rounded" />
-      </div>
-      <div className="w-1/2 h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-      <div className="w-full h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-      <div className="w-2/3 h-4 bg-slate-200 dark:bg-slate-700 rounded" />
-    </div>
-  );
-}
 
 export default function HistoryPage() {
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
@@ -124,69 +53,204 @@ export default function HistoryPage() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    (async () => {
+    const fetchBorrowings = async () => {
       try {
         const { data, error } = await supabase
           .from('borrowings')
-          .select('id, borrower_name, borrower_email, borrower_class, borrow_date, return_date, status, purpose, created_at, borrowing_items(id, borrowing_id, item_name, item_type, quantity, status, current_step, current_status_label)')
+          .select(`
+            id,
+            borrower_name,
+            borrower_email,
+            borrower_class,
+            borrow_date,
+            return_date,
+            start_time,
+            end_time,
+            purpose,
+            status,
+            current_status_label,
+            created_at,
+            borrowing_items (
+              id,
+              borrowing_id,
+              item_name,
+              item_type,
+              quantity,
+              status,
+              current_step,
+              current_status_label
+            )
+          `)
           .order('created_at', { ascending: false });
         if (error) throw error;
-        setBorrowings((data ?? []) as unknown as Borrowing[]);
+        setBorrowings((data as unknown as Borrowing[]) ?? []);
       } catch {
-        /* ignore */
+        setBorrowings([]);
       } finally {
         setLoading(false);
       }
-    })();
+    };
+    fetchBorrowings();
   }, []);
 
-  const filtered = useMemo(
-    () => borrowings.filter(b =>
-      b.borrower_name.toLowerCase().includes(search.toLowerCase()) ||
-      (b.borrower_email ?? '').toLowerCase().includes(search.toLowerCase()),
-    ),
-    [borrowings, search],
-  );
+  const filtered = useMemo(() => {
+    if (!search.trim()) return borrowings;
+    const q = search.toLowerCase();
+    return borrowings.filter(
+      (b) =>
+        (b.borrower_name ?? '').toLowerCase().includes(q) ||
+        (b.borrower_email ?? '').toLowerCase().includes(q) ||
+        (b.borrower_class ?? '').toLowerCase().includes(q) ||
+        b.borrowing_items?.some((item) => item.item_name.toLowerCase().includes(q))
+    );
+  }, [borrowings, search]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
-            <History className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Riwayat Peminjaman</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Daftar semua peminjaman</p>
-          </div>
+      <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Riwayat Peminjaman</h1>
+          <p className="text-slate-500 dark:text-slate-400">
+            Daftar riwayat peminjaman barang dan fasilitas
+          </p>
         </div>
 
         {/* Search */}
-        <div className="mt-6 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <div className="relative mb-8 max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari berdasarkan nama atau email..."
-            className="input pl-10"
+            placeholder="Cari berdasarkan nama, email, atau barang..."
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
           />
         </div>
 
         {/* List */}
-        <div className="mt-6 space-y-4">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-          ) : filtered.length === 0 ? (
-            <EmptyState icon={History} title="Belum ada riwayat" description={search ? 'Coba kata kunci lain.' : 'Belum ada peminjaman tercatat.'} />
-          ) : (
-            filtered.map(b => <BorrowingCard key={b.id} borrowing={b} />)
-          )}
-        </div>
-      </div>
+        {loading ? (
+          <div className="space-y-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 animate-pulse">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-slate-200 dark:bg-slate-700" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/3" />
+                    <div className="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-1/2" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+            <EmptyState
+              icon={History}
+              title={search ? 'Tidak ada riwayat ditemukan' : 'Belum ada riwayat peminjaman'}
+              description={search ? 'Coba kata kunci lain' : 'Riwayat peminjaman akan tampil di sini'}
+            />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filtered.map((b) => {
+              const st = statusConfig[b.status] ?? statusConfig.pending;
+              return (
+                <div
+                  key={b.id}
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 hover:shadow-md transition-shadow"
+                >
+                  {/* Header row */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                        <Package className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-slate-900 dark:text-white">
+                          {b.borrower_name ?? 'Peminjam tidak diketahui'}
+                        </h3>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">
+                          {new Date(b.created_at).toLocaleString('id-ID', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${st.classes}`}>
+                      {b.current_status_label ?? st.label}
+                    </span>
+                  </div>
 
+                  {/* Borrower info */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 text-sm">
+                    {b.borrower_name && (
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                        <User className="w-4 h-4 text-slate-400" />
+                        {b.borrower_name}
+                        {b.borrower_class && ` · ${b.borrower_class}`}
+                      </div>
+                    )}
+                    {b.borrow_date && (
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        {new Date(b.borrow_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {b.return_date && ` → ${new Date(b.return_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                      </div>
+                    )}
+                    {b.start_time && (
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        {b.start_time}{b.end_time && ` - ${b.end_time}`}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Items */}
+                  {b.borrowing_items && b.borrowing_items.length > 0 && (
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-700">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                        Barang Dipinjam ({b.borrowing_items.length})
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {b.borrowing_items.map((item) => {
+                          const itemSt = statusConfig[item.status] ?? statusConfig.pending;
+                          return (
+                            <span
+                              key={item.id}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-700/50 text-sm text-slate-700 dark:text-slate-300"
+                            >
+                              <Package className="w-3.5 h-3.5 text-slate-400" />
+                              {item.item_name}
+                              <span className="text-slate-400">×{item.quantity}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${itemSt.classes}`}>
+                                {item.current_status_label ?? itemSt.label}
+                              </span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Purpose */}
+                  {b.purpose && (
+                    <div className="mt-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/30">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Keperluan</p>
+                      <p className="text-sm text-slate-700 dark:text-slate-300">{b.purpose}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
       <Footer />
     </div>
   );

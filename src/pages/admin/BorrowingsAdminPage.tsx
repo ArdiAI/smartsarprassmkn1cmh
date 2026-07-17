@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Package, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp,
-  Loader2, Mail, FileText, RotateCcw, AlertCircle,
+  User, FileText, ArrowRight, RotateCcw, Mail, Loader2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
+import { cn } from '../../utils/cn';
 import {
   fetchWorkflowTemplate, getNextActionableStep, isLastActionableStep, getCurrentStep,
   type WorkflowStep, type WorkflowTemplate,
@@ -14,12 +14,12 @@ import {
 interface BorrowingItem {
   id: string;
   borrowing_id: string;
-  item_name: string;
+  inventory_id: string;
   quantity: number;
   status: string;
   current_step: number;
-  workflow_template_id: string | null;
-  notes?: string;
+  notes: string;
+  inventory: { name: string; code: string } | null;
 }
 
 interface Borrowing {
@@ -27,159 +27,201 @@ interface Borrowing {
   borrower_name: string;
   borrower_email: string;
   purpose: string;
-  borrow_date: string;
-  return_date: string;
+  start_date: string;
+  end_date: string;
   status: string;
   created_at: string;
+  workflow_template_id: string | null;
   borrowing_items: BorrowingItem[];
 }
 
-interface ApprovalForm {
-  approverName: string;
-  approverPosition: string;
+interface ApprovalHistoryEntry {
+  borrowing_id: string;
+  borrowing_item_id: string;
+  step_order: number;
+  step_label: string;
+  approver_name: string;
+  approver_role: string;
+  status: string;
   notes: string;
+  acted_at: string;
 }
+
+const statusBadge = (status: string) => {
+  const map: Record<string, string> = {
+    pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    completed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+    returned: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  };
+  return map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+};
 
 export default function BorrowingsAdminPage() {
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [approvalForms, setApprovalForms] = useState<Record<string, ApprovalForm>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [workflowCache, setWorkflowCache] = useState<Record<string, WorkflowTemplate>>({});
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>('all');
 
-  useEffect(() => {
-    fetchBorrowings();
-  }, []);
+  // Approval form state per item
+  const [approvalForms, setApprovalForms] = useState<Record<string, { approverName: string; approverPosition: string; notes: string }>>({});
 
-  const fetchBorrowings = async () => {
+  const loadBorrowings = useCallback(async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('borrowings')
-        .select('id, borrower_name, borrower_email, purpose, borrow_date, return_date, status, created_at, borrowing_items(id, borrowing_id, item_name, quantity, status, current_step, workflow_template_id, notes)')
+        .select(`
+          id, borrower_name, borrower_email, purpose, start_date, end_date, status, created_at, workflow_template_id,
+          borrowing_items (
+            id, borrowing_id, inventory_id, quantity, status, current_step, notes,
+            inventory:inventory_id (name, code)
+          )
+        `)
         .order('created_at', { ascending: false });
 
+      if (filter !== 'all') {
+        query = query.eq('status', filter);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
-      const items = (data as unknown as Borrowing[]) || [];
-      setBorrowings(items);
+      setBorrowings((data ?? []) as unknown as Borrowing[]);
 
       // Pre-fetch workflow templates
-      const templateIds = new Set<string>();
-      items.forEach((b) => {
-        b.borrowing_items?.forEach((item) => {
-          if (item.workflow_template_id) templateIds.add(item.workflow_template_id);
-        });
-      });
-
-      const cache: Record<string, WorkflowTemplate> = {};
-      await Promise.all(
-        Array.from(templateIds).map(async (tid) => {
-          const tmpl = await fetchWorkflowTemplate(tid);
-          if (tmpl) cache[tid] = tmpl;
-        })
-      );
-      setWorkflowCache(cache);
+      const templateIds = [...new Set((data ?? []).map((b: any) => b.workflow_template_id).filter(Boolean))] as string[];
+      for (const tid of templateIds) {
+        if (!workflowCache[tid]) {
+          const template = await fetchWorkflowTemplate(tid);
+          if (template) {
+            setWorkflowCache((prev) => ({ ...prev, [tid]: template }));
+          }
+        }
+      }
     } catch {
-      showToast('Gagal memuat peminjaman', 'error');
+      showToast('Gagal memuat data peminjaman', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [filter]);
 
-  const getForm = (itemId: string): ApprovalForm =>
-    approvalForms[itemId] || { approverName: '', approverPosition: '', notes: '' };
+  useEffect(() => {
+    loadBorrowings();
+  }, [loadBorrowings]);
 
-  const setForm = (itemId: string, patch: Partial<ApprovalForm>) => {
+  const getForm = (itemId: string) => ({
+    approverName: approvalForms[itemId]?.approverName || '',
+    approverPosition: approvalForms[itemId]?.approverPosition || '',
+    notes: approvalForms[itemId]?.notes || '',
+  });
+
+  const updateForm = (itemId: string, field: string, value: string) => {
     setApprovalForms((prev) => ({
       ...prev,
-      [itemId]: { ...getForm(itemId), ...patch },
+      [itemId]: { ...getForm(itemId), [field]: value },
     }));
   };
 
-  const logHistory = async (
-    borrowingId: string,
-    borrowingItemId: string,
-    step: WorkflowStep | undefined,
-    approverName: string,
-    approverRole: string,
-    status: string,
-    notes: string
-  ) => {
-    await supabase.from('approval_history').insert({
-      borrowing_id: borrowingId,
-      borrowing_item_id: borrowingItemId,
-      step_order: step?.step_order ?? 0,
-      step_label: step?.step_label ?? '',
-      approver_name: approverName,
-      approver_role: approverRole,
-      status,
-      notes,
-      acted_at: new Date().toISOString(),
-    });
-  };
-
-  const sendEmail = async (borrowing: Borrowing, item: BorrowingItem, status: string) => {
+  const sendEmail = async (borrowingId: string, itemId: string, action: string) => {
     try {
-      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v2/send-borrowing-email`, {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      await fetch(`${supabaseUrl}/functions/v2/send-borrowing-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          borrowing_id: borrowing.id,
-          borrowing_item_id: item.id,
-          borrower_name: borrowing.borrower_name,
-          borrower_email: borrowing.borrower_email,
-          item_name: item.item_name,
-          status,
-        }),
+        body: JSON.stringify({ borrowingId, borrowingItemId: itemId, action }),
       });
     } catch {
-      // Email failure is non-blocking
+      // Email is best-effort; don't block on failure
+      console.warn('Failed to send email notification');
+    }
+  };
+
+  const logApproval = async (entry: ApprovalHistoryEntry) => {
+    try {
+      await supabase.from('approval_history').insert({
+        borrowing_id: entry.borrowing_id,
+        borrowing_item_id: entry.borrowing_item_id,
+        step_order: entry.step_order,
+        step_label: entry.step_label,
+        approver_name: entry.approver_name,
+        approver_role: entry.approver_role,
+        status: entry.status,
+        notes: entry.notes,
+        acted_at: entry.acted_at,
+      });
+    } catch {
+      console.warn('Failed to log approval history');
     }
   };
 
   const handleApprove = async (borrowing: Borrowing, item: BorrowingItem) => {
     const form = getForm(item.id);
-    if (!form.approverName || !form.approverPosition) {
-      showToast('Nama dan jabatan approver wajib diisi', 'warning');
+    if (!form.approverName.trim() || !form.approverPosition.trim()) {
+      showToast('Isi nama dan jabatan approver', 'warning');
       return;
     }
 
     setActionLoading(item.id);
     try {
-      const template = item.workflow_template_id ? workflowCache[item.workflow_template_id] : null;
-      const steps = template?.steps || [];
+      const template = borrowing.workflow_template_id ? workflowCache[borrowing.workflow_template_id] : null;
+      const steps: WorkflowStep[] = template?.steps ?? [];
       const currentStep = getCurrentStep(steps, item.current_step);
+      const stepLabel = currentStep?.step_label || `Step ${item.current_step}`;
 
-      const isLast = isLastActionableStep(steps, item.current_step);
-      const nextStep = getNextActionableStep(steps, item.current_step);
+      if (isLastActionableStep(steps, item.current_step)) {
+        // Finalize: mark as approved (or completed)
+        await supabase
+          .from('borrowing_items')
+          .update({ status: 'approved', current_step: item.current_step })
+          .eq('id', item.id);
 
-      let newStatus = item.status;
-      let newCurrentStep = item.current_step;
+        await logApproval({
+          borrowing_id: borrowing.id,
+          borrowing_item_id: item.id,
+          step_order: item.current_step,
+          step_label: stepLabel,
+          approver_name: form.approverName,
+          approver_role: form.approverPosition,
+          status: 'approved',
+          notes: form.notes,
+          acted_at: new Date().toISOString(),
+        });
 
-      if (isLast || steps.length === 0) {
-        newStatus = 'approved';
-      } else if (nextStep) {
-        newCurrentStep = nextStep.step_order;
-        newStatus = nextStep.is_info_only ? 'approved' : 'pending';
+        showToast(`Item disetujui (step final): ${stepLabel}`, 'success');
+      } else {
+        const nextStep = getNextActionableStep(steps, item.current_step);
+        const nextStepOrder = nextStep ? nextStep.step_order : item.current_step + 1;
+
+        await supabase
+          .from('borrowing_items')
+          .update({ current_step: nextStepOrder, status: 'pending' })
+          .eq('id', item.id);
+
+        await logApproval({
+          borrowing_id: borrowing.id,
+          borrowing_item_id: item.id,
+          step_order: item.current_step,
+          step_label: stepLabel,
+          approver_name: form.approverName,
+          approver_role: form.approverPosition,
+          status: 'approved',
+          notes: form.notes,
+          acted_at: new Date().toISOString(),
+        });
+
+        showToast(`Item disetujui, lanjut ke step ${nextStepOrder}`, 'success');
       }
 
-      const { error } = await supabase
-        .from('borrowing_items')
-        .update({ status: newStatus, current_step: newCurrentStep })
-        .eq('id', item.id);
-
-      if (error) throw error;
-
-      await logHistory(borrowing.id, item.id, currentStep, form.approverName, form.approverPosition, 'approved', form.notes);
-      await sendEmail(borrowing, item, newStatus);
-
-      showToast(`Item "${item.item_name}" disetujui`, 'success');
+      await sendEmail(borrowing.id, item.id, 'approved');
+      await loadBorrowings();
       setApprovalForms((prev) => {
         const next = { ...prev };
         delete next[item.id];
         return next;
       });
-      fetchBorrowings();
     } catch {
       showToast('Gagal menyetujui item', 'error');
     } finally {
@@ -189,34 +231,43 @@ export default function BorrowingsAdminPage() {
 
   const handleReject = async (borrowing: Borrowing, item: BorrowingItem) => {
     const form = getForm(item.id);
-    if (!form.approverName || !form.approverPosition) {
-      showToast('Nama dan jabatan approver wajib diisi', 'warning');
+    if (!form.approverName.trim()) {
+      showToast('Isi nama approver', 'warning');
       return;
     }
 
     setActionLoading(item.id);
     try {
-      const template = item.workflow_template_id ? workflowCache[item.workflow_template_id] : null;
-      const steps = template?.steps || [];
+      const template = borrowing.workflow_template_id ? workflowCache[borrowing.workflow_template_id] : null;
+      const steps: WorkflowStep[] = template?.steps ?? [];
       const currentStep = getCurrentStep(steps, item.current_step);
+      const stepLabel = currentStep?.step_label || `Step ${item.current_step}`;
 
-      const { error } = await supabase
+      await supabase
         .from('borrowing_items')
         .update({ status: 'rejected' })
         .eq('id', item.id);
 
-      if (error) throw error;
+      await logApproval({
+        borrowing_id: borrowing.id,
+        borrowing_item_id: item.id,
+        step_order: item.current_step,
+        step_label: stepLabel,
+        approver_name: form.approverName,
+        approver_role: form.approverPosition,
+        status: 'rejected',
+        notes: form.notes,
+        acted_at: new Date().toISOString(),
+      });
 
-      await logHistory(borrowing.id, item.id, currentStep, form.approverName, form.approverPosition, 'rejected', form.notes);
-      await sendEmail(borrowing, item, 'rejected');
-
-      showToast(`Item "${item.item_name}" ditolak`, 'info');
+      await sendEmail(borrowing.id, item.id, 'rejected');
+      showToast('Item ditolak', 'info');
+      await loadBorrowings();
       setApprovalForms((prev) => {
         const next = { ...prev };
         delete next[item.id];
         return next;
       });
-      fetchBorrowings();
     } catch {
       showToast('Gagal menolak item', 'error');
     } finally {
@@ -224,89 +275,87 @@ export default function BorrowingsAdminPage() {
     }
   };
 
-  const handleReturn = async (item: BorrowingItem) => {
+  const handleReturn = async (borrowing: Borrowing, item: BorrowingItem) => {
     setActionLoading(item.id);
     try {
-      const { error } = await supabase
+      await supabase
         .from('borrowing_items')
         .update({ status: 'returned' })
         .eq('id', item.id);
 
-      if (error) throw error;
-      showToast(`Item "${item.item_name}" ditandai dikembalikan`, 'success');
-      fetchBorrowings();
+      await logApproval({
+        borrowing_id: borrowing.id,
+        borrowing_item_id: item.id,
+        step_order: item.current_step,
+        step_label: 'Return',
+        approver_name: 'Admin',
+        approver_role: 'Admin',
+        status: 'returned',
+        notes: 'Item telah dikembalikan',
+        acted_at: new Date().toISOString(),
+      });
+
+      showToast('Item ditandai sebagai dikembalikan', 'success');
+      await loadBorrowings();
     } catch {
-      showToast('Gagal memperbarui status', 'error');
+      showToast('Gagal menandai return', 'error');
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleComplete = async (item: BorrowingItem) => {
+  const handleComplete = async (borrowing: Borrowing, item: BorrowingItem) => {
     setActionLoading(item.id);
     try {
-      const { error } = await supabase
+      await supabase
         .from('borrowing_items')
         .update({ status: 'completed' })
         .eq('id', item.id);
 
-      if (error) throw error;
-      showToast(`Item "${item.item_name}" diselesaikan`, 'success');
-      fetchBorrowings();
+      showToast('Item ditandai selesai', 'success');
+      await loadBorrowings();
     } catch {
-      showToast('Gagal memperbarui status', 'error');
+      showToast('Gagal menyelesaikan item', 'error');
     } finally {
       setActionLoading(null);
     }
   };
 
-  const statusBadge = (status: string) => {
-    const map: Record<string, string> = {
-      pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-      approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-      rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-      completed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-      returned: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
-    };
-    return map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
-  };
-
-  const renderWorkflowProgress = (item: BorrowingItem) => {
-    const template = item.workflow_template_id ? workflowCache[item.workflow_template_id] : null;
-    const steps = template?.steps || [];
+  const renderWorkflowProgress = (borrowing: Borrowing, item: BorrowingItem) => {
+    const template = borrowing.workflow_template_id ? workflowCache[borrowing.workflow_template_id] : null;
+    const steps: WorkflowStep[] = template?.steps ?? [];
     if (steps.length === 0) return null;
 
     return (
-      <div className="flex items-center gap-1 flex-wrap mt-2">
-        {steps.map((step) => {
-          const isCurrent = step.step_order === item.current_step;
-          const isPast = step.step_order < item.current_step;
-          const isRejected = item.status === 'rejected';
+      <div className="flex items-center gap-1 mt-3 flex-wrap">
+        {steps.map((step, idx) => {
+          const isDone = step.step_order < item.current_step;
+          const isCurrent = step.step_order === item.current_step && item.status === 'pending';
+          const isInfoOnly = step.is_info_only;
           return (
             <div key={step.id} className="flex items-center gap-1">
               <div
                 className={cn(
                   'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium',
-                  isRejected && step.step_order >= item.current_step
-                    ? 'bg-slate-100 text-slate-400 dark:bg-slate-700/50'
-                    : isPast
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                    : isCurrent
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                  isDone && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+                  isCurrent && 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 ring-2 ring-blue-400/30',
+                  !isDone && !isCurrent && 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+                  isInfoOnly && 'italic opacity-70',
                 )}
               >
-                {isPast && !isRejected && <CheckCircle className="w-3 h-3" />}
-                {isCurrent && !isRejected && <Clock className="w-3 h-3" />}
-                {step.step_label}
+                {isDone && <CheckCircle className="w-3 h-3" />}
+                {isCurrent && <Clock className="w-3 h-3 animate-pulse" />}
+                <span>{step.step_label}</span>
               </div>
-              {step.step_order < steps.length && <div className="w-3 h-px bg-slate-200 dark:bg-slate-600" />}
+              {idx < steps.length - 1 && <ArrowRight className="w-3 h-3 text-slate-300 dark:text-slate-600" />}
             </div>
           );
         })}
       </div>
     );
   };
+
+  const filters = ['all', 'pending', 'approved', 'rejected', 'completed', 'returned'];
 
   if (loading) {
     return (
@@ -317,153 +366,191 @@ export default function BorrowingsAdminPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Peminjaman</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola dan setujui peminjaman barang</p>
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Peminjaman</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola approval peminjaman dengan workflow</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {filters.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors capitalize',
+                filter === f
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+              )}
+            >
+              {f === 'all' ? 'Semua' : f}
+            </button>
+          ))}
+        </div>
       </div>
 
       {borrowings.length === 0 ? (
-        <div className="card p-10 text-center">
-          <AlertCircle className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center">
+          <Package className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
           <p className="text-slate-500 dark:text-slate-400">Belum ada peminjaman</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {borrowings.map((b) => {
-            const isExpanded = expandedId === b.id;
+          {borrowings.map((borrowing) => {
+            const isExpanded = expanded === borrowing.id;
             return (
-              <div key={b.id} className="card overflow-hidden">
+              <div key={borrowing.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                {/* Header */}
                 <button
-                  onClick={() => setExpandedId(isExpanded ? null : b.id)}
-                  className="w-full flex items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors text-left"
+                  onClick={() => setExpanded(isExpanded ? null : borrowing.id)}
+                  className="w-full flex items-center justify-between p-5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                    <Package className="w-6 h-6 text-white" />
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center flex-shrink-0">
+                      <Package className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <p className="font-semibold text-slate-900 dark:text-white truncate">{borrowing.borrower_name}</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 truncate">
+                        {borrowing.purpose || 'No purpose'} · {new Date(borrowing.created_at).toLocaleDateString('id-ID')}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900 dark:text-white truncate">{b.borrower_name || 'N/A'}</p>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 truncate">
-                      {b.purpose || '—'} · {new Date(b.borrow_date).toLocaleDateString('id-ID')}
-                    </p>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', statusBadge(borrowing.status))}>
+                      {borrowing.status}
+                    </span>
+                    {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
                   </div>
-                  <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', statusBadge(b.status))}>
-                    {b.status}
-                  </span>
-                  {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
                 </button>
 
+                {/* Expanded content */}
                 {isExpanded && (
-                  <div className="border-t border-slate-100 dark:border-slate-700 p-4 space-y-4">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Email</p>
-                        <p className="text-slate-900 dark:text-white">{b.borrower_email || '—'}</p>
+                  <div className="border-t border-slate-200 dark:border-slate-800 p-5 space-y-4 animate-slide-in">
+                    {/* Borrowing info */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                        <User className="w-4 h-4 text-slate-400" />
+                        <span>{borrowing.borrower_email || 'No email'}</span>
                       </div>
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Tanggal Kembali</p>
-                        <p className="text-slate-900 dark:text-white">
-                          {b.return_date ? new Date(b.return_date).toLocaleDateString('id-ID') : '—'}
-                        </p>
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        <span>{new Date(borrowing.start_date).toLocaleDateString('id-ID')} → {new Date(borrowing.end_date).toLocaleDateString('id-ID')}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                        <FileText className="w-4 h-4 text-slate-400" />
+                        <span>{borrowing.borrowing_items?.length || 0} item</span>
                       </div>
                     </div>
 
-                    {b.borrowing_items?.map((item) => (
-                      <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <p className="font-medium text-slate-900 dark:text-white">{item.item_name}</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Jumlah: {item.quantity}</p>
+                    {/* Items */}
+                    {(borrowing.borrowing_items || []).map((item) => {
+                      const form = getForm(item.id);
+                      const isPending = item.status === 'pending';
+                      const isApproved = item.status === 'approved';
+                      const isRejected = item.status === 'rejected';
+                      const isReturned = item.status === 'returned';
+                      const isLoading = actionLoading === item.id;
+
+                      return (
+                        <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50 dark:bg-slate-800/30">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-medium text-slate-900 dark:text-white">
+                                {item.inventory?.name || 'Unknown item'}
+                                <span className="ml-2 text-xs text-slate-400">({item.inventory?.code || 'no code'})</span>
+                              </p>
+                              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Jumlah: {item.quantity}</p>
+                              {renderWorkflowProgress(borrowing, item)}
+                            </div>
+                            <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize flex-shrink-0', statusBadge(item.status))}>
+                              {item.status}
+                            </span>
                           </div>
-                          <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', statusBadge(item.status))}>
-                            {item.status}
-                          </span>
-                        </div>
 
-                        {renderWorkflowProgress(item)}
-
-                        {item.status !== 'rejected' && item.status !== 'completed' && item.status !== 'returned' && (
-                          <div className="mt-4 space-y-3">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <div>
-                                <label className="label">Nama Approver</label>
+                          {/* Approval form */}
+                          {isPending && (
+                            <div className="mt-4 space-y-3 border-t border-slate-200 dark:border-slate-700 pt-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <input
-                                  className="input"
-                                  value={getForm(item.id).approverName}
-                                  onChange={(e) => setForm(item.id, { approverName: e.target.value })}
-                                  placeholder="Nama lengkap"
+                                  type="text"
+                                  placeholder="Nama Approver"
+                                  value={form.approverName}
+                                  onChange={(e) => updateForm(item.id, 'approverName', e.target.value)}
+                                  className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Jabatan / Position"
+                                  value={form.approverPosition}
+                                  onChange={(e) => updateForm(item.id, 'approverPosition', e.target.value)}
+                                  className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                               </div>
-                              <div>
-                                <label className="label">Jabatan</label>
-                                <input
-                                  className="input"
-                                  value={getForm(item.id).approverPosition}
-                                  onChange={(e) => setForm(item.id, { approverPosition: e.target.value })}
-                                  placeholder="Jabatan / role"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="label">Catatan</label>
                               <textarea
-                                className="input min-h-[80px] resize-y"
-                                value={getForm(item.id).notes}
-                                onChange={(e) => setForm(item.id, { notes: e.target.value })}
-                                placeholder="Catatan approval (opsional)"
+                                placeholder="Catatan (opsional)"
+                                value={form.notes}
+                                onChange={(e) => updateForm(item.id, 'notes', e.target.value)}
+                                rows={2}
+                                className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                               />
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  onClick={() => handleApprove(borrowing, item)}
+                                  disabled={isLoading}
+                                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handleReject(borrowing, item)}
+                                  disabled={isLoading}
+                                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                                  Reject
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => handleApprove(b, item)}
-                                disabled={actionLoading === item.id}
-                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
-                              >
-                                {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                                Setujui
-                              </button>
-                              <button
-                                onClick={() => handleReject(b, item)}
-                                disabled={actionLoading === item.id}
-                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
-                              >
-                                {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                                Tolak
-                              </button>
-                              {item.status === 'approved' && (
-                                <>
-                                  <button
-                                    onClick={() => handleReturn(item)}
-                                    disabled={actionLoading === item.id}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
-                                  >
-                                    <RotateCcw className="w-4 h-4" /> Dikembalikan
-                                  </button>
-                                  <button
-                                    onClick={() => handleComplete(item)}
-                                    disabled={actionLoading === item.id}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                                  >
-                                    <CheckCircle className="w-4 h-4" /> Selesai
-                                  </button>
-                                </>
+                          )}
+
+                          {/* Post-approval actions */}
+                          {(isApproved || isReturned) && !isPending && (
+                            <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 dark:border-slate-700 pt-4">
+                              {isApproved && (
+                                <button
+                                  onClick={() => handleReturn(borrowing, item)}
+                                  disabled={isLoading}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-600 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                                  Tandai Dikembalikan
+                                </button>
+                              )}
+                              {isReturned && (
+                                <button
+                                  onClick={() => handleComplete(borrowing, item)}
+                                  disabled={isLoading}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                  Tandai Selesai
+                                </button>
                               )}
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {item.status === 'rejected' && (
-                          <div className="mt-3 flex items-center gap-2 text-sm text-red-500">
-                            <XCircle className="w-4 h-4" /> Item ditolak
-                          </div>
-                        )}
-                        {(item.status === 'returned' || item.status === 'completed') && (
-                          <div className="mt-3 flex items-center gap-2 text-sm text-emerald-500">
-                            <CheckCircle className="w-4 h-4" /> {item.status === 'returned' ? 'Dikembalikan' : 'Selesai'}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          {isRejected && (
+                            <div className="mt-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400 border-t border-slate-200 dark:border-slate-700 pt-4">
+                              <XCircle className="w-4 h-4" />
+                              Item ini telah ditolak
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
