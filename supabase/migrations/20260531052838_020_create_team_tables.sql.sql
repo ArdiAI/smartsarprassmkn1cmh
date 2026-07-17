@@ -89,11 +89,7 @@ INSERT INTO about_settings (section, content) VALUES
   }'),
   ('mission', '{
     "items": [
-      "Menyediakan sarana prasarana yang memadai dan berkualitas untuk mendukung kegiatan pembelajaran",
-      "Mengelola inventaris barang dengan sistem yang terintegrasi dan transparan",
-      "Melakukan pemeliharaan dan perawatan fasilitas secara berkala dan terencana",
-      "Merespon laporan kerusakan dengan cepat dan tepat",
-      "Mengembangkan sistem informasi sarana prasarana yang modern dan efisien"
+      "Menyediakan dan merawat fasilitas pendidikan yang sesuai dengan kebutuhan industri."
     ]
   }'),
   ('tasks', '{
