@@ -84,7 +84,7 @@ INSERT INTO about_settings (section, content) VALUES
     "established": "2010"
   }'),
   ('vision', '{
-    "text": "Menjadi unit sarana prasarana yang profesional, inovatif, dan terpercaya dalam pengelolaan fasilitas pendidikan.",
+    "text": "Menyediakan fasilitas yang mendukung penuh visi utama sekolah, yaitu menciptakan lulusan yang unggul, berakhlak mulia, berbudaya kerja, berjiwa technopreneurship, dan berwawasan global.",
     "description": "Kami berkomitmen untuk memberikan layanan terbaik dalam pengelolaan sarana prasarana sekolah."
   }'),
   ('mission', '{
