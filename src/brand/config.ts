@@ -7,9 +7,9 @@ export const brandConfig = {
   },
   school: {
     name: 'SMART SARPRAS',
-    address: 'Indonesia',
-    phone: '',
-    email: '',
+    address: 'Jl. Mahar Martanegara No. 48, Kelurahan Leuwigajah, Kecamatan Cimahi Selatan, Kota Cimahi, Jawa Barat',
+    phone: '(022) 6629683',
+    email: 'info@smkn1-cmi.sch.id',
     website: '',
   },
   colors: {
