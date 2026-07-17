@@ -336,7 +336,7 @@ ON CONFLICT DO NOTHING;
 -- ============================================================
 INSERT INTO system_config (key, value, label, description, config_group) VALUES
   ('site_name',            '"SMART SARPRAS"',              'Nama Sistem',             'Nama sistem yang tampil di header', 'general'),
-  ('site_tagline',         '"Sistem Manajemen Sarana & Prasarana"', 'Tagline Sistem', 'Tagline di halaman utama',         'general'),
+  ('site_tagline',         '"Website Sarana & Prasarana"', 'Tagline Sistem', 'Tagline di halaman utama',         'general'),
   ('school_name',          '"SMK Negeri 1 Cimahi"',        'Nama Sekolah',            'Nama lengkap sekolah',             'general'),
   ('school_address',       '"Jl. Mahar Martanegara No.48, Cimahi"', 'Alamat Sekolah', 'Alamat sekolah',                  'general'),
   ('max_borrow_days',      '7',                            'Maks Hari Peminjaman',    'Batas maksimum hari peminjaman',   'borrowing'),
