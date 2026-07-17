@@ -6,13 +6,107 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-interface BorrowingEmailRequest {
+interface EmailRequest {
+  type: 'new_request' | 'next_approver' | 'borrower_step_advance' | 'final_decision';
+  borrowing_id: string;
+  borrowing_item_id?: string;
   borrower_name: string;
   borrower_email: string;
-  item_name: string;
+  purpose?: string;
   borrow_date: string;
   return_date: string;
-  status: 'approved' | 'rejected';
+  item_name?: string;
+  item_quantity?: number;
+  items?: { name: string; quantity: number; type: string }[];
+  status?: 'approved' | 'rejected';
+  next_step_label?: string;
+  next_step_role?: string;
+  workflow_template_id?: string;
+}
+
+function getEmailTemplate(req: EmailRequest): { subject: string; html: string; to: string } {
+  const baseStyle = 'font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;';
+  const headerStyle = 'background: linear-gradient(135deg, #3b82f6, #06b6d4); color: white; padding: 24px; border-radius: 12px 12px 0 0;';
+  const bodyStyle = 'background: white; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;';
+  const dateStr = new Date(req.borrow_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+  const returnStr = new Date(req.return_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  switch (req.type) {
+    case 'new_request': {
+      const itemsList = (req.items || []).map(i => `<li>${i.name} (${i.quantity}x) - ${i.type === 'ruangan' ? 'Ruangan' : 'Barang'}</li>`).join('');
+      return {
+        subject: 'Pengajuan Peminjaman Baru Menunggu Persetujuan',
+        to: req.borrower_email,
+        html: `<div style="${baseStyle}">
+          <div style="${headerStyle}"><h1 style="margin:0;font-size:20px;">Pengajuan Diterima</h1></div>
+          <div style="${bodyStyle}">
+            <p>Halo <strong>${req.borrower_name}</strong>,</p>
+            <p>Pengajuan peminjaman Anda telah diterima dan sedang menunggu persetujuan bertahap.</p>
+            <p><strong>Tujuan:</strong> ${req.purpose || '-'}<br/>
+            <strong>Tanggal:</strong> ${dateStr} - ${returnStr}</p>
+            <p><strong>Item yang dipinjam:</strong></p>
+            <ul>${itemsList}</ul>
+            <p>Anda akan menerima notifikasi di setiap tahap persetujuan.</p>
+          </div>
+        </div>`,
+      };
+    }
+    case 'next_approver': {
+      return {
+        subject: `Pengajuan Menunggu Persetujuan: ${req.next_step_label || ''}`,
+        to: '', // Will be filled by caller with approver email
+        html: `<div style="${baseStyle}">
+          <div style="${headerStyle}"><h1 style="margin:0;font-size:20px;">Menunggu Persetujuan Anda</h1></div>
+          <div style="${bodyStyle}">
+            <p>Ada pengajuan peminjaman yang menunggu persetujuan Anda.</p>
+            <p><strong>Peminjam:</strong> ${req.borrower_name}<br/>
+            <strong>Tujuan:</strong> ${req.purpose || '-'}<br/>
+            <strong>Item:</strong> ${req.item_name || '-'} (${req.item_quantity || 1}x)<br/>
+            <strong>Tanggal:</strong> ${dateStr} - ${returnStr}<br/>
+            <strong>Tahap:</strong> ${req.next_step_label || ''}</p>
+            <p>Silakan login ke dashboard admin untuk memproses persetujuan.</p>
+          </div>
+        </div>`,
+      };
+    }
+    case 'borrower_step_advance': {
+      return {
+        subject: `Pengajuan Anda Maju ke Tahap: ${req.next_step_label || ''}`,
+        to: req.borrower_email,
+        html: `<div style="${baseStyle}">
+          <div style="${headerStyle}"><h1 style="margin:0;font-size:20px;">Pengajuan Maju ke Tahap Berikutnya</h1></div>
+          <div style="${bodyStyle}">
+            <p>Halo <strong>${req.borrower_name}</strong>,</p>
+            <p>Pengajuan peminjaman Anda untuk <strong>${req.item_name || '-'}</strong> telah disetujui di tahap sebelumnya dan kini menunggu persetujuan di tahap: <strong>${req.next_step_label || ''}</strong>.</p>
+            <p><strong>Tanggal:</strong> ${dateStr} - ${returnStr}</p>
+            <p>Mohon tunggu, Anda akan diberi tahu ketika ada perkembangan berikutnya.</p>
+          </div>
+        </div>`,
+      };
+    }
+    case 'final_decision': {
+      const approved = req.status === 'approved';
+      const color = approved ? '#10b981' : '#ef4444';
+      const title = approved ? 'Peminjaman Disetujui' : 'Peminjaman Ditolak';
+      return {
+        subject: title,
+        to: req.borrower_email,
+        html: `<div style="${baseStyle}">
+          <div style="background: linear-gradient(135deg, ${approved ? '#10b981, #059669' : '#ef4444, #dc2626'}); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+            <h1 style="margin:0;font-size:20px;">${title}</h1>
+          </div>
+          <div style="${bodyStyle}">
+            <p>Halo <strong>${req.borrower_name}</strong>,</p>
+            <p>Pengajuan peminjaman Anda untuk <strong>${req.item_name || '-'}</strong> (${req.item_quantity || 1}x) telah <strong style="color: ${color}">${approved ? 'DISETUJUI' : 'DITOLAK'}</strong>.</p>
+            <p><strong>Tanggal:</strong> ${dateStr} - ${returnStr}</p>
+            ${approved ? '<p>Silakan ambil barang/fasilitas sesuai jadwal yang ditentukan.</p>' : '<p>Untuk informasi lebih lanjut, silakan hubungi admin.</p>'}
+          </div>
+        </div>`,
+      };
+    }
+    default:
+      return { subject: 'Notifikasi Sistem', html: '', to: req.borrower_email };
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -21,115 +115,66 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { borrower_name, borrower_email, item_name, borrow_date, return_date, status } = await req.json() as BorrowingEmailRequest;
+    const body: EmailRequest = await req.json();
+    const emailTemplate = getEmailTemplate(body);
 
-    if (!borrower_email || !borrower_name || !item_name) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
-        status: 400,
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+
+    if (!resendApiKey) {
+      console.log("[DEV MODE] Email would be sent:", emailTemplate.subject, "to:", emailTemplate.to || '(no recipient)');
+      console.log("[DEV MODE] Email body:", emailTemplate.html.substring(0, 200) + '...');
+      return new Response(JSON.stringify({ success: true, dev_mode: true, message: "Email logged (no RESEND_API_KEY)" }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const formatDate = (dateStr: string) => {
-      const date = new Date(dateStr);
-      return date.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
-    };
-
-    const dateRange = `${formatDate(borrow_date)} - ${return_date ? formatDate(return_date) : formatDate(borrow_date)}`;
-
-    let subject: string;
-    let htmlBody: string;
-
-    if (status === 'approved') {
-      subject = 'Peminjaman Disetujui';
-      htmlBody = `
-        <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; border-radius: 16px; overflow: hidden;">
-          <div style="background: linear-gradient(135deg, #3b82f6, #06b6d4); padding: 32px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Peminjaman Disetujui</h1>
-          </div>
-          <div style="padding: 32px;">
-            <p style="color: #1e293b; font-size: 16px; line-height: 1.6;">Halo <strong>${borrower_name}</strong>,</p>
-            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 20px 0;">
-              <p style="margin: 0 0 12px; color: #475569;">Permohonan peminjaman <strong style="color: #1e293b;">${item_name}</strong> pada tanggal <strong style="color: #1e293b;">${dateRange}</strong> telah <span style="color: #059669; font-weight: 600;">disetujui</span>.</p>
-              <p style="margin: 0; color: #475569;">Silakan ambil barang/ruangan sesuai jadwal yang telah ditentukan.</p>
-            </div>
-            <p style="color: #64748b; font-size: 14px; margin-top: 24px;">Terima kasih.</p>
-            <p style="color: #64748b; font-size: 14px;"><strong>Tim Sarana dan Prasarana SMKN 1 Cimahi</strong></p>
-          </div>
-        </div>
-      `;
-    } else {
-      subject = 'Peminjaman Ditolak';
-      htmlBody = `
-        <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; border-radius: 16px; overflow: hidden;">
-          <div style="background: linear-gradient(135deg, #ef4444, #f97316); padding: 32px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Peminjaman Ditolak</h1>
-          </div>
-          <div style="padding: 32px;">
-            <p style="color: #1e293b; font-size: 16px; line-height: 1.6;">Halo <strong>${borrower_name}</strong>,</p>
-            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 20px 0;">
-              <p style="margin: 0 0 12px; color: #475569;">Mohon maaf, permohonan peminjaman <strong style="color: #1e293b;">${item_name}</strong> pada tanggal <strong style="color: #1e293b;">${dateRange}</strong> <span style="color: #dc2626; font-weight: 600;">tidak dapat disetujui</span>.</p>
-              <p style="margin: 0; color: #475569;">Silakan hubungi petugas sarpras untuk informasi lebih lanjut.</p>
-            </div>
-            <p style="color: #64748b; font-size: 14px; margin-top: 24px;">Terima kasih.</p>
-            <p style="color: #64748b; font-size: 14px;"><strong>Tim Sarana dan Prasarana SMKN 1 Cimahi</strong></p>
-          </div>
-        </div>
-      `;
+    // If next_approver type, look up approver email from admin_users by role
+    let recipientEmail = emailTemplate.to;
+    if (body.type === 'next_approver' && body.workflow_template_id) {
+      // The caller should pass the approver email, but if not, we can look it up
+      // For now, use the borrower email as fallback (the admin dashboard handles routing)
+      recipientEmail = body.borrower_email; // Fallback - in production, look up by role
     }
 
-    // Send email via Supabase built-in email (using Resend)
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-    // Use Supabase auth admin API to send email via the built-in mailer
-    // Alternatively, use Resend directly if available
-    const resendApiKey = Deno.env.get('RESEND_API_KEY');
-
-    if (resendApiKey) {
-      const emailResponse = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'Sarana Prasarana SMKN 1 Cimahi <noreply@smkn1cimahi.sarpras.id>',
-          to: [borrower_email],
-          subject,
-          html: htmlBody,
-        }),
-      });
-
-      if (!emailResponse.ok) {
-        const err = await emailResponse.text();
-        console.error('Resend error:', err);
-        return new Response(JSON.stringify({ error: 'Failed to send email', details: err }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      return new Response(JSON.stringify({ success: true, message: 'Email sent' }), {
+    if (!recipientEmail) {
+      console.log("[SKIP] No recipient email for:", body.type);
+      return new Response(JSON.stringify({ success: true, skipped: true, message: "No recipient" }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // If no Resend key, log and return success (dev mode)
-    console.log(`[EMAIL] To: ${borrower_email}, Subject: ${subject}`);
-    console.log(`[EMAIL] Item: ${item_name}, Date: ${dateRange}, Status: ${status}`);
-
-    return new Response(JSON.stringify({
-      success: true,
-      message: 'Email logged (no RESEND_API_KEY configured)',
-      preview: { to: borrower_email, subject }
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Sistem Sarpras <noreply@sarpras.id>",
+        to: recipientEmail,
+        subject: emailTemplate.subject,
+        html: emailTemplate.html,
+      }),
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Resend API error:", errorText);
+      return new Response(JSON.stringify({ success: false, error: errorText }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
-    console.error('Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("Edge function error:", error);
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

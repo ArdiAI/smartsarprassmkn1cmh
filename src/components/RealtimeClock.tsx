@@ -1,14 +1,11 @@
-// Lightweight static clock — updates once per second, no framer-motion.
 import { useEffect, useState } from 'react';
 
 export default function RealtimeClock() {
   const [time, setTime] = useState(new Date());
-
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
   }, []);
-
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl px-4 py-3 border border-slate-200 dark:border-slate-700">
       <div className="flex items-center gap-4">

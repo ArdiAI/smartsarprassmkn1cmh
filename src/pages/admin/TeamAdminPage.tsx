@@ -1,346 +1,161 @@
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
-import { Plus, Search, Edit, Trash2, X, Users } from 'lucide-react';
 import { cn } from '../../utils/cn';
-import EmptyState from '../../components/EmptyState';
+import { Plus, Pencil, Trash2, Users, X, AlertTriangle, Mail, Shield } from 'lucide-react';
 
-interface TeamMember {
+interface AdminUser {
   id: string;
   name: string;
-  position: string;
+  email: string;
   role: string;
-  photo_url: string | null;
-  description: string | null;
-  email: string | null;
-  phone: string | null;
-  order: number;
   is_active: boolean;
 }
 
-const roleOptions = [
-  { value: 'head', label: 'Kepala' },
-  { value: 'coordinator', label: 'Koordinator' },
-  { value: 'staff', label: 'Staff' },
-];
+const ROLE_COLORS: Record<string, string> = {
+  super_admin: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  admin: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  approver: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
+  viewer: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400',
+};
+const ROLE_LABELS: Record<string, string> = { super_admin: 'Super Admin', admin: 'Admin', approver: 'Approver', viewer: 'Viewer' };
+
+const EMPTY: Omit<AdminUser, 'id'> = { name: '', email: '', role: 'admin', is_active: true };
 
 export default function TeamAdminPage() {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState<typeof EMPTY>(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const [formData, setFormData] = useState({
-    name: '',
-    position: '',
-    role: 'staff',
-    photo_url: '',
-    description: '',
-    email: '',
-    phone: '',
-    order: 1,
-  });
+  useEffect(() => { fetchData(); }, []);
 
-  useEffect(() => {
-    fetchMembers();
-  }, []);
-
-  const fetchMembers = async () => {
-    const { data } = await supabase
-      .from('team_members')
-      .select('*')
-      .order('order', { ascending: true });
-    if (data) setMembers(data);
+  async function fetchData() {
+    setLoading(true);
+    const { data, error } = await supabase.from('admin_users').select('*').order('created_at', { ascending: false });
+    if (error) console.error(error);
+    if (data) setUsers(data as AdminUser[]);
     setLoading(false);
-  };
+  }
 
-  const openCreateModal = () => {
-    setEditingMember(null);
-    setFormData({
-      name: '',
-      position: '',
-      role: 'staff',
-      photo_url: '',
-      description: '',
-      email: '',
-      phone: '',
-      order: members.length + 1,
-    });
-    setShowModal(true);
-  };
+  function openAdd() { setEditId(null); setForm(EMPTY); setError(''); setModalOpen(true); }
+  function openEdit(u: AdminUser) { setEditId(u.id); setForm({ ...u }); setError(''); setModalOpen(true); }
 
-  const openEditModal = (member: TeamMember) => {
-    setEditingMember(member);
-    setFormData({
-      name: member.name,
-      position: member.position,
-      role: member.role,
-      photo_url: member.photo_url || '',
-      description: member.description || '',
-      email: member.email || '',
-      phone: member.phone || '',
-      order: member.order,
-    });
-    setShowModal(true);
-  };
+  async function handleSave() {
+    setSaving(true); setError('');
+    try {
+      if (!form.email.trim()) throw new Error('Email wajib diisi');
+      if (editId) {
+        const { error: e } = await supabase.from('admin_users').update(form).eq('id', editId);
+        if (e) throw new Error(e.message);
+      } else {
+        const { error: e } = await supabase.from('admin_users').insert(form);
+        if (e) throw new Error(e.message);
+      }
+      setModalOpen(false); fetchData();
+    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
+  async function handleDelete(id: string) {
+    if (!confirm('Hapus admin ini?')) return;
+    const { error } = await supabase.from('admin_users').delete().eq('id', id);
+    if (error) alert(error.message); else fetchData();
+  }
 
-    if (editingMember) {
-      await supabase.from('team_members').update(formData).eq('id', editingMember.id);
-    } else {
-      await supabase.from('team_members').insert([{ ...formData, is_active: true }]);
-    }
-
-    setShowModal(false);
-    fetchMembers();
-    setSaving(false);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (confirm('Yakin ingin menghapus anggota tim ini?')) {
-      await supabase.from('team_members').delete().eq('id', id);
-      fetchMembers();
-    }
-  };
-
-  const filteredMembers = members.filter(m =>
-    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.position.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  if (loading) return <div className="p-6 text-center">Memuat...</div>;
+  async function toggleActive(u: AdminUser) {
+    const { error } = await supabase.from('admin_users').update({ is_active: !u.is_active }).eq('id', u.id);
+    if (error) alert(error.message); else fetchData();
+  }
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Tim Pengelola</h1>
-          <p className="text-slate-600 dark:text-slate-400">Kelola anggota tim sarpras</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Users className="w-6 h-6 text-emerald-500" /> Kelola Tim Admin</h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">Tambah, ubah, dan kelola admin</p>
         </div>
-        <button
-          onClick={openCreateModal}
-          className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-cyan-400 text-white rounded-xl hover:shadow-lg transition-all"
-        >
-          <Plus className="w-5 h-5" />
-          Tambah Anggota
+        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+          <Plus className="w-4 h-4" /> Tambah Admin
         </button>
       </div>
 
-      <div className="mb-6">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Cari anggota tim..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+      {loading ? (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse" />)}</div>
+      ) : users.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 text-center">
+          <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-500 dark:text-slate-400">Tidak ada admin</p>
         </div>
-      </div>
-
-      {filteredMembers.length === 0 ? (
-        <EmptyState title="Belum ada anggota tim" description="Mulai dengan menambahkan anggota tim" />
       ) : (
-        <div className="grid gap-4">
-          {filteredMembers.map((member) => (
-            <motion.div
-              key={member.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-start justify-between"
-            >
-              <div className="flex-1">
-                <h3 className="font-semibold text-slate-900 dark:text-white">{member.name}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-400">{member.position}</p>
-                {member.email && (
-                  <p className="text-xs text-slate-500 mt-1">{member.email}</p>
-                )}
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="inline-block px-2 py-1 text-xs bg-slate-100 dark:bg-slate-700 rounded text-slate-700 dark:text-slate-300">
-                    {roleOptions.find(r => r.value === member.role)?.label || member.role}
-                  </span>
-                  {!member.is_active && (
-                    <span className="inline-block px-2 py-1 text-xs bg-red-100 dark:bg-red-900/30 rounded text-red-700 dark:text-red-400">
-                      Nonaktif
-                    </span>
-                  )}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {users.map(u => (
+            <div key={u.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-4">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center text-white font-semibold flex-shrink-0', u.is_active ? 'bg-gradient-to-br from-emerald-500 to-teal-400' : 'bg-slate-400')}>
+                    {u.name?.[0]?.toUpperCase() || u.email[0]?.toUpperCase() || '?'}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm text-slate-900 dark:text-white truncate">{u.name || '-'}</p>
+                    <p className="text-xs text-slate-400 truncate flex items-center gap-1"><Mail className="w-3 h-3" /> {u.email}</p>
+                  </div>
+                </div>
+                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0', ROLE_COLORS[u.role] || 'bg-slate-100')}>
+                  <Shield className="w-3 h-3" /> {ROLE_LABELS[u.role] || u.role}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
+                <button onClick={() => toggleActive(u)} className={cn('flex items-center gap-1.5 text-xs font-medium', u.is_active ? 'text-emerald-600' : 'text-slate-400')}>
+                  <span className={cn('w-2 h-2 rounded-full', u.is_active ? 'bg-emerald-500' : 'bg-slate-400')} />
+                  {u.is_active ? 'Aktif' : 'Nonaktif'}
+                </button>
+                <div className="flex gap-1">
+                  <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-200"><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => handleDelete(u.id)} className="p-1.5 rounded-lg bg-red-100 dark:bg-red-900/20 text-red-600 hover:bg-red-200"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 ml-4">
-                <button
-                  onClick={() => openEditModal(member)}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                >
-                  <Edit className="w-5 h-5 text-blue-500" />
-                </button>
-                <button
-                  onClick={() => handleDelete(member.id)}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-5 h-5 text-red-500" />
-                </button>
-              </div>
-            </motion.div>
+            </div>
           ))}
         </div>
       )}
 
-      <AnimatePresence>
-        {showModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setShowModal(false)}
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full shadow-2xl"
-            >
-              <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                  {editingMember ? 'Edit Anggota' : 'Tambah Anggota'}
-                </h2>
-                <button onClick={() => setShowModal(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                  <X className="w-5 h-5" />
-                </button>
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{editId ? 'Edit Admin' : 'Tambah Admin'}</h2>
+              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><X className="w-5 h-5 text-slate-500" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Nama</label>
+                <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
               </div>
-
-              <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Nama
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Posisi
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.position}
-                    onChange={(e) => setFormData({ ...formData, position: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Role
-                  </label>
-                  <select
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {roleOptions.map(role => (
-                      <option key={role.value} value={role.value}>{role.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Telepon
-                  </label>
-                  <input
-                    type="tel"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Deskripsi
-                  </label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    URL Foto
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.photo_url}
-                    onChange={(e) => setFormData({ ...formData, photo_url: e.target.value })}
-                    placeholder="https://..."
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Urutan
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.order}
-                    onChange={(e) => setFormData({ ...formData, order: parseInt(e.target.value) })}
-                    min="1"
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="flex-1 px-4 py-2.5 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-cyan-400 text-white rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
-                  >
-                    {saving ? 'Menyimpan...' : 'Simpan'}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Email</label>
+                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Role</label>
+                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white">
+                  <option value="super_admin">Super Admin</option><option value="admin">Admin</option><option value="approver">Approver</option><option value="viewer">Viewer</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={e => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded" />
+                <span className="text-sm text-slate-700 dark:text-slate-300">Aktif</span>
+              </label>
+              {error && <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"><AlertTriangle className="w-4 h-4 text-red-500" /><p className="text-sm text-red-700 dark:text-red-400">{error}</p></div>}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setModalOpen(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
+              <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

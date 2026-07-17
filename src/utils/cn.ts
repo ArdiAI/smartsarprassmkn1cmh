@@ -1,5 +1,5 @@
-type ClassValue = string | undefined | null | false;
+import { cls } from './cls';
 
-export function cn(...classes: ClassValue[]): string {
-  return classes.filter(Boolean).join(' ');
+export function cn(...inputs: Parameters<typeof cls>) {
+  return cls(...inputs);
 }

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import {
   Search, Send, User, Package, Calendar, Mail, Phone, Building2,
   FileText, MessageSquare, AlertCircle, CheckCircle2, Clock,
-  Plus, Trash2, X, ShoppingCart, ChevronDown, ChevronUp, Info
+  Plus, Trash2, ShoppingCart, ChevronDown, ChevronUp, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { getDefaultWorkflow, type WorkflowTemplate } from '../lib/workflow';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { cn } from '../utils/cn';
@@ -16,8 +16,8 @@ interface CartItem {
   name: string;
   quantity: number;
   available: number;
-  manager_name?: string;
-  workflow_name?: string;
+  facilityId?: string;
+  workflowTemplateId?: string;
 }
 
 const initialFormData = {
@@ -43,21 +43,24 @@ export default function BorrowPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const [conflictError, setConflictError] = useState('');
   const [formData, setFormData] = useState(initialFormData);
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [historyEmail, setHistoryEmail] = useState('');
   const [historyBorrowings, setHistoryBorrowings] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySearched, setHistorySearched] = useState(false);
+  const [defaultWorkflow, setDefaultWorkflow] = useState<WorkflowTemplate | null>(null);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+    getDefaultWorkflow().then(setDefaultWorkflow);
+  }, []);
 
   async function fetchData() {
     setLoading(true);
     const [invRes, facRes] = await Promise.all([
       supabase.from('inventory').select('id, name, code, quantity, available_quantity, condition, manager_name').eq('condition', 'good').order('name'),
-      supabase.from('facilities').select('id, name, capacity, status, manager_name, workflow_templates(name)').eq('status', 'aktif').order('name'),
+      supabase.from('facilities').select('id, name, capacity, status, manager_name, workflow_template_id').eq('status', 'aktif').order('name'),
     ]);
     setInventory(invRes.data || []);
     setFacilities(facRes.data || []);
@@ -73,10 +76,10 @@ export default function BorrowPage() {
       name: item.name,
       quantity: 1,
       available: type === 'barang' ? (item.available_quantity ?? item.quantity) : 1,
-      manager_name: item.manager_name || '',
-      workflow_name: type === 'ruangan' ? item.workflow_templates?.name : undefined,
+      facilityId: type === 'ruangan' ? item.id : undefined,
+      workflowTemplateId: type === 'ruangan' ? (item.workflow_template_id || defaultWorkflow?.id) : (defaultWorkflow?.id),
     }]);
-  }, [cart]);
+  }, [cart, defaultWorkflow]);
 
   const removeFromCart = (id: string) => setCart(prev => prev.filter(c => c.id !== id));
 
@@ -96,10 +99,12 @@ export default function BorrowPage() {
     e.preventDefault();
     if (cart.length === 0) { setSubmitError('Pilih minimal satu barang atau fasilitas'); return; }
     setSubmitting(true);
-    setConflictError('');
     setSubmitError('');
     try {
-      // Create parent borrowing record
+      // Determine workflow template - use first cart item's workflow or default
+      const workflowTemplateId = cart[0]?.workflowTemplateId || defaultWorkflow?.id || null;
+
+      // Create parent borrowing record with workflow info
       const { data: borrowing, error: borrowErr } = await supabase.from('borrowings').insert({
         borrower_name: formData.borrower_name,
         borrower_class: formData.borrower_class,
@@ -115,11 +120,13 @@ export default function BorrowPage() {
         notes: formData.notes,
         status: 'pending',
         current_status_label: 'Menunggu Persetujuan',
+        workflow_template_id: workflowTemplateId,
+        current_step: 1,
       }).select().single();
 
       if (borrowErr) throw new Error(borrowErr.message);
 
-      // Create borrowing_items for each cart item
+      // Create borrowing_items for each cart item, stamping workflow info
       const itemsToInsert = cart.map(c => ({
         borrowing_id: borrowing.id,
         inventory_id: c.type === 'barang' ? c.id.replace('barang_', '') : null,
@@ -129,10 +136,36 @@ export default function BorrowPage() {
         quantity: c.quantity,
         status: 'pending',
         current_status_label: 'Menunggu Persetujuan',
+        workflow_template_id: c.workflowTemplateId || workflowTemplateId,
+        current_step: 1,
       }));
 
       const { error: itemsErr } = await supabase.from('borrowing_items').insert(itemsToInsert);
       if (itemsErr) throw new Error(itemsErr.message);
+
+      // Send notification email to the first approver (Pembina)
+      // and a confirmation email to the borrower
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        await fetch(`${supabaseUrl}/functions/v2/send-borrowing-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'new_request',
+            borrowing_id: borrowing.id,
+            borrower_name: formData.borrower_name,
+            borrower_email: formData.borrower_email,
+            purpose: formData.purpose,
+            borrow_date: formData.borrow_date,
+            return_date: formData.return_date || formData.borrow_date,
+            items: cart.map(c => ({ name: c.name, quantity: c.quantity, type: c.type })),
+            workflow_template_id: workflowTemplateId,
+          }),
+        });
+      } catch (emailErr) {
+        console.error('Email notification error:', emailErr);
+        // Don't block submission if email fails
+      }
 
       setSubmitSuccess(true);
       setFormData(initialFormData);
@@ -151,7 +184,7 @@ export default function BorrowPage() {
     setHistorySearched(true);
     const { data } = await supabase
       .from('borrowings')
-      .select('*, borrowing_items(id, item_name, item_type, quantity, status, current_status_label)')
+      .select('*, borrowing_items(id, item_name, item_type, quantity, status, current_status_label, current_step, workflow_template_id)')
       .eq('borrower_email', historyEmail.trim())
       .order('created_at', { ascending: false });
     setHistoryBorrowings(data || []);
@@ -169,7 +202,6 @@ export default function BorrowPage() {
           <p className="text-slate-500 dark:text-slate-400">Ajukan peminjaman fasilitas dan inventaris sekolah</p>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-1 mb-8 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 max-w-xs">
           {([['form', 'Form Peminjaman'], ['history', 'Riwayat']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)}
@@ -186,7 +218,7 @@ export default function BorrowPage() {
                 <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
                 <div>
                   <p className="font-medium text-emerald-800 dark:text-emerald-200">Pengajuan berhasil dikirim!</p>
-                  <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-0.5">Menunggu persetujuan dari masing-masing Penanggung Jawab.</p>
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-0.5">Notifikasi telah dikirim ke Penanggung Jawab. Menunggu persetujuan bertahap.</p>
                 </div>
               </div>
             )}
@@ -264,10 +296,9 @@ export default function BorrowPage() {
                               <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{c.name}</p>
                               <p className="text-xs text-slate-400">{c.type === 'ruangan' ? 'Ruangan' : 'Barang'}</p>
                             </div>
-                            {/* Quantity controls */}
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <button type="button" onClick={() => updateQty(c.id, -1)}
-                                className="w-6 h-6 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center hover:bg-slate-200">−</button>
+                                className="w-6 h-6 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center hover:bg-slate-200">&minus;</button>
                               <span className="text-sm font-medium w-6 text-center text-slate-900 dark:text-white">{c.quantity}</span>
                               <button type="button" onClick={() => updateQty(c.id, 1)} disabled={c.quantity >= c.available}
                                 className="w-6 h-6 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center hover:bg-slate-200 disabled:opacity-40">+</button>
@@ -352,10 +383,10 @@ export default function BorrowPage() {
                   </div>
                 </div>
 
-                {(conflictError || submitError) && (
+                {submitError && (
                   <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-xl">
                     <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-red-700 dark:text-red-300">{conflictError || submitError}</p>
+                    <p className="text-sm text-red-700 dark:text-red-300">{submitError}</p>
                   </div>
                 )}
 
@@ -373,10 +404,10 @@ export default function BorrowPage() {
                     <Info className="w-4 h-4 text-blue-500" />Ketentuan
                   </h3>
                   <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
-                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Satu pengajuan bisa berisi banyak item</li>
-                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Setiap item punya PJ & approval sendiri</li>
-                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Isi data dengan benar</li>
-                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">•</span>Kembalikan tepat waktu dalam kondisi baik</li>
+                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">&bull;</span>Satu pengajuan bisa berisi banyak item</li>
+                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">&bull;</span>Setiap item punya PJ & approval sendiri</li>
+                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">&bull;</span>Approval bertahap: Pembina &rarr; Wakasek &rarr; PJ &rarr; Wakasek Sarpras</li>
+                    <li className="flex items-start gap-2"><span className="text-blue-500 mt-1">&bull;</span>Anda akan mendapat email di setiap tahap</li>
                   </ul>
                 </div>
 
@@ -387,11 +418,11 @@ export default function BorrowPage() {
                       {cart.map(c => (
                         <div key={c.id} className="flex items-center justify-between text-sm">
                           <span className="text-blue-700 dark:text-blue-300">{c.name}</span>
-                          <span className="text-blue-500 text-xs">×{c.quantity}</span>
+                          <span className="text-blue-500 text-xs">&times;{c.quantity}</span>
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-blue-500 mt-3">Setiap item akan mendapat approval terpisah dari PJ masing-masing.</p>
+                    <p className="text-xs text-blue-500 mt-3">Setiap item akan mendapat approval bertahap dari Pembina &rarr; Wakasek &rarr; PJ Fasilitas &rarr; Wakasek Sarpras.</p>
                   </div>
                 )}
               </div>
@@ -438,6 +469,7 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   in_use: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
   returned: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  partially_approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
 };
 
 function HistoryCard({ borrowing: b }: { borrowing: any }) {
@@ -456,7 +488,7 @@ function HistoryCard({ borrowing: b }: { borrowing: any }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-slate-900 dark:text-white text-sm truncate">{b.purpose || '-'}</p>
-          <p className="text-xs text-slate-500">{new Date(b.borrow_date || b.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} · {items.length} item</p>
+          <p className="text-xs text-slate-500">{new Date(b.borrow_date || b.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} &middot; {items.length} item</p>
         </div>
         <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0', STATUS_COLORS[overallStatus] || 'bg-slate-100')}>{statusLabel}</span>
         <button onClick={() => setExpanded(!expanded)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
@@ -468,7 +500,7 @@ function HistoryCard({ borrowing: b }: { borrowing: any }) {
           {items.map((item: any) => (
             <div key={item.id} className="flex items-center gap-3 p-2.5 bg-slate-50 dark:bg-slate-700/40 rounded-lg">
               {item.item_type === 'ruangan' ? <Building2 className="w-4 h-4 text-blue-500" /> : <Package className="w-4 h-4 text-cyan-500" />}
-              <span className="text-sm text-slate-700 dark:text-slate-300 flex-1">{item.item_name} ×{item.quantity}</span>
+              <span className="text-sm text-slate-700 dark:text-slate-300 flex-1">{item.item_name} &times;{item.quantity}</span>
               <span className={cn('px-2 py-0.5 rounded-full text-xs', STATUS_COLORS[item.status] || 'bg-slate-100')}>{item.current_status_label || item.status}</span>
             </div>
           ))}

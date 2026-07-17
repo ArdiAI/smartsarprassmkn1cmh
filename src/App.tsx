@@ -14,12 +14,7 @@ const RekapPage = lazy(() => import('./pages/RekapPage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const ReportPage = lazy(() => import('./pages/ReportPage'));
 const AboutPage = lazy(() => import('./pages/AboutPage'));
-const TeamPage = lazy(() => import('./pages/TeamPage'));
 const AuthPage = lazy(() => import('./pages/AuthPage'));
-const AgendaPage = lazy(() => import('./pages/AgendaPage'));
-const OrganizationsPage = lazy(() => import('./pages/OrganizationsPage'));
-const ProposalPage = lazy(() => import('./pages/ProposalPage'));
-const AspirasiPage = lazy(() => import('./pages/AspirasiPage'));
 
 const LoginPage = lazy(() => import('./pages/admin/LoginPage'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
@@ -87,19 +82,14 @@ function AppRoutes() {
     <Routes>
       <Route path="/auth" element={<Suspense fallback={<PageLoader />}><AuthPage /></Suspense>} />
 
-      <Route path="/" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><LandingPage /></Suspense></ProtectedRoute>} />
-      <Route path="/facilities" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><FacilitiesPage /></Suspense></ProtectedRoute>} />
-      <Route path="/inventory" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><InventoryPage /></Suspense></ProtectedRoute>} />
-      <Route path="/borrow" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><BorrowPage /></Suspense></ProtectedRoute>} />
-      <Route path="/rekap" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><RekapPage /></Suspense></ProtectedRoute>} />
-      <Route path="/history" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><HistoryPage /></Suspense></ProtectedRoute>} />
-      <Route path="/report" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><ReportPage /></Suspense></ProtectedRoute>} />
-      <Route path="/agenda" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><AgendaPage /></Suspense></ProtectedRoute>} />
-      <Route path="/organizations" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><OrganizationsPage /></Suspense></ProtectedRoute>} />
-      <Route path="/proposals" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><ProposalPage /></Suspense></ProtectedRoute>} />
-      <Route path="/aspirasi" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><AspirasiPage /></Suspense></ProtectedRoute>} />
-      <Route path="/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><AboutPage /></Suspense></ProtectedRoute>} />
-      <Route path="/team" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><TeamPage /></Suspense></ProtectedRoute>} />
+      <Route path="/" element={<Suspense fallback={<PageLoader />}><LandingPage /></Suspense>} />
+      <Route path="/facilities" element={<Suspense fallback={<PageLoader />}><FacilitiesPage /></Suspense>} />
+      <Route path="/inventory" element={<Suspense fallback={<PageLoader />}><InventoryPage /></Suspense>} />
+      <Route path="/borrow" element={<Suspense fallback={<PageLoader />}><BorrowPage /></Suspense>} />
+      <Route path="/rekap" element={<Suspense fallback={<PageLoader />}><RekapPage /></Suspense>} />
+      <Route path="/history" element={<Suspense fallback={<PageLoader />}><HistoryPage /></Suspense>} />
+      <Route path="/report" element={<Suspense fallback={<PageLoader />}><ReportPage /></Suspense>} />
+      <Route path="/about" element={<Suspense fallback={<PageLoader />}><AboutPage /></Suspense>} />
 
       <Route path="/admin/login" element={<Suspense fallback={<PageLoader />}><LoginPage /></Suspense>} />
       <Route path="/admin" element={<AdminRoute><Suspense fallback={<PageLoader />}><AdminLayout /></Suspense></AdminRoute>}>
@@ -119,7 +109,7 @@ function AppRoutes() {
         <Route path="super/config" element={<Suspense fallback={<PageLoader />}><SystemConfigPage /></Suspense>} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/auth" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

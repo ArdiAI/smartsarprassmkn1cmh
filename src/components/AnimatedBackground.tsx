@@ -1,6 +1,3 @@
-// Lightweight static gradient background — no animations, no particles.
-// Replaces the heavy AnimatedBackground that used 20+ infinite framer-motion animations.
-
 export default function AnimatedBackground() {
   return (
     <div className="fixed inset-0 pointer-events-none z-0">
