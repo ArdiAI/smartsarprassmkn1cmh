@@ -1,128 +1,164 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Package, Building2, Clock, CheckCircle2, XCircle, Layers, ArrowRight, Loader2 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import { supabase } from "../../lib/supabase";
+import { cn } from "../../utils/cn";
+import {
+  Package, Building2, Users, AlertTriangle, Megaphone, MessageSquare,
+  ArrowRight, TrendingUp, Activity, Clock,
+} from "lucide-react";
 
-interface Stats { total: number; pending: number; approved: number; rejected: number; facilities: number; inventory: number; }
-interface Borrowing {
-  id: string; borrower_name: string; status: string; borrow_date: string;
-  item_type: string; inventory?: { name: string } | null; facility?: { name: string } | null;
-}
+type Borrowing = {
+  id: string;
+  user_name: string | null;
+  item_name: string | null;
+  status: string;
+  created_at: string;
+};
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<Stats>({ total: 0, pending: 0, approved: 0, rejected: 0, facilities: 0, inventory: 0 });
-  const [recent, setRecent] = useState<Borrowing[]>([]);
+  const [stats, setStats] = useState({
+    inventory: 0,
+    facilities: 0,
+    users: 0,
+    reports: 0,
+    announcements: 0,
+    aspirasi: 0,
+  });
+  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      const [borrowRes, facRes, invRes] = await Promise.all([
-        supabase.from('borrowings').select('id, status').order('created_at', { ascending: false }),
-        supabase.from('facilities').select('id', { count: 'exact', head: true }),
-        supabase.from('inventory').select('id', { count: 'exact', head: true }),
-      ]);
-      const all = borrowRes.data || [];
-      setStats({
-        total: all.length,
-        pending: all.filter(b => b.status === 'pending').length,
-        approved: all.filter(b => b.status === 'approved').length,
-        rejected: all.filter(b => b.status === 'rejected').length,
-        facilities: facRes.count || 0,
-        inventory: invRes.count || 0,
-      });
-      const { data: recentData } = await supabase
-        .from('borrowings')
-        .select('id, borrower_name, status, borrow_date, item_type, inventory(name), facility(name)')
-        .order('created_at', { ascending: false }).limit(5);
-      setRecent((recentData as unknown as Borrowing[]) || []);
-      setLoading(false);
-    })();
+    async function load() {
+      try {
+        const [inv, fac, usr, rep, ann, asp, bor] = await Promise.all([
+          supabase.from("inventory").select("id", { count: "exact", head: true }),
+          supabase.from("facilities").select("id", { count: "exact", head: true }),
+          supabase.from("admin_users").select("id", { count: "exact", head: true }),
+          supabase.from("damage_reports").select("id", { count: "exact", head: true }),
+          supabase.from("announcements").select("id", { count: "exact", head: true }),
+          supabase.from("aspirasi").select("id", { count: "exact", head: true }),
+          supabase
+            .from("borrowings")
+            .select("id, user_name, item_name, status, created_at")
+            .order("created_at", { ascending: false })
+            .limit(5),
+        ]);
+        setStats({
+          inventory: inv.count ?? 0,
+          facilities: fac.count ?? 0,
+          users: usr.count ?? 0,
+          reports: rep.count ?? 0,
+          announcements: ann.count ?? 0,
+          aspirasi: asp.count ?? 0,
+        });
+        setBorrowings((bor.data ?? []) as Borrowing[]);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
   const cards = [
-    { label: 'Total Peminjaman', value: stats.total, icon: Package, color: 'blue' },
-    { label: 'Menunggu', value: stats.pending, icon: Clock, color: 'yellow' },
-    { label: 'Disetujui', value: stats.approved, icon: CheckCircle2, color: 'green' },
-    { label: 'Ditolak', value: stats.rejected, icon: XCircle, color: 'red' },
-    { label: 'Fasilitas', value: stats.facilities, icon: Building2, color: 'purple' },
-    { label: 'Inventaris', value: stats.inventory, icon: Layers, color: 'cyan' },
-  ];
-  const colorMap: Record<string, string> = {
-    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400',
-    yellow: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400',
-    green: 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400',
-    red: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',
-    purple: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400',
-    cyan: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400',
-  };
-  const statusColor: Record<string, string> = {
-    pending: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-    approved: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-    rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-    returned: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  };
-  const quickLinks = [
-    { label: 'Inventaris', to: '/admin/inventory', icon: Package },
-    { label: 'Fasilitas', to: '/admin/facilities', icon: Building2 },
-    { label: 'Laporan', to: '/admin/reports', icon: Layers },
-    { label: 'Tim', to: '/admin/team', icon: CheckCircle2 },
+    { label: "Inventory", value: stats.inventory, icon: Package, color: "bg-blue-500", to: "/admin/inventory" },
+    { label: "Facilities", value: stats.facilities, icon: Building2, color: "bg-emerald-500", to: "/admin/facilities" },
+    { label: "Admin Users", value: stats.users, icon: Users, color: "bg-violet-500", to: "/admin/team" },
+    { label: "Damage Reports", value: stats.reports, icon: AlertTriangle, color: "bg-amber-500", to: "/admin/reports" },
+    { label: "Announcements", value: stats.announcements, icon: Megaphone, color: "bg-rose-500", to: "/admin/announcements" },
+    { label: "Aspirasi", value: stats.aspirasi, icon: MessageSquare, color: "bg-cyan-500", to: "/admin/aspirasi" },
   ];
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
+  const quickLinks = [
+    { label: "Kelola Inventory", to: "/admin/inventory" },
+    { label: "Kelola Facilities", to: "/admin/facilities" },
+    { label: "Lihat Reports", to: "/admin/reports" },
+    { label: "Kelola Tim", to: "/admin/team" },
+    { label: "Buat Pengumuman", to: "/admin/announcements" },
+    { label: "Tanggapi Aspirasi", to: "/admin/aspirasi" },
+    { label: "Statistik", to: "/admin/statistics" },
+  ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
-        <p className="text-slate-600 dark:text-slate-400">Ringkasan sistem SMART SARPRAS</p>
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+        <p className="text-slate-500 mt-1">Ringkasan sistem SMART SARPRAS</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {cards.map(c => (
-          <div key={c.label} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
-            <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center mb-3', colorMap[c.color])}>
-              <c.icon className="w-5 h-5" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        {cards.map((c) => (
+          <Link
+            key={c.label}
+            to={c.to}
+            className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-500">{c.label}</p>
+                <p className="text-3xl font-bold text-slate-900 mt-1">
+                  {loading ? "—" : c.value}
+                </p>
+              </div>
+              <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center", c.color)}>
+                <c.icon className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">{c.value}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{c.label}</p>
-          </div>
+          </Link>
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Peminjaman Terbaru</h2>
-          <div className="space-y-3">
-            {recent.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-8">Belum ada peminjaman</p>
-            ) : recent.map(b => (
-              <div key={b.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{b.borrower_name}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    {b.inventory?.name || b.facility?.name || b.item_type || '-'}
-                  </p>
-                </div>
-                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ml-2', statusColor[b.status] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400')}>
-                  {b.status}
-                </span>
-              </div>
-            ))}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Activity className="w-5 h-5 text-indigo-600" />
+            <h2 className="font-semibold text-slate-900">Peminjaman Terbaru</h2>
           </div>
+          {borrowings.length === 0 ? (
+            <p className="text-slate-400 text-sm py-8 text-center">Belum ada peminjaman</p>
+          ) : (
+            <div className="space-y-2">
+              {borrowings.map((b) => (
+                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
+                  <div>
+                    <p className="font-medium text-slate-800 text-sm">{b.item_name ?? "—"}</p>
+                    <p className="text-xs text-slate-500">{b.user_name ?? "Anonim"}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(b.created_at).toLocaleDateString("id-ID")}
+                    </span>
+                    <span className={cn(
+                      "text-xs px-2 py-0.5 rounded-full font-medium",
+                      b.status === "approved" && "bg-emerald-100 text-emerald-700",
+                      b.status === "pending" && "bg-amber-100 text-amber-700",
+                      b.status === "rejected" && "bg-red-100 text-red-700",
+                      b.status === "returned" && "bg-blue-100 text-blue-700",
+                      !["approved", "pending", "rejected", "returned"].includes(b.status) && "bg-slate-100 text-slate-700",
+                    )}>
+                      {b.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Akses Cepat</h2>
-          <div className="space-y-2">
-            {quickLinks.map(l => (
-              <Link key={l.to} to={l.to}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group">
-                <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                  <l.icon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                </div>
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-300 flex-1">{l.label}</span>
-                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-indigo-600" />
+            <h2 className="font-semibold text-slate-900">Quick Links</h2>
+          </div>
+          <div className="space-y-1.5">
+            {quickLinks.map((q) => (
+              <Link
+                key={q.to}
+                to={q.to}
+                className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-700"
+              >
+                {q.label}
+                <ArrowRight className="w-4 h-4 text-slate-400" />
               </Link>
             ))}
           </div>

@@ -20,14 +20,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+      setSession(session); setUser(session?.user ?? null); setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+      setSession(session); setUser(session?.user ?? null); setLoading(false);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -36,24 +32,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
   }
-
   async function signUp(email: string, password: string, name: string) {
-    const { data, error } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { name } },
-    });
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
     if (error) return { error: error.message, needsConfirmation: false };
-    const needsConfirmation = !data.session;
-    return { error: null, needsConfirmation };
+    return { error: null, needsConfirmation: !data.session };
   }
-
   async function signOut() { await supabase.auth.signOut(); }
 
-  return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

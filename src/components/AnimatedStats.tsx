@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import { cn } from '../utils/cn';
-
 interface Props { value: number; label: string; suffix?: string; icon?: React.ElementType; color?: 'blue' | 'cyan' | 'green' | 'orange'; }
 const colors = { blue: 'from-blue-500 to-blue-600', cyan: 'from-cyan-500 to-cyan-600', green: 'from-green-500 to-green-600', orange: 'from-orange-500 to-orange-600' };
-
 export default function AnimatedStats({ value, label, suffix = '', icon: Icon, color = 'blue' }: Props) {
   const [visible, setVisible] = useState(false);
   useEffect(() => { setVisible(true); }, []);
