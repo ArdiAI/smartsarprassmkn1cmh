@@ -1,201 +1,336 @@
-import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
-import { cn } from "../../utils/cn";
-import { BarChart3, TrendingUp, Package, PieChart, Loader2 } from "lucide-react";
+import { useEffect, useState } from 'react';
+import {
+  BarChart3,
+  Loader2,
+  TrendingUp,
+  Package,
+  ClipboardList,
+  Calendar,
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
 
-type Borrowing = { id: string; item_name: string | null; status: string; created_at: string };
+interface CategoryCount {
+  name: string;
+  count: number;
+}
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+interface StatusCount {
+  status: string;
+  count: number;
+}
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-amber-500",
-  approved: "bg-emerald-500",
-  rejected: "bg-red-500",
-  returned: "bg-blue-500",
+interface MonthlyCount {
+  month: string;
+  label: string;
+  count: number;
+}
+
+interface InventoryItem {
+  category_id: string | null;
+}
+
+interface InventoryWithCategory extends InventoryItem {
+  category_name: string | null;
+}
+
+interface BorrowingRow {
+  status: string;
+  created_at: string;
+}
+
+const statusColors: Record<string, string> = {
+  pending: 'bg-amber-500',
+  approved: 'bg-blue-500',
+  returned: 'bg-emerald-500',
+  completed: 'bg-teal-500',
+  rejected: 'bg-red-500',
+  cancelled: 'bg-slate-400',
 };
+
+const statusLabel: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  returned: 'Dikembalikan',
+  completed: 'Selesai',
+  rejected: 'Ditolak',
+  cancelled: 'Dibatalkan',
+};
+
+const monthLabels = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+  'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
+];
 
 export default function StatisticsPage() {
   const [loading, setLoading] = useState(true);
-  const [monthly, setMonthly] = useState<number[]>(Array(12).fill(0));
-  const [statusBreakdown, setStatusBreakdown] = useState<Record<string, number>>({});
-  const [popular, setPopular] = useState<{ name: string; count: number }[]>([]);
+  const [totalBorrowings, setTotalBorrowings] = useState(0);
+  const [totalInventory, setTotalInventory] = useState(0);
+  const [categoryCounts, setCategoryCounts] = useState<CategoryCount[]>([]);
+  const [statusCounts, setStatusCounts] = useState<StatusCount[]>([]);
+  const [monthlyCounts, setMonthlyCounts] = useState<MonthlyCount[]>([]);
 
   useEffect(() => {
-    async function load() {
+    const fetchStats = async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from("borrowings")
-        .select("id, item_name, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(500);
 
-      const rows = (data as Borrowing[]) ?? [];
+      const [borrowingsRes, inventoryRes, categoriesRes] = await Promise.all([
+        supabase.from('borrowings').select('status, created_at'),
+        supabase.from('inventory').select('category_id'),
+        supabase.from('categories').select('id, name'),
+      ]);
 
-      // Monthly chart (current year)
-      const year = new Date().getFullYear();
-      const counts = Array(12).fill(0);
-      rows.forEach((r) => {
-        const d = new Date(r.created_at);
-        if (d.getFullYear() === year) counts[d.getMonth()]++;
-      });
-      setMonthly(counts);
+      const borrowings = (borrowingsRes.data || []) as unknown as BorrowingRow[];
+      const inventory = (inventoryRes.data || []) as unknown as InventoryItem[];
+      const categories = (categoriesRes.data || []) as unknown as { id: string; name: string }[];
 
-      // Status breakdown
-      const sb: Record<string, number> = {};
-      rows.forEach((r) => { sb[r.status] = (sb[r.status] ?? 0) + 1; });
-      setStatusBreakdown(sb);
+      setTotalBorrowings(borrowings.length);
+      setTotalInventory(inventory.length);
 
-      // Popular items
-      const ic: Record<string, number> = {};
-      rows.forEach((r) => {
-        const n = r.item_name ?? "Tidak diketahui";
-        ic[n] = (ic[n] ?? 0) + 1;
-      });
-      setPopular(Object.entries(ic).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 8));
+      // Inventory by category
+      const catMap = new Map<string, number>();
+      for (const item of inventory) {
+        const cat = categories.find((c) => c.id === item.category_id);
+        const name = cat?.name || 'Tanpa Kategori';
+        catMap.set(name, (catMap.get(name) || 0) + 1);
+      }
+      setCategoryCounts(
+        Array.from(catMap.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+      );
+
+      // Borrowings by status
+      const statusMap = new Map<string, number>();
+      for (const b of borrowings) {
+        statusMap.set(b.status, (statusMap.get(b.status) || 0) + 1);
+      }
+      setStatusCounts(
+        Array.from(statusMap.entries()).map(([status, count]) => ({ status, count }))
+      );
+
+      // Monthly trends (current year)
+      const currentYear = new Date().getFullYear();
+      const monthMap = new Map<number, number>();
+      for (let i = 0; i < 12; i++) monthMap.set(i, 0);
+
+      for (const b of borrowings) {
+        const date = new Date(b.created_at);
+        if (date.getFullYear() === currentYear) {
+          const month = date.getMonth();
+          monthMap.set(month, (monthMap.get(month) || 0) + 1);
+        }
+      }
+      setMonthlyCounts(
+        Array.from(monthMap.entries()).map(([month, count]) => ({
+          month: String(month),
+          label: monthLabels[month],
+          count,
+        }))
+      );
 
       setLoading(false);
-    }
-    load();
+    };
+    fetchStats();
   }, []);
 
-  const maxMonthly = Math.max(...monthly, 1);
-  const totalStatus = Object.values(statusBreakdown).reduce((a, b) => a + b, 0) || 1;
-  const maxPopular = Math.max(...popular.map((p) => p.count), 1);
+  const maxCategoryCount = Math.max(...categoryCounts.map((c) => c.count), 1);
+  const maxStatusCount = Math.max(...statusCounts.map((s) => s.count), 1);
+  const maxMonthlyCount = Math.max(...monthlyCounts.map((m) => m.count), 1);
+
+  const summaryCards = [
+    {
+      label: 'Total Peminjaman',
+      value: totalBorrowings,
+      icon: ClipboardList,
+      color: 'from-blue-500 to-cyan-500',
+    },
+    {
+      label: 'Total Inventaris',
+      value: totalInventory,
+      icon: Package,
+      color: 'from-purple-500 to-indigo-500',
+    },
+    {
+      label: 'Kategori',
+      value: categoryCounts.length,
+      icon: BarChart3,
+      color: 'from-emerald-500 to-teal-500',
+    },
+  ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Statistik</h1>
-        <p className="text-slate-500 text-sm mt-1">Analitik peminjaman tahun {new Date().getFullYear()}</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Statistik</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Ringkasan dan analisis data sistem
+        </p>
       </div>
 
       {loading ? (
-        <div className="py-24 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        </div>
       ) : (
-        <div className="space-y-6">
-          {/* Monthly bar chart */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center gap-2 mb-6">
-              <BarChart3 className="w-5 h-5 text-indigo-600" />
-              <h2 className="font-semibold text-slate-900">Peminjaman per Bulan</h2>
-            </div>
-            <div className="flex items-end justify-between gap-2 h-56">
-              {monthly.map((val, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2">
-                  <div className="w-full flex-1 flex items-end">
+        <>
+          {/* Summary cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {summaryCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <div
+                  key={card.label}
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
+                        {card.label}
+                      </p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
+                        {card.value}
+                      </p>
+                    </div>
                     <div
-                      className="w-full bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-t-md transition-all hover:from-indigo-700 hover:to-indigo-500 relative group"
-                      style={{ height: `${(val / maxMonthly) * 100}%`, minHeight: val > 0 ? "4px" : "0" }}
+                      className={cn(
+                        'w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white',
+                        card.color
+                      )}
                     >
-                      <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-medium text-slate-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {val}
-                      </span>
+                      <Icon className="w-6 h-6" />
                     </div>
                   </div>
-                  <span className="text-xs text-slate-500">{MONTHS[i]}</span>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Status breakdown */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <div className="flex items-center gap-2 mb-6">
-                <PieChart className="w-5 h-5 text-indigo-600" />
-                <h2 className="font-semibold text-slate-900">Status Breakdown</h2>
-              </div>
-              {Object.keys(statusBreakdown).length === 0 ? (
-                <p className="text-slate-400 text-sm py-8 text-center">Belum ada data</p>
-              ) : (
-                <div className="space-y-4">
-                  {/* Stacked bar */}
-                  <div className="flex h-4 rounded-full overflow-hidden bg-slate-100">
-                    {Object.entries(statusBreakdown).map(([s, c]) => (
-                      <div key={s} className={cn("h-full", STATUS_COLORS[s] ?? "bg-slate-400")}
-                        style={{ width: `${(c / totalStatus) * 100}%` }} />
-                    ))}
-                  </div>
-                  <div className="space-y-2">
-                    {Object.entries(statusBreakdown).map(([s, c]) => (
-                      <div key={s} className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className={cn("w-3 h-3 rounded-full", STATUS_COLORS[s] ?? "bg-slate-400")} />
-                          <span className="text-sm text-slate-700 capitalize">{s}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-slate-900">{c}</span>
-                          <span className="text-xs text-slate-400">({Math.round((c / totalStatus) * 100)}%)</span>
-                        </div>
+            {/* Monthly trends */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2">
+              <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+                <TrendingUp className="w-5 h-5 text-blue-500" />
+                Tren Peminjaman Bulanan ({new Date().getFullYear()})
+              </h2>
+              <div className="flex items-end justify-between gap-2 h-48">
+                {monthlyCounts.map((m) => (
+                  <div key={m.month} className="flex-1 flex flex-col items-center gap-2">
+                    <div className="w-full flex items-end justify-center h-full">
+                      <div
+                        className="w-full max-w-[2.5rem] bg-gradient-to-t from-blue-500 to-cyan-400 rounded-t-lg transition-all hover:opacity-80 relative group"
+                        style={{
+                          height: `${(m.count / maxMonthlyCount) * 100}%`,
+                          minHeight: m.count > 0 ? '8px' : '2px',
+                        }}
+                      >
+                        <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs font-medium text-slate-600 dark:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {m.count}
+                        </span>
                       </div>
-                    ))}
+                    </div>
+                    <span className="text-xs text-slate-400">{m.label}</span>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
 
-            {/* Popular items */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <div className="flex items-center gap-2 mb-6">
-                <TrendingUp className="w-5 h-5 text-indigo-600" />
-                <h2 className="font-semibold text-slate-900">Item Terpopuler</h2>
-              </div>
-              {popular.length === 0 ? (
-                <p className="text-slate-400 text-sm py-8 text-center">Belum ada data</p>
+            {/* Borrowings by status */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+              <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+                <ClipboardList className="w-5 h-5 text-blue-500" />
+                Peminjaman per Status
+              </h2>
+              {statusCounts.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">Belum ada data</p>
               ) : (
                 <div className="space-y-3">
-                  {popular.map((p, i) => (
-                    <div key={p.name} className="flex items-center gap-3">
-                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-xs font-bold text-slate-600 shrink-0">
-                        {i + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium text-slate-800 truncate">{p.name}</span>
-                          <span className="text-xs text-slate-500 ml-2 shrink-0">{p.count}x</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-                          <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(p.count / maxPopular) * 100}%` }} />
-                        </div>
+                  {statusCounts.map((s) => (
+                    <div key={s.status}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm text-slate-600 dark:text-slate-300">
+                          {statusLabel[s.status] || s.status}
+                        </span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-white">
+                          {s.count}
+                        </span>
+                      </div>
+                      <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-all',
+                            statusColors[s.status] || 'bg-slate-400'
+                          )}
+                          style={{ width: `${(s.count / maxStatusCount) * 100}%` }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-indigo-100 flex items-center justify-center">
-                <Package className="w-6 h-6 text-indigo-600" />
-              </div>
-              <div>
-                <p className="text-sm text-slate-500">Total Peminjaman</p>
-                <p className="text-2xl font-bold text-slate-900">{totalStatus}</p>
-              </div>
+            {/* Inventory by category */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+              <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+                <Package className="w-5 h-5 text-purple-500" />
+                Inventaris per Kategori
+              </h2>
+              {categoryCounts.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">Belum ada data</p>
+              ) : (
+                <div className="space-y-3">
+                  {categoryCounts.map((c) => (
+                    <div key={c.name}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm text-slate-600 dark:text-slate-300 truncate">
+                          {c.name}
+                        </span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-white ml-2">
+                          {c.count}
+                        </span>
+                      </div>
+                      <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all"
+                          style={{ width: `${(c.count / maxCategoryCount) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-emerald-100 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-sm text-slate-500">Disetujui</p>
-                <p className="text-2xl font-bold text-slate-900">{statusBreakdown["approved"] ?? 0}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
-                <BarChart3 className="w-6 h-6 text-amber-600" />
-              </div>
-              <div>
-                <p className="text-sm text-slate-500">Pending</p>
-                <p className="text-2xl font-bold text-slate-900">{statusBreakdown["pending"] ?? 0}</p>
+
+            {/* Quick summary */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2">
+              <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+                <Calendar className="w-5 h-5 text-emerald-500" />
+                Ringkasan Aktivitas
+              </h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {statusCounts.map((s) => (
+                  <div
+                    key={s.status}
+                    className="rounded-xl bg-slate-50 dark:bg-slate-700/30 p-4 text-center"
+                  >
+                    <p className="text-2xl font-bold text-slate-900 dark:text-white">
+                      {s.count}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {statusLabel[s.status] || s.status}
+                    </p>
+                  </div>
+                ))}
+                {statusCounts.length === 0 && (
+                  <p className="text-sm text-slate-400 col-span-4 text-center py-4">
+                    Belum ada data peminjaman
+                  </p>
+                )}
               </div>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

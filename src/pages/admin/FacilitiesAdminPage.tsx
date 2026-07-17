@@ -1,205 +1,485 @@
-import { useState, useEffect, FormEvent } from "react";
-import { supabase } from "../../lib/supabase";
-import { cn } from "../../utils/cn";
-import { Plus, Pencil, Trash2, X, Search, Loader2, Building2 } from "lucide-react";
+import { useEffect, useState, FormEvent } from 'react';
+import {
+  Building2,
+  Plus,
+  Pencil,
+  Trash2,
+  X,
+  Search,
+  Loader2,
+  AlertTriangle,
+  MapPin,
+  Users,
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
+import { showToast } from '../../components/Toast';
 
-type Facility = {
+interface Facility {
   id: string;
   name: string;
+  description: string | null;
   location: string | null;
   capacity: number | null;
-  status: string;
-  category: string | null;
+  image_url: string | null;
   facility_type: string | null;
+  category: string | null;
+  department: string | null;
+  status: string | null;
+  manager_name: string | null;
+  manager_role: string | null;
   workflow_template_id: string | null;
+}
+
+interface WorkflowTemplate {
+  id: string;
+  name: string;
+}
+
+const emptyForm: Partial<Facility> = {
+  name: '',
+  description: '',
+  location: '',
+  capacity: 0,
+  facility_type: 'ruangan',
+  category: 'umum',
+  department: '',
+  status: 'tersedia',
+  manager_name: '',
+  manager_role: '',
+  image_url: '',
+  workflow_template_id: '',
 };
 
-type Template = { id: string; name: string };
+const statusStyles: Record<string, string> = {
+  tersedia: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  tidak_tersedia: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  maintenance: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+};
 
-const empty: Omit<Facility, "id"> = {
-  name: "", location: "", capacity: 0, status: "available",
-  category: "", facility_type: "", workflow_template_id: null,
+const statusLabel: Record<string, string> = {
+  tersedia: 'Tersedia',
+  tidak_tersedia: 'Tidak Tersedia',
+  maintenance: 'Maintenance',
 };
 
 export default function FacilitiesAdminPage() {
-  const [items, setItems] = useState<Facility[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [modal, setModal] = useState(false);
+  const [search, setSearch] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Facility | null>(null);
-  const [form, setForm] = useState<Omit<Facility, "id">>(empty);
+  const [form, setForm] = useState<Partial<Facility>>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    const [facRes, tmplRes] = await Promise.all([
+      supabase.from('facilities').select('*').order('created_at', { ascending: false }),
+      supabase.from('workflow_templates').select('id, name').order('name'),
+    ]);
+    setFacilities((facRes.data || []) as unknown as Facility[]);
+    setTemplates((tmplRes.data || []) as unknown as WorkflowTemplate[]);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    load();
-    supabase.from("workflow_templates").select("id, name").then(({ data }) => setTemplates((data as Template[]) ?? []));
+    loadData();
   }, []);
 
-  async function load() {
-    setLoading(true);
-    const { data } = await supabase.from("facilities").select("*").order("created_at", { ascending: false });
-    setItems((data as Facility[]) ?? []);
-    setLoading(false);
-  }
+  const openAdd = () => {
+    setEditing(null);
+    setForm(emptyForm);
+    setModalOpen(true);
+  };
 
-  function openNew() { setEditing(null); setForm(empty); setModal(true); }
-  function openEdit(it: Facility) { setEditing(it); setForm({ ...it }); setModal(true); }
+  const openEdit = (facility: Facility) => {
+    setEditing(facility);
+    setForm({ ...facility });
+    setModalOpen(true);
+  };
 
-  async function save(e: FormEvent) {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!form.name?.trim()) {
+      showToast('Nama fasilitas wajib diisi', 'warning');
+      return;
+    }
     setSaving(true);
-    if (editing) await supabase.from("facilities").update(form).eq("id", editing.id);
-    else await supabase.from("facilities").insert(form);
+
+    const payload = {
+      name: form.name,
+      description: form.description || null,
+      location: form.location || null,
+      capacity: Number(form.capacity) || 0,
+      image_url: form.image_url || null,
+      facility_type: form.facility_type || 'ruangan',
+      category: form.category || 'umum',
+      department: form.department || null,
+      status: form.status || 'tersedia',
+      manager_name: form.manager_name || null,
+      manager_role: form.manager_role || null,
+      workflow_template_id: form.workflow_template_id || null,
+    };
+
+    if (editing) {
+      const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
+      if (error) {
+        showToast('Gagal memperbarui fasilitas', 'error');
+      } else {
+        showToast('Fasilitas berhasil diperbarui', 'success');
+        setModalOpen(false);
+        loadData();
+      }
+    } else {
+      const { error } = await supabase.from('facilities').insert(payload);
+      if (error) {
+        showToast('Gagal menambahkan fasilitas', 'error');
+      } else {
+        showToast('Fasilitas berhasil ditambahkan', 'success');
+        setModalOpen(false);
+        loadData();
+      }
+    }
     setSaving(false);
-    setModal(false);
-    load();
-  }
+  };
 
-  async function remove(it: Facility) {
-    if (!confirm(`Hapus "${it.name}"?`)) return;
-    await supabase.from("facilities").delete().eq("id", it.id);
-    load();
-  }
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    const { error } = await supabase.from('facilities').delete().eq('id', deleteId);
+    if (error) {
+      showToast('Gagal menghapus fasilitas', 'error');
+    } else {
+      showToast('Fasilitas berhasil dihapus', 'success');
+      setDeleteId(null);
+      loadData();
+    }
+  };
 
-  const filtered = items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = facilities.filter(
+    (f) =>
+      f.name.toLowerCase().includes(search.toLowerCase()) ||
+      (f.location || '').toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Facilities</h1>
-          <p className="text-slate-500 text-sm mt-1">Kelola fasilitas dan ruangan</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            Kelola data fasilitas dan ruangan
+          </p>
         </div>
-        <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-          <Plus className="w-4 h-4" /> Tambah
+        <button
+          onClick={openAdd}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+        >
+          <Plus className="w-5 h-5" /> Tambah Fasilitas
         </button>
       </div>
 
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari fasilitas..."
-          className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari fasilitas..."
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+        />
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        {loading ? (
-          <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
-        ) : filtered.length === 0 ? (
-          <div className="py-16 text-center text-slate-400">
-            <Building2 className="w-10 h-10 mx-auto mb-2 opacity-40" /> Tidak ada data
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-left">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Nama</th>
-                  <th className="px-4 py-3 font-medium">Lokasi</th>
-                  <th className="px-4 py-3 font-medium">Kapasitas</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Tipe</th>
-                  <th className="px-4 py-3 font-medium text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((it) => (
-                  <tr key={it.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-800">{it.name}</td>
-                    <td className="px-4 py-3 text-slate-600">{it.location ?? "—"}</td>
-                    <td className="px-4 py-3 text-slate-600">{it.capacity ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded-full text-xs font-medium",
-                        it.status === "available" && "bg-emerald-100 text-emerald-700",
-                        it.status === "occupied" && "bg-amber-100 text-amber-700",
-                        it.status === "maintenance" && "bg-red-100 text-red-700",
-                        !["available", "occupied", "maintenance"].includes(it.status) && "bg-slate-100 text-slate-700",
-                      )}>{it.status}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{it.facility_type ?? "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button onClick={() => openEdit(it)} className="p-1.5 rounded hover:bg-slate-200 text-slate-600">
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => remove(it)} className="p-1.5 rounded hover:bg-red-100 text-red-600">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {modal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h2 className="font-semibold text-slate-900">{editing ? "Edit Facility" : "Tambah Facility"}</h2>
-              <button onClick={() => setModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <Building2 className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
+          <p className="text-slate-400">Tidak ada fasilitas</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map((facility) => (
+            <div
+              key={facility.id}
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden hover:shadow-lg transition-shadow"
+            >
+              {facility.image_url ? (
+                <img
+                  src={facility.image_url}
+                  alt={facility.name}
+                  className="w-full h-40 object-cover"
+                />
+              ) : (
+                <div className="w-full h-40 bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-slate-700 dark:to-slate-600 flex items-center justify-center">
+                  <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-500" />
+                </div>
+              )}
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <h3 className="font-semibold text-slate-900 dark:text-white">
+                    {facility.name}
+                  </h3>
+                  <span
+                    className={cn(
+                      'px-2 py-0.5 rounded-md text-xs font-medium flex-shrink-0',
+                      statusStyles[facility.status || 'tersedia'] || statusStyles.tersedia
+                    )}
+                  >
+                    {statusLabel[facility.status || 'tersedia'] || facility.status}
+                  </span>
+                </div>
+                {facility.description && (
+                  <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-3">
+                    {facility.description}
+                  </p>
+                )}
+                <div className="space-y-1 text-xs text-slate-400">
+                  {facility.location && (
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5" /> {facility.location}
+                    </div>
+                  )}
+                  {facility.capacity != null && facility.capacity > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" /> Kapasitas: {facility.capacity}
+                    </div>
+                  )}
+                  {facility.manager_name && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium">PJ:</span> {facility.manager_name}
+                      {facility.manager_role && ` (${facility.manager_role})`}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
+                  <button
+                    onClick={() => openEdit(facility)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-500 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" /> Edit
+                  </button>
+                  <button
+                    onClick={() => setDeleteId(facility.id)}
+                    className="flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium text-red-500 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
-            <form onSubmit={save} className="p-6 space-y-4">
+          ))}
+        </div>
+      )}
+
+      {/* Modal */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
+              <h2 className="font-semibold text-slate-900 dark:text-white">
+                {editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
+              </h2>
+              <button
+                onClick={() => setModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nama</label>
-                <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Nama *
+                </label>
+                <input
+                  type="text"
+                  value={form.name || ''}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  required
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
               </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Deskripsi
+                </label>
+                <textarea
+                  value={form.description || ''}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Lokasi</label>
-                  <input value={form.location ?? ""} onChange={(e) => setForm({ ...form, location: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    Lokasi
+                  </label>
+                  <input
+                    type="text"
+                    value={form.location || ''}
+                    onChange={(e) => setForm({ ...form, location: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Kapasitas</label>
-                  <input type="number" min={0} value={form.capacity ?? 0} onChange={(e) => setForm({ ...form, capacity: +e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    Kapasitas
+                  </label>
+                  <input
+                    type="number"
+                    value={form.capacity ?? 0}
+                    onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
                 </div>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="available">Available</option>
-                    <option value="occupied">Occupied</option>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    Tipe
+                  </label>
+                  <select
+                    value={form.facility_type || 'ruangan'}
+                    onChange={(e) => setForm({ ...form, facility_type: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  >
+                    <option value="ruangan">Ruangan</option>
+                    <option value="lapangan">Lapangan</option>
+                    <option value="aula">Aula</option>
+                    <option value="laboratorium">Laboratorium</option>
+                    <option value="lainnya">Lainnya</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    Status
+                  </label>
+                  <select
+                    value={form.status || 'tersedia'}
+                    onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  >
+                    <option value="tersedia">Tersedia</option>
+                    <option value="tidak_tersedia">Tidak Tersedia</option>
                     <option value="maintenance">Maintenance</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Tipe</label>
-                  <input value={form.facility_type ?? ""} onChange={(e) => setForm({ ...form, facility_type: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Kategori</label>
-                  <input value={form.category ?? ""} onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    PJ Fasilitas
+                  </label>
+                  <input
+                    type="text"
+                    value={form.manager_name || ''}
+                    onChange={(e) => setForm({ ...form, manager_name: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Workflow Template</label>
-                  <select value={form.workflow_template_id ?? ""} onChange={(e) => setForm({ ...form, workflow_template_id: e.target.value || null })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">— Tidak ada —</option>
-                    {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                    Jabatan PJ
+                  </label>
+                  <input
+                    type="text"
+                    value={form.manager_role || ''}
+                    onChange={(e) => setForm({ ...form, manager_role: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setModal(false)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">Batal</button>
-                <button type="submit" disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan
+
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Workflow Template
+                </label>
+                <select
+                  value={form.workflow_template_id || ''}
+                  onChange={(e) => setForm({ ...form, workflow_template_id: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                >
+                  <option value="">— Tanpa workflow —</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  URL Gambar
+                </label>
+                <input
+                  type="text"
+                  value={form.image_url || ''}
+                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                >
+                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {editing ? 'Simpan' : 'Tambah'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {deleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-6 h-6 text-red-500" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white text-center mb-2">
+              Hapus Fasilitas?
+            </h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 text-center mb-6">
+              Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteId(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleDelete}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+              >
+                Hapus
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,124 +1,242 @@
-import { useEffect, useState } from 'react';
-import { FileText, AlertTriangle, Send, CheckCircle2 } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, Send, CheckCircle, Loader2 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { supabase } from '../lib/supabase';
-import { useToast } from '../components/Toast';
+import { cn } from '../utils/cn';
 
-interface InventoryItem {
-  id: string;
-  name: string;
+interface ReportForm {
+  item_name: string;
+  description: string;
+  reporter_name: string;
+  reporter_email: string;
+  location: string;
+  severity: 'low' | 'medium' | 'high';
 }
 
+const SEVERITY_OPTIONS: { value: 'low' | 'medium' | 'high'; label: string; color: string }[] = [
+  { value: 'low', label: 'Rendah', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' },
+  { value: 'medium', label: 'Sedang', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' },
+  { value: 'high', label: 'Tinggi', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300' },
+];
+
+const inputClass =
+  'w-full px-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all';
+
 export default function ReportPage() {
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<ReportForm>({
+    item_name: '',
+    description: '',
     reporter_name: '',
     reporter_email: '',
-    description: '',
+    location: '',
     severity: 'low',
-    image_url: '',
-    inventory_id: '',
   });
-  const { show } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    supabase.from('inventory').select('id, name').order('name').then(({ data }) => setInventory(data || []));
-  }, []);
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  };
 
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.from('damage_reports').insert({
-      reporter_name: form.reporter_name,
-      reporter_email: form.reporter_email,
-      description: form.description,
-      severity: form.severity,
-      image_url: form.image_url || null,
-      inventory_id: form.inventory_id || null,
-    });
-    setLoading(false);
-    if (error) { show('Gagal mengirim laporan: ' + error.message, 'error'); return; }
-    show('Laporan berhasil dikirim!', 'success');
-    setSubmitted(true);
-    setForm({ reporter_name: '', reporter_email: '', description: '', severity: 'low', image_url: '', inventory_id: '' });
-  }
+    setSubmitting(true);
+    setError(null);
 
-  const severityOptions = [
-    { value: 'low', label: 'Rendah', color: 'text-green-600' },
-    { value: 'medium', label: 'Sedang', color: 'text-yellow-600' },
-    { value: 'high', label: 'Tinggi', color: 'text-red-600' },
-  ];
+    try {
+      const { error: insertError } = await supabase.from('damage_reports').insert({
+        item_name: form.item_name,
+        description: form.description,
+        reporter_name: form.reporter_name,
+        reporter_email: form.reporter_email,
+        location: form.location,
+        severity: form.severity,
+        status: 'pending',
+      });
 
-  return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
-      <Navbar />
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Laporkan Kerusakan</h1>
-          <p className="text-sm text-slate-500">Laporkan kerusakan sarana atau prasarana sekolah.</p>
-        </div>
+      if (insertError) throw insertError;
 
-        {submitted ? (
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 text-center">
+      setSuccess(true);
+      setForm({
+        item_name: '',
+        description: '',
+        reporter_name: '',
+        reporter_email: '',
+        location: '',
+        severity: 'low',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Terjadi kesalahan saat mengirim laporan.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (success) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
+        <Navbar />
+        <main className="flex-1 max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16 w-full flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200/50 dark:border-slate-700/50 text-center max-w-md w-full animate-slide-up">
             <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+              <CheckCircle className="w-8 h-8 text-emerald-500" />
             </div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Laporan Terkirim!</h2>
-            <p className="text-sm text-slate-500 mb-6">Terima kasih. Tim sarpras akan menindakuti laporan Anda.</p>
-            <button onClick={() => setSubmitted(false)} className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700">
+            <h2 className="text-2xl font-bold mb-2">Laporan Terkirim!</h2>
+            <p className="text-slate-500 dark:text-slate-400 mb-6">
+              Terima kasih atas laporan Anda. Tim akan meninjau dan menindaklanjuti laporan ini secepatnya.
+            </p>
+            <button
+              onClick={() => setSuccess(false)}
+              className="px-6 py-3 rounded-2xl bg-blue-500 hover:bg-blue-600 text-white font-medium transition-colors"
+            >
               Buat Laporan Lain
             </button>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 space-y-4">
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
+      <Navbar />
+
+      <main className="flex-1 max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="w-6 h-6 text-amber-500" />
+            <h1 className="text-3xl font-bold">Laporkan Kerusakan</h1>
+          </div>
+          <p className="text-slate-500 dark:text-slate-400">
+            Laporkan kerusakan fasilitas atau inventaris. Isi formulir di bawah dengan sejelas-jelasnya.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200/50 dark:border-slate-700/50 space-y-5">
+          {/* Item name */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Nama Barang / Fasilitas</label>
+            <input
+              type="text"
+              name="item_name"
+              value={form.item_name}
+              onChange={handleChange}
+              required
+              placeholder="Contoh: Proyektor Ruang Kelas 10A"
+              className={inputClass}
+            />
+          </div>
+
+          {/* Location */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Lokasi</label>
+            <input
+              type="text"
+              name="location"
+              value={form.location}
+              onChange={handleChange}
+              required
+              placeholder="Contoh: Gedung A Lantai 2"
+              className={inputClass}
+            />
+          </div>
+
+          {/* Severity */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Tingkat Keparahan</label>
+            <div className="grid grid-cols-3 gap-3">
+              {SEVERITY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, severity: opt.value }))}
+                  className={cn(
+                    'px-4 py-3 rounded-2xl border-2 font-medium text-sm transition-all',
+                    form.severity === opt.value
+                      ? opt.color
+                      : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300 dark:hover:border-slate-600'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Deskripsi Kerusakan</label>
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={handleChange}
+              required
+              rows={4}
+              placeholder="Jelaskan kerusakan yang ditemukan..."
+              className={inputClass + ' resize-none'}
+            />
+          </div>
+
+          {/* Reporter info */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nama Pelapor</label>
-              <input type="text" value={form.reporter_name} onChange={e => setForm({ ...form, reporter_name: e.target.value })} required
-                className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label className="block text-sm font-medium mb-2">Nama Pelapor</label>
+              <input
+                type="text"
+                name="reporter_name"
+                value={form.reporter_name}
+                onChange={handleChange}
+                required
+                placeholder="Nama lengkap"
+                className={inputClass}
+              />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-              <input type="email" value={form.reporter_email} onChange={e => setForm({ ...form, reporter_email: e.target.value })} required
-                className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label className="block text-sm font-medium mb-2">Email Pelapor</label>
+              <input
+                type="email"
+                name="reporter_email"
+                value={form.reporter_email}
+                onChange={handleChange}
+                required
+                placeholder="email@sekolah.sch.id"
+                className={inputClass}
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Item Inventaris (opsional)</label>
-              <select value={form.inventory_id} onChange={e => setForm({ ...form, inventory_id: e.target.value })}
-                className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Pilih item...</option>
-                {inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-              </select>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
+              {error}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tingkat Keparahan</label>
-              <div className="grid grid-cols-3 gap-2">
-                {severityOptions.map(o => (
-                  <button key={o.value} type="button" onClick={() => setForm({ ...form, severity: o.value })}
-                    className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-medium border transition-colors ${form.severity === o.value ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'}`}>
-                    <AlertTriangle className={`w-4 h-4 ${o.color}`} /> {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Deskripsi Kerusakan</label>
-              <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} required rows={4}
-                className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Gambar (opsional)</label>
-              <input type="url" value={form.image_url} onChange={e => setForm({ ...form, image_url: e.target.value })} placeholder="https://..."
-                className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <button type="submit" disabled={loading} className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold shadow-lg disabled:opacity-60">
-              {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <><Send className="w-4 h-4" /> Kirim Laporan</>}
-            </button>
-          </form>
-        )}
+          )}
+
+          {/* Submit */}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-blue-500 hover:bg-blue-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium transition-colors"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Mengirim...
+              </>
+            ) : (
+              <>
+                <Send className="w-5 h-5" />
+                Kirim Laporan
+              </>
+            )}
+          </button>
+        </form>
       </main>
+
       <Footer />
     </div>
   );

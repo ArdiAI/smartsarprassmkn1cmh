@@ -2,8 +2,19 @@ export const brandConfig = {
   system: {
     name: 'SMART SARPRAS',
     fullName: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
+    tagline: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
     shortName: 'SMART SARPRAS',
-    description: 'Sistem informasi pengelolaan sarana dan prasarana sekolah',
-    school: 'SMKN 1 Cimahi',
+  },
+  school: {
+    name: 'SMART SARPRAS',
+    address: 'Indonesia',
+    phone: '',
+    email: '',
+    website: '',
+  },
+  colors: {
+    primary: '#2563eb',
+    secondary: '#06b6d4',
+    accent: '#3b82f6',
   },
 };

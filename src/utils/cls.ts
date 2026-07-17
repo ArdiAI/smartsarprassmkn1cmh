@@ -1,1 +1,3 @@
-export function cls(...inputs: (string | false | null | undefined)[]): string { return inputs.filter(Boolean).join(' '); }
+export function cls(...classes: (string | false | null | undefined)[]): string {
+  return classes.filter(Boolean).join(' ');
+}

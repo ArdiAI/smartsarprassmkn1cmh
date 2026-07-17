@@ -1,42 +1,106 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
-import { Building2, Menu, X, Moon, Sun, LayoutDashboard, ClipboardList, Package, Building, FileText, LogOut, Home } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Menu, X, Moon, Sun, LogOut, User, Shield, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { supabase } from '../lib/supabase';
 import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
 
 export default function Navbar() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const { theme, toggle } = useTheme();
+  const [isOpen, setIsOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const { user, signOut } = useAuth();
-  const location = useLocation();
+  const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const check = async () => {
+      if (user) {
+        const { data } = await supabase.from('admin_users').select('id').eq('user_id', user.id).eq('is_active', true).single();
+        setIsAdmin(!!data);
+      } else {
+        setIsAdmin(false);
+      }
+    };
+    check();
+  }, [user]);
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/auth');
+  };
+
   const navLinks = [
-    { to: '/', label: 'Beranda', icon: Home }, { to: '/facilities', label: 'Fasilitas', icon: Building },
-    { to: '/inventory', label: 'Inventaris', icon: Package }, { to: '/borrow', label: 'Peminjaman', icon: ClipboardList },
-    { to: '/report', label: 'Laporan', icon: FileText }, { to: '/about', label: 'Tentang', icon: Building2 },
+    { to: '/', label: 'Beranda' },
+    { to: '/fasilitas', label: 'Fasilitas' },
+    { to: '/inventaris', label: 'Inventaris' },
+    { to: '/pinjam', label: 'Pinjam' },
+    { to: '/riwayat', label: 'Riwayat' },
+    { to: '/tentang', label: 'Tentang' },
   ];
-  const isActive = (p: string) => location.pathname === p;
+
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+    <nav className="sticky top-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center"><Building2 className="w-5 h-5 text-white" /></div>
-            <span className="font-bold text-slate-900 dark:text-white hidden sm:block">{brandConfig.system.name}</span>
-          </Link>
-          <div className="hidden lg:flex items-center gap-1">
-            {navLinks.map(l => <Link key={l.to} to={l.to} className={cn('flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors', isActive(l.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')}><l.icon className="w-4 h-4" />{l.label}</Link>)}
-          </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">{theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}</button>
-            {user && <Link to="/admin" className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"><LayoutDashboard className="w-4 h-4" />Dashboard</Link>}
-            {user ? <button onClick={async () => { await signOut(); navigate('/auth'); }} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><LogOut className="w-5 h-5" /></button> : <Link to="/auth" className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Login</Link>}
-            <button onClick={() => setMobileOpen(!mobileOpen)} className="lg:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400">{mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}</button>
+            <Link to="/" className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                <span className="text-white font-bold">S</span>
+              </div>
+              <span className="font-bold text-slate-900 dark:text-white text-lg">{brandConfig.system.name}</span>
+            </Link>
+          </div>
+
+          <div className="hidden md:flex items-center gap-1">
+            {navLinks.map(link => (
+              <Link key={link.to} to={link.to} className="px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors">
+                {link.label}
+              </Link>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+              {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+            </button>
+            {user ? (
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <Link to="/admin" className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
+                    <LayoutDashboard className="w-4 h-4" /> Admin
+                  </Link>
+                )}
+                <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                  <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Keluar</span>
+                </button>
+              </div>
+            ) : (
+              <Link to="/auth" className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600">
+                <User className="w-4 h-4" /> Masuk
+              </Link>
+            )}
+            <button onClick={() => setIsOpen(!isOpen)} className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400">
+              {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
           </div>
         </div>
-        {mobileOpen && <div className="lg:hidden py-3 border-t border-slate-200 dark:border-slate-800">{navLinks.map(l => <Link key={l.to} to={l.to} onClick={() => setMobileOpen(false)} className={cn('flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium', isActive(l.to) ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')}><l.icon className="w-4 h-4" />{l.label}</Link>)}{user && <Link to="/admin" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-blue-600"><LayoutDashboard className="w-4 h-4" />Dashboard</Link>}</div>}
+
+        {isOpen && (
+          <div className="md:hidden py-3 border-t border-slate-200 dark:border-slate-700">
+            {navLinks.map(link => (
+              <Link key={link.to} to={link.to} onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
+                {link.label}
+              </Link>
+            ))}
+            {isAdmin && (
+              <Link to="/admin" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
+                Dashboard Admin
+              </Link>
+            )}
+          </div>
+        )}
       </div>
     </nav>
   );

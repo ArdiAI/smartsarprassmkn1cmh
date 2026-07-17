@@ -1,170 +1,314 @@
-import { useState, useEffect, FormEvent } from "react";
-import { supabase } from "../../lib/supabase";
-import { cn } from "../../utils/cn";
-import { Search, Loader2, MessageSquare, X, Send } from "lucide-react";
+import { useEffect, useState } from 'react';
+import {
+  MessageSquare,
+  Loader2,
+  Mail,
+  User,
+  Tag,
+  Send,
+  X,
+  Clock,
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
+import { showToast } from '../../components/Toast';
 
-type Aspirasi = {
+interface Aspirasi {
   id: string;
-  title: string | null;
-  content: string | null;
+  nama: string;
+  kelas_unit: string;
+  email: string | null;
+  kategori: string;
+  judul: string;
+  isi: string;
   status: string;
-  response: string | null;
-  user_name: string | null;
+  tanggapan: string | null;
   created_at: string;
+  updated_at: string | null;
+}
+
+const statusStyles: Record<string, string> = {
+  baru: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  dibaca: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  diproses: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  selesai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
 };
 
-const STATUSES = ["pending", "reviewing", "responded", "closed"];
+const statusLabel: Record<string, string> = {
+  baru: 'Baru',
+  dibaca: 'Dibaca',
+  diproses: 'Diproses',
+  selesai: 'Selesai',
+};
+
+const statusOptions = ['baru', 'dibaca', 'diproses', 'selesai'];
 
 export default function AspirasiAdminPage() {
-  const [items, setItems] = useState<Aspirasi[]>([]);
+  const [aspirasi, setAspirasi] = useState<Aspirasi[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [detail, setDetail] = useState<Aspirasi | null>(null);
-  const [response, setResponse] = useState("");
-  const [status, setStatus] = useState("pending");
-  const [saving, setSaving] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [replyModal, setReplyModal] = useState<Aspirasi | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  useEffect(() => { load(); }, []);
-
-  async function load() {
+  const loadData = async () => {
     setLoading(true);
-    const { data } = await supabase.from("aspirasi").select("*").order("created_at", { ascending: false });
-    setItems((data as Aspirasi[]) ?? []);
+    const { data, error } = await supabase
+      .from('aspirasi')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      showToast('Gagal memuat aspirasi', 'error');
+    } else {
+      setAspirasi((data || []) as unknown as Aspirasi[]);
+    }
     setLoading(false);
-  }
+  };
 
-  function openDetail(it: Aspirasi) {
-    setDetail(it);
-    setResponse(it.response ?? "");
-    setStatus(it.status);
-  }
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!detail) return;
-    setSaving(true);
-    await supabase.from("aspirasi").update({ response, status }).eq("id", detail.id);
-    setSaving(false);
-    setDetail(null);
-    load();
-  }
+  const updateStatus = async (item: Aspirasi, newStatus: string) => {
+    setUpdatingId(item.id);
+    const { error } = await supabase
+      .from('aspirasi')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', item.id);
 
-  const filtered = items.filter((a) => {
-    const matchSearch = (a.title ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (a.user_name ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === "all" || a.status === filter;
-    return matchSearch && matchFilter;
-  });
+    if (error) {
+      showToast('Gagal memperbarui status', 'error');
+    } else {
+      showToast('Status berhasil diperbarui', 'success');
+      loadData();
+    }
+    setUpdatingId(null);
+  };
+
+  const openReply = (item: Aspirasi) => {
+    setReplyModal(item);
+    setReplyText(item.tanggapan || '');
+  };
+
+  const handleReply = async () => {
+    if (!replyModal) return;
+    setUpdatingId(replyModal.id);
+    const { error } = await supabase
+      .from('aspirasi')
+      .update({
+        tanggapan: replyText || null,
+        status: replyModal.status === 'baru' ? 'diproses' : replyModal.status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', replyModal.id);
+
+    if (error) {
+      showToast('Gagal menyimpan tanggapan', 'error');
+    } else {
+      showToast('Tanggapan berhasil disimpan', 'success');
+      setReplyModal(null);
+      setReplyText('');
+      loadData();
+    }
+    setUpdatingId(null);
+  };
+
+  const filtered = aspirasi.filter(
+    (a) => filterStatus === 'all' || a.status === filterStatus
+  );
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Aspirasi</h1>
-        <p className="text-slate-500 text-sm mt-1">Tanggapi aspirasi pengguna</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aspirasi</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Kelola aspirasi dan saran dari pengguna
+        </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari aspirasi..."
-            className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      {/* Filter */}
+      <div className="flex flex-wrap gap-3">
+        <div>
+          <label className="text-xs text-slate-400 block mb-1">Status</label>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+          >
+            <option value="all">Semua</option>
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>
+                {statusLabel[s]}
+              </option>
+            ))}
+          </select>
         </div>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-          <option value="all">Semua</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        {loading ? (
-          <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
-        ) : filtered.length === 0 ? (
-          <div className="py-16 text-center text-slate-400">
-            <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-40" /> Tidak ada aspirasi
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-left">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Judul</th>
-                  <th className="px-4 py-3 font-medium">Pengirim</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Tanggal</th>
-                  <th className="px-4 py-3 font-medium text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((a) => (
-                  <tr key={a.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-800">{a.title ?? "—"}</td>
-                    <td className="px-4 py-3 text-slate-600">{a.user_name ?? "Anonim"}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded-full text-xs font-medium",
-                        a.status === "pending" && "bg-amber-100 text-amber-700",
-                        a.status === "reviewing" && "bg-blue-100 text-blue-700",
-                        a.status === "responded" && "bg-emerald-100 text-emerald-700",
-                        a.status === "closed" && "bg-slate-100 text-slate-600",
-                      )}>{a.status}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{new Date(a.created_at).toLocaleDateString("id-ID")}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button onClick={() => openDetail(a)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs">
-                        Tanggapi
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {/* Aspirasi list */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <MessageSquare className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
+          <p className="text-slate-400">Belum ada aspirasi</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((item) => (
+            <div
+              key={item.id}
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5"
+            >
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0">
+                    <MessageSquare className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-slate-900 dark:text-white">
+                      {item.judul}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <User className="w-3 h-3" /> {item.nama}
+                      </span>
+                      <span>{item.kelas_unit}</span>
+                      {item.email && (
+                        <span className="flex items-center gap-1 truncate">
+                          <Mail className="w-3 h-3" /> {item.email}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Tag className="w-3 h-3" /> {item.kategori}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {new Date(item.created_at).toLocaleDateString('id-ID', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0',
+                    statusStyles[item.status] || statusStyles.baru
+                  )}
+                >
+                  {statusLabel[item.status] || item.status}
+                </span>
+              </div>
 
-      {detail && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h2 className="font-semibold text-slate-900">Tanggapi Aspirasi</h2>
-              <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
-            </div>
-            <form onSubmit={save} className="p-6 space-y-4">
-              <div>
-                <p className="text-xs text-slate-500">Judul</p>
-                <p className="font-medium text-slate-900">{detail.title ?? "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Pengirim</p>
-                <p className="text-slate-800">{detail.user_name ?? "Anonim"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Isi</p>
-                <p className="text-slate-800 whitespace-pre-wrap">{detail.content ?? "—"}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                <select value={status} onChange={(e) => setStatus(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <p className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700/30 rounded-xl p-3">
+                {item.isi}
+              </p>
+
+              {item.tanggapan && (
+                <div className="mt-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 p-3">
+                  <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">
+                    Tanggapan:
+                  </p>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">{item.tanggapan}</p>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
+                <select
+                  value={item.status}
+                  onChange={(e) => updateStatus(item, e.target.value)}
+                  disabled={updatingId === item.id}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
+                >
+                  {statusOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {statusLabel[s]}
+                    </option>
+                  ))}
                 </select>
+                <button
+                  onClick={() => openReply(item)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 transition-colors"
+                >
+                  <Send className="w-4 h-4" />
+                  {item.tanggapan ? 'Edit Tanggapan' : 'Tanggapi'}
+                </button>
+                {updatingId === item.id && (
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reply modal */}
+      {replyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+              <h2 className="font-semibold text-slate-900 dark:text-white">
+                Tanggapi Aspirasi
+              </h2>
+              <button
+                onClick={() => setReplyModal(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-700/30 p-3">
+                <p className="font-medium text-slate-900 dark:text-white text-sm">
+                  {replyModal.judul}
+                </p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {replyModal.isi}
+                </p>
+                <p className="text-xs text-slate-400 mt-2">
+                  Dari: {replyModal.nama} ({replyModal.kelas_unit})
+                </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Tanggapan</label>
-                <textarea rows={4} value={response} onChange={(e) => setResponse(e.target.value)}
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Tanggapan
+                </label>
+                <textarea
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  rows={4}
                   placeholder="Tulis tanggapan..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+                />
               </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setDetail(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">Batal</button>
-                <button type="submit" disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Kirim
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setReplyModal(null)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleReply}
+                  disabled={updatingId === replyModal.id}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                >
+                  {updatingId === replyModal.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  Kirim
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}

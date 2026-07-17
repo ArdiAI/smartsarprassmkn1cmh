@@ -1,166 +1,256 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { supabase } from "../../lib/supabase";
-import { cn } from "../../utils/cn";
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  Package, Building2, Users, AlertTriangle, Megaphone, MessageSquare,
-  ArrowRight, TrendingUp, Activity, Clock,
-} from "lucide-react";
+  ClipboardList,
+  Clock,
+  CheckCircle,
+  Package,
+  TrendingUp,
+  ArrowRight,
+  Building2,
+  AlertCircle,
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
 
-type Borrowing = {
+interface DashboardStats {
+  totalBorrowings: number;
+  pending: number;
+  approved: number;
+  inventoryCount: number;
+}
+
+interface Borrowing {
   id: string;
-  user_name: string | null;
-  item_name: string | null;
+  borrower_name: string;
+  borrow_date: string;
   status: string;
-  created_at: string;
+  item_type: string | null;
+  purpose: string | null;
+}
+
+const statusStyles: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  cancelled: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+};
+
+const statusLabel: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  returned: 'Dikembalikan',
+  completed: 'Selesai',
+  rejected: 'Ditolak',
+  cancelled: 'Dibatalkan',
 };
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState({
-    inventory: 0,
-    facilities: 0,
-    users: 0,
-    reports: 0,
-    announcements: 0,
-    aspirasi: 0,
+  const [stats, setStats] = useState<DashboardStats>({
+    totalBorrowings: 0,
+    pending: 0,
+    approved: 0,
+    inventoryCount: 0,
   });
-  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
+  const [recentBorrowings, setRecentBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [inv, fac, usr, rep, ann, asp, bor] = await Promise.all([
-          supabase.from("inventory").select("id", { count: "exact", head: true }),
-          supabase.from("facilities").select("id", { count: "exact", head: true }),
-          supabase.from("admin_users").select("id", { count: "exact", head: true }),
-          supabase.from("damage_reports").select("id", { count: "exact", head: true }),
-          supabase.from("announcements").select("id", { count: "exact", head: true }),
-          supabase.from("aspirasi").select("id", { count: "exact", head: true }),
+    const fetchData = async () => {
+      const [borrowingsRes, pendingRes, approvedRes, inventoryRes, recentRes] =
+        await Promise.all([
+          supabase.from('borrowings').select('id', { count: 'exact', head: true }),
           supabase
-            .from("borrowings")
-            .select("id, user_name, item_name, status, created_at")
-            .order("created_at", { ascending: false })
+            .from('borrowings')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pending'),
+          supabase
+            .from('borrowings')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'approved'),
+          supabase.from('inventory').select('id', { count: 'exact', head: true }),
+          supabase
+            .from('borrowings')
+            .select('id, borrower_name, borrow_date, status, item_type, purpose')
+            .order('created_at', { ascending: false })
             .limit(5),
         ]);
-        setStats({
-          inventory: inv.count ?? 0,
-          facilities: fac.count ?? 0,
-          users: usr.count ?? 0,
-          reports: rep.count ?? 0,
-          announcements: ann.count ?? 0,
-          aspirasi: asp.count ?? 0,
-        });
-        setBorrowings((bor.data ?? []) as Borrowing[]);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+
+      setStats({
+        totalBorrowings: borrowingsRes.count || 0,
+        pending: pendingRes.count || 0,
+        approved: approvedRes.count || 0,
+        inventoryCount: inventoryRes.count || 0,
+      });
+      setRecentBorrowings((recentRes.data || []) as unknown as Borrowing[]);
+      setLoading(false);
+    };
+    fetchData();
   }, []);
 
-  const cards = [
-    { label: "Inventory", value: stats.inventory, icon: Package, color: "bg-blue-500", to: "/admin/inventory" },
-    { label: "Facilities", value: stats.facilities, icon: Building2, color: "bg-emerald-500", to: "/admin/facilities" },
-    { label: "Admin Users", value: stats.users, icon: Users, color: "bg-violet-500", to: "/admin/team" },
-    { label: "Damage Reports", value: stats.reports, icon: AlertTriangle, color: "bg-amber-500", to: "/admin/reports" },
-    { label: "Announcements", value: stats.announcements, icon: Megaphone, color: "bg-rose-500", to: "/admin/announcements" },
-    { label: "Aspirasi", value: stats.aspirasi, icon: MessageSquare, color: "bg-cyan-500", to: "/admin/aspirasi" },
+  const statCards = [
+    {
+      label: 'Total Peminjaman',
+      value: stats.totalBorrowings,
+      icon: ClipboardList,
+      color: 'from-blue-500 to-cyan-500',
+      to: '/admin/borrowings',
+    },
+    {
+      label: 'Menunggu Persetujuan',
+      value: stats.pending,
+      icon: Clock,
+      color: 'from-amber-500 to-orange-500',
+      to: '/admin/borrowings',
+    },
+    {
+      label: 'Disetujui',
+      value: stats.approved,
+      icon: CheckCircle,
+      color: 'from-emerald-500 to-teal-500',
+      to: '/admin/borrowings',
+    },
+    {
+      label: 'Total Inventaris',
+      value: stats.inventoryCount,
+      icon: Package,
+      color: 'from-purple-500 to-indigo-500',
+      to: '/admin/inventory',
+    },
   ];
 
-  const quickLinks = [
-    { label: "Kelola Inventory", to: "/admin/inventory" },
-    { label: "Kelola Facilities", to: "/admin/facilities" },
-    { label: "Lihat Reports", to: "/admin/reports" },
-    { label: "Kelola Tim", to: "/admin/team" },
-    { label: "Buat Pengumuman", to: "/admin/announcements" },
-    { label: "Tanggapi Aspirasi", to: "/admin/aspirasi" },
-    { label: "Statistik", to: "/admin/statistics" },
+  const quickActions = [
+    { label: 'Kelola Peminjaman', to: '/admin/borrowings', icon: ClipboardList },
+    { label: 'Kelola Inventaris', to: '/admin/inventory', icon: Package },
+    { label: 'Kelola Fasilitas', to: '/admin/facilities', icon: Building2 },
+    { label: 'Lihat Laporan', to: '/admin/reports', icon: AlertCircle },
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-slate-500 mt-1">Ringkasan sistem SMART SARPRAS</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Ringkasan aktivitas dan statistik sistem
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        {cards.map((c) => (
-          <Link
-            key={c.label}
-            to={c.to}
-            className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">{c.label}</p>
-                <p className="text-3xl font-bold text-slate-900 mt-1">
-                  {loading ? "—" : c.value}
-                </p>
+      {/* Stats cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {statCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <Link
+              key={card.label}
+              to={card.to}
+              className="group bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {card.label}
+                  </p>
+                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
+                    {loading ? '...' : card.value}
+                  </p>
+                </div>
+                <div
+                  className={cn(
+                    'w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white',
+                    card.color
+                  )}
+                >
+                  <Icon className="w-6 h-6" />
+                </div>
               </div>
-              <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center", c.color)}>
-                <c.icon className="w-6 h-6 text-white" />
-              </div>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Activity className="w-5 h-5 text-indigo-600" />
-            <h2 className="font-semibold text-slate-900">Peminjaman Terbaru</h2>
+        {/* Recent borrowings */}
+        <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+            <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-blue-500" />
+              Peminjaman Terbaru
+            </h2>
+            <Link
+              to="/admin/borrowings"
+              className="text-sm text-blue-500 hover:text-blue-600 flex items-center gap-1"
+            >
+              Lihat semua <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
-          {borrowings.length === 0 ? (
-            <p className="text-slate-400 text-sm py-8 text-center">Belum ada peminjaman</p>
-          ) : (
-            <div className="space-y-2">
-              {borrowings.map((b) => (
-                <div key={b.id} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
-                  <div>
-                    <p className="font-medium text-slate-800 text-sm">{b.item_name ?? "—"}</p>
-                    <p className="text-xs text-slate-500">{b.user_name ?? "Anonim"}</p>
+          <div className="divide-y divide-slate-100 dark:divide-slate-700">
+            {recentBorrowings.length === 0 ? (
+              <div className="p-8 text-center text-slate-400">
+                <ClipboardList className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>Belum ada peminjaman</p>
+              </div>
+            ) : (
+              recentBorrowings.map((b) => (
+                <div
+                  key={b.id}
+                  className="flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900 dark:text-white truncate">
+                      {b.borrower_name}
+                    </p>
+                    <p className="text-sm text-slate-400 truncate">
+                      {b.item_type || '—'} · {b.purpose || 'Tanpa keterangan'}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {new Date(b.created_at).toLocaleDateString("id-ID")}
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-sm text-slate-400 hidden sm:block">
+                      {new Date(b.borrow_date).toLocaleDateString('id-ID', {
+                        day: 'numeric',
+                        month: 'short',
+                      })}
                     </span>
-                    <span className={cn(
-                      "text-xs px-2 py-0.5 rounded-full font-medium",
-                      b.status === "approved" && "bg-emerald-100 text-emerald-700",
-                      b.status === "pending" && "bg-amber-100 text-amber-700",
-                      b.status === "rejected" && "bg-red-100 text-red-700",
-                      b.status === "returned" && "bg-blue-100 text-blue-700",
-                      !["approved", "pending", "rejected", "returned"].includes(b.status) && "bg-slate-100 text-slate-700",
-                    )}>
-                      {b.status}
+                    <span
+                      className={cn(
+                        'px-2.5 py-1 rounded-lg text-xs font-medium',
+                        statusStyles[b.status] || statusStyles.pending
+                      )}
+                    >
+                      {statusLabel[b.status] || b.status}
                     </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="w-5 h-5 text-indigo-600" />
-            <h2 className="font-semibold text-slate-900">Quick Links</h2>
-          </div>
-          <div className="space-y-1.5">
-            {quickLinks.map((q) => (
-              <Link
-                key={q.to}
-                to={q.to}
-                className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-700"
-              >
-                {q.label}
-                <ArrowRight className="w-4 h-4 text-slate-400" />
-              </Link>
-            ))}
+        {/* Quick actions */}
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+          <h2 className="font-semibold text-slate-900 dark:text-white mb-4">
+            Aksi Cepat
+          </h2>
+          <div className="space-y-2">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Link
+                  key={action.to}
+                  to={action.to}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center text-blue-500 group-hover:text-blue-600">
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {action.label}
+                  </span>
+                  <ArrowRight className="w-4 h-4 ml-auto text-slate-300 group-hover:text-blue-500" />
+                </Link>
+              );
+            })}
           </div>
         </div>
       </div>

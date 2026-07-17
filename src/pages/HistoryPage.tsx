@@ -1,116 +1,205 @@
-import { useState } from 'react';
-import { Search, Mail, ClipboardList, Calendar, ArrowLeft } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { Search, History, Calendar, User, Package } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
+import { cn } from '../utils/cn';
 
 interface BorrowingItem {
   id: string;
+  borrowing_id: string;
+  item_name: string;
+  item_type: string | null;
   quantity: number;
-  inventory: { name: string } | null;
+  status: string;
+  current_step: number | null;
+  current_status_label: string | null;
+  workflow_template_id: string | null;
 }
 
 interface Borrowing {
   id: string;
   borrower_name: string;
-  borrower_email: string;
+  borrower_class: string | null;
+  borrower_email: string | null;
+  borrower_phone: string | null;
+  borrow_date: string | null;
+  return_date: string | null;
+  purpose: string | null;
   status: string;
-  start_date: string;
-  end_date: string;
+  current_step: number | null;
+  current_status_label: string | null;
+  created_at: string;
   borrowing_items: BorrowingItem[];
 }
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-  approved: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  returned: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+const STATUS_STYLES: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  returned: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
 };
 
-export default function HistoryPage() {
-  const [email, setEmail] = useState('');
-  const [results, setResults] = useState<Borrowing[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  rejected: 'Ditolak',
+  returned: 'Dikembalikan',
+};
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setLoading(true);
-    setSearched(true);
-    const { data } = await supabase
-      .from('borrowings')
-      .select('id, borrower_name, borrower_email, status, start_date, end_date, borrowing_items(id, quantity, inventory(name))')
-      .eq('borrower_email', email.trim())
-      .order('start_date', { ascending: false });
-    setResults((data as unknown as Borrowing[]) || []);
-    setLoading(false);
-  }
+function HistorySkeleton() {
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200/50 dark:border-slate-700/50">
+      <div className="h-5 w-1/3 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mb-3" />
+      <div className="h-4 w-2/3 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mb-2" />
+      <div className="h-4 w-1/2 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
+    </div>
+  );
+}
+
+export default function HistoryPage() {
+  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const fetchBorrowings = async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from('borrowings')
+        .select('id, borrower_name, borrower_class, borrower_email, borrower_phone, borrow_date, return_date, purpose, status, current_step, current_status_label, created_at, borrowing_items (id, borrowing_id, item_name, item_type, quantity, status, current_step, current_status_label, workflow_template_id)')
+        .order('created_at', { ascending: false });
+      setBorrowings((data as unknown as Borrowing[]) || []);
+      setLoading(false);
+    };
+    fetchBorrowings();
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return borrowings;
+    const q = search.toLowerCase();
+    return borrowings.filter(
+      (b) =>
+        b.borrower_name?.toLowerCase().includes(q) ||
+        b.borrower_class?.toLowerCase().includes(q) ||
+        b.purpose?.toLowerCase().includes(q) ||
+        b.borrowing_items?.some((item) => item.item_name?.toLowerCase().includes(q))
+    );
+  }, [borrowings, search]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
       <Navbar />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
+
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Riwayat Peminjaman</h1>
-          <p className="text-sm text-slate-500">Cari riwayat peminjaman berdasarkan email.</p>
+          <div className="flex items-center gap-2 mb-2">
+            <History className="w-6 h-6 text-blue-500" />
+            <h1 className="text-3xl font-bold">Riwayat Peminjaman</h1>
+          </div>
+          <p className="text-slate-500 dark:text-slate-400">Pantau status dan riwayat peminjaman barang.</p>
         </div>
 
-        <form onSubmit={handleSearch} className="mb-6">
-          <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="email@example.com"
-              className="w-full pl-10 pr-28 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button type="submit" disabled={loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60">
-              {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <><Search className="w-4 h-4" /> Cari</>}
-            </button>
-          </div>
-        </form>
+        {/* Search */}
+        <div className="relative mb-6">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cari berdasarkan nama, kelas, atau barang..."
+            className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+          />
+        </div>
 
-        {searched && !loading && results.length === 0 ? (
-          <EmptyState title="Tidak ada riwayat" message="Tidak ditemukan peminjaman untuk email tersebut." />
+        {/* List */}
+        {loading ? (
+          <div className="space-y-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <HistorySkeleton key={i} />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={History} title="Belum ada riwayat peminjaman" description="Riwayat peminjaman akan muncul di sini." />
         ) : (
           <div className="space-y-4">
-            {results.map(b => (
-              <div key={b.id} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <ClipboardList className="w-5 h-5 text-blue-500" />
-                    <div>
-                      <p className="font-semibold text-slate-900 dark:text-white">{b.borrower_name}</p>
-                      <p className="text-xs text-slate-500">{b.borrower_email}</p>
-                    </div>
-                  </div>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[b.status] || 'bg-slate-100 text-slate-600'}`}>
-                    {b.status}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
-                  <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{new Date(b.start_date).toLocaleDateString('id-ID')} → {new Date(b.end_date).toLocaleDateString('id-ID')}</span>
-                </div>
-                <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
-                  <p className="text-xs font-medium text-slate-400 uppercase mb-2">Item Dipinjam</p>
-                  <div className="space-y-1.5">
-                    {b.borrowing_items?.map((bi, i) => (
-                      <div key={i} className="flex items-center justify-between text-sm">
-                        <span className="text-slate-700 dark:text-slate-300">{bi.inventory?.name || 'Item tidak ditemukan'}</span>
-                        <span className="text-slate-500">×{bi.quantity}</span>
+            {filtered.map((borrowing, i) => {
+              const statusKey = (borrowing.status || '').toLowerCase();
+              return (
+                <div
+                  key={borrowing.id}
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md transition-all animate-slide-up"
+                  style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                        <User className="w-5 h-5 text-blue-500" />
                       </div>
-                    ))}
-                    {(!b.borrowing_items || b.borrowing_items.length === 0) && <p className="text-sm text-slate-400">Tidak ada item</p>}
+                      <div>
+                        <h3 className="font-semibold text-lg">{borrowing.borrower_name}</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          {borrowing.borrower_class || 'N/A'} &middot; {new Date(borrowing.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        'px-3 py-1 rounded-full text-sm font-medium self-start',
+                        STATUS_STYLES[statusKey] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                      )}
+                    >
+                      {borrowing.current_status_label || STATUS_LABELS[statusKey] || borrowing.status}
+                    </span>
                   </div>
+
+                  {borrowing.purpose && (
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mb-3 bg-slate-50 dark:bg-slate-700/30 rounded-xl p-3">
+                      <span className="font-medium">Keperluan:</span> {borrowing.purpose}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500 dark:text-slate-400 mb-3">
+                    {borrowing.borrow_date && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Calendar className="w-4 h-4" />
+                        Pinjam: {new Date(borrowing.borrow_date).toLocaleDateString('id-ID')}
+                      </span>
+                    )}
+                    {borrowing.return_date && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Calendar className="w-4 h-4" />
+                        Kembali: {new Date(borrowing.return_date).toLocaleDateString('id-ID')}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Items */}
+                  {borrowing.borrowing_items && borrowing.borrowing_items.length > 0 && (
+                    <div className="border-t border-slate-100 dark:border-slate-700/50 pt-3">
+                      <p className="text-xs font-medium text-slate-400 mb-2">Barang Dipinjam:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {borrowing.borrowing_items.map((item) => (
+                          <span
+                            key={item.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700/50 text-sm"
+                          >
+                            <Package className="w-3.5 h-3.5 text-blue-500" />
+                            {item.item_name} &times;{item.quantity}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
+
       <Footer />
     </div>
   );

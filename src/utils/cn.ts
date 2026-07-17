@@ -1,2 +1,3 @@
-import { cls } from './cls';
-export function cn(...inputs: Parameters<typeof cls>) { return cls(...inputs); }
+export function cn(...classes: (string | false | null | undefined)[]): string {
+  return classes.filter(Boolean).join(' ');
+}

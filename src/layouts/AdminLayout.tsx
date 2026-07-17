@@ -1,61 +1,234 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, ClipboardList, Building, FileText, Users, Megaphone, Settings, Shield, Workflow, UserCog, BarChart3, MessageSquare, LogOut, Menu, X, Moon, Sun, Bell, Mail } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Package,
+  Building2,
+  FileText,
+  BarChart3,
+  Users,
+  Megaphone,
+  MessageSquare,
+  ClipboardList,
+  ShieldCheck,
+  UserCog,
+  KeyRound,
+  UserCheck,
+  Workflow,
+  Mail,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  Moon,
+  Sun,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
 import { brandConfig } from '../brand/config';
+import { cn } from '../utils/cn';
+
+interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  is_active: boolean;
+}
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+}
+
+const mainNav: NavItem[] = [
+  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/admin/borrowings', label: 'Peminjaman', icon: ClipboardList },
+  { to: '/admin/inventory', label: 'Inventaris', icon: Package },
+  { to: '/admin/facilities', label: 'Fasilitas', icon: Building2 },
+  { to: '/admin/reports', label: 'Laporan', icon: FileText },
+  { to: '/admin/statistics', label: 'Statistik', icon: BarChart3 },
+  { to: '/admin/team', label: 'Tim', icon: Users },
+  { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone },
+  { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare },
+];
+
+const superNav: NavItem[] = [
+  { to: '/admin/super/users', label: 'Manajemen User', icon: UserCog },
+  { to: '/admin/super/roles', label: 'Roles & Permissions', icon: KeyRound },
+  { to: '/admin/super/facility-managers', label: 'PJ Fasilitas', icon: UserCheck },
+  { to: '/admin/super/workflows', label: 'Approval Workflow', icon: Workflow },
+  { to: '/admin/super/approver-emails', label: 'Email Approver', icon: Mail },
+  { to: '/admin/super/config', label: 'Konfigurasi', icon: Settings },
+];
 
 export default function AdminLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [adminUser, setAdminUser] = useState<any>(null);
   const { user, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
 
   useEffect(() => {
-    const check = async () => {
-      if (user) { const { data } = await supabase.from('admin_users').select('*, roles(name, level)').eq('user_id', user.id).single(); if (data) setAdminUser(data); else navigate('/'); }
+    const fetchAdmin = async () => {
+      if (!user) return;
+      const { data } = await supabase
+        .from('admin_users')
+        .select('id, email, name, role, is_active')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .single();
+      if (data) setAdminUser(data as unknown as AdminUser);
     };
-    check();
-  }, [user, navigate]);
+    fetchAdmin();
+  }, [user]);
 
-  if (!adminUser) return <div className="min-h-screen flex items-center justify-center"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
+  const isSuperAdmin = adminUser?.role === 'superadmin';
 
-  const navItems = [
-    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/admin/borrowings', label: 'Peminjaman', icon: ClipboardList },
-    { to: '/admin/inventory', label: 'Inventaris', icon: Package },
-    { to: '/admin/facilities', label: 'Fasilitas', icon: Building },
-    { to: '/admin/reports', label: 'Laporan', icon: FileText },
-    { to: '/admin/statistics', label: 'Statistik', icon: BarChart3 },
-    { to: '/admin/team', label: 'Tim', icon: Users },
-    { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone },
-    { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare },
-  ];
-  const superItems = [
-    { to: '/admin/super/users', label: 'Manajemen User', icon: UserCog },
-    { to: '/admin/super/roles', label: 'Roles & Permissions', icon: Shield },
-    { to: '/admin/super/facility-managers', label: 'PJ Fasilitas', icon: Users },
-    { to: '/admin/super/workflows', label: 'Approval Workflow', icon: Workflow },
-    { to: '/admin/super/approver-emails', label: 'Email Approver', icon: Mail },
-    { to: '/admin/super/config', label: 'Konfigurasi', icon: Settings },
-  ];
-  const isSuper = adminUser?.role === 'superadmin';
-  const linkCls = ({ isActive }: { isActive: boolean }) => cn('flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors', isActive ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800');
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/auth');
+  };
+
+  const renderNavLink = (item: NavItem, isSuper = false) => {
+    const Icon = item.icon;
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={item.to === '/admin'}
+        onClick={() => setSidebarOpen(false)}
+        className={({ isActive }) =>
+          cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
+            isActive
+              ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md shadow-blue-500/20'
+              : isSuper
+                ? 'text-slate-600 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-600 dark:hover:text-amber-400'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-blue-50 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400'
+          )
+        }
+      >
+        <Icon className="w-5 h-5 flex-shrink-0" />
+        <span>{item.label}</span>
+      </NavLink>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex">
-      <aside className={cn('fixed lg:sticky top-0 left-0 h-screen w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 z-50 transition-transform lg:translate-x-0', sidebarOpen ? 'translate-x-0' : '-translate-x-full')}>
-        <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700"><div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center"><LayoutDashboard className="w-4 h-4 text-white" /></div><span className="font-bold text-slate-900 dark:text-white">{brandConfig.system.name}</span></div><button onClick={() => setSidebarOpen(false)} className="lg:hidden p-1"><X className="w-5 h-5" /></button></div>
-        <nav className="p-3 overflow-y-auto h-[calc(100vh-140px)]"><div className="space-y-1">{navItems.map(i => <NavLink key={i.to} to={i.to} end={i.end} onClick={() => setSidebarOpen(false)} className={linkCls}><i.icon className="w-4 h-4" /> {i.label}</NavLink>)}</div>{isSuper && <div className="mt-6"><p className="text-xs font-semibold text-slate-400 uppercase px-3 mb-2">Super Admin</p><div className="space-y-1">{superItems.map(i => <NavLink key={i.to} to={i.to} onClick={() => setSidebarOpen(false)} className={linkCls}><i.icon className="w-4 h-4" /> {i.label}</NavLink>)}</div></div>}</nav>
-        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-slate-200 dark:border-slate-700"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-sm font-medium text-blue-600">{adminUser?.name?.[0] || 'A'}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-slate-900 dark:text-white truncate">{adminUser?.name || 'Admin'}</p><p className="text-xs text-slate-400 truncate">{adminUser?.email}</p></div></div><button onClick={async () => { await signOut(); navigate('/auth'); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"><LogOut className="w-4 h-4" /> Keluar</button></div>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          'fixed top-0 left-0 z-40 h-full w-72 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transition-transform duration-300 lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        <div className="flex flex-col h-full">
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 px-5 h-16 border-b border-slate-200 dark:border-slate-700">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+              <span className="text-white font-bold">S</span>
+            </div>
+            <div className="min-w-0">
+              <p className="font-bold text-slate-900 dark:text-white text-sm truncate">
+                {brandConfig.system.name}
+              </p>
+              <p className="text-xs text-slate-400">Admin Panel</p>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="ml-auto lg:hidden p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Nav */}
+          <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+            {mainNav.map((item) => renderNavLink(item))}
+
+            {isSuperAdmin && (
+              <>
+                <div className="pt-5 pb-1">
+                  <div className="flex items-center gap-2 px-3 text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                    <ShieldCheck className="w-4 h-4" />
+                    Super Admin
+                  </div>
+                </div>
+                {superNav.map((item) => renderNavLink(item, true))}
+              </>
+            )}
+          </nav>
+
+          {/* User info */}
+          <div className="border-t border-slate-200 dark:border-slate-700 p-3">
+            <div className="flex items-center gap-3 px-2 py-2 mb-2">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                {(adminUser?.name || user?.email || 'A').charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                  {adminUser?.name || user?.email}
+                </p>
+                <p className="text-xs text-slate-400 truncate">
+                  {adminUser?.role || 'admin'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-red-500 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Keluar
+            </button>
+          </div>
+        </div>
       </aside>
-      {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-      <div className="flex-1 min-w-0">
-        <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between"><button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><Menu className="w-5 h-5" /></button><div className="flex items-center gap-2 ml-auto"><button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">{theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}</button><button className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 relative"><Bell className="w-5 h-5" /><span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" /></button></div></header>
-        <main className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto"><Outlet /></main>
+
+      {/* Main content */}
+      <div className="lg:pl-72">
+        {/* Header */}
+        <header className="sticky top-0 z-20 h-16 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-4 sm:px-6">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="lg:hidden p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="hidden lg:block">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+              Admin Panel
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={toggle}
+              className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            >
+              {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+            </button>
+            <div className="text-sm text-slate-500 dark:text-slate-400 hidden sm:block">
+              {adminUser?.email || user?.email}
+            </div>
+          </div>
+        </header>
+
+        {/* Page content */}
+        <main className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+          <Outlet />
+        </main>
       </div>
     </div>
   );

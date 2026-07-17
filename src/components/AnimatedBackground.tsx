@@ -1,3 +1,9 @@
 export default function AnimatedBackground() {
-  return <div className="fixed inset-0 pointer-events-none z-0"><div className="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-blue-400/10 to-cyan-400/10 rounded-full blur-3xl" /><div className="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-br from-cyan-400/10 to-blue-400/10 rounded-full blur-3xl" /></div>;
+  return (
+    <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+      <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-blue-200/30 dark:bg-blue-900/10 blur-3xl animate-pulse" />
+      <div className="absolute top-1/2 -left-40 w-96 h-96 rounded-full bg-cyan-200/30 dark:bg-cyan-900/10 blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+      <div className="absolute -bottom-40 right-1/3 w-96 h-96 rounded-full bg-blue-100/20 dark:bg-blue-800/5 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
+    </div>
+  );
 }
