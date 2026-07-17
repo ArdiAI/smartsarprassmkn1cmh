@@ -1,443 +1,161 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
-import {
-  Building2,
-  UserCog,
-  Plus,
-  Pencil,
-  Trash2,
-  X,
-  Loader2,
-  RefreshCw,
-  Star,
-  CheckCircle2,
-} from 'lucide-react';
+import { Plus, Pencil, Trash2, Star, Loader2, X } from 'lucide-react';
 
-// ---- Types matching DB schema ----
 interface FacilityManager {
   id: string;
-  facility_id: string;
-  admin_user_id: string;
+  facility_id: string | null;
+  admin_user_id: string | null;
   is_primary: boolean | null;
   notes: string | null;
-  assigned_at: string | null;
+  assigned_at: string;
 }
 
-interface Facility {
-  id: string;
-  name: string;
-  location: string | null;
-}
+interface Facility { id: string; name: string }
+interface AdminUser { id: string; email: string; name: string | null }
 
-interface AdminUser {
-  id: string;
-  email: string | null;
-  name: string | null;
-}
-
-interface FacilityManagerRow extends FacilityManager {
-  facility_name: string;
-  facility_location: string;
-  admin_name: string;
-  admin_email: string;
-}
-
-type ManagerForm = {
-  facility_id: string;
-  admin_user_id: string;
-  is_primary: boolean;
-  notes: string;
-};
-
-const EMPTY_FORM: ManagerForm = {
-  facility_id: '',
-  admin_user_id: '',
-  is_primary: false,
-  notes: '',
-};
+const emptyForm = { facility_id: '', admin_user_id: '', is_primary: false, notes: '' };
 
 export default function FacilityManagersPage() {
-  const [managers, setManagers] = useState<FacilityManagerRow[]>([]);
+  const [managers, setManagers] = useState<FacilityManager[]>([]);
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<FacilityManagerRow | null>(null);
-  const [form, setForm] = useState<ManagerForm>(EMPTY_FORM);
+  const [editing, setEditing] = useState<FacilityManager | null>(null);
+  const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const fetchData = async () => {
     setLoading(true);
-    try {
-      const [mgrRes, facRes, adminRes] = await Promise.all([
-        supabase.from('facility_managers').select('*'),
-        supabase.from('facilities').select('id, name, location').order('name', { ascending: true }),
-        supabase
-          .from('admin_users')
-          .select('id, email, name')
-          .eq('is_active', true)
-          .order('name', { ascending: true }),
-      ]);
-
-      if (mgrRes.error) throw mgrRes.error;
-      if (facRes.error) throw facRes.error;
-      if (adminRes.error) throw adminRes.error;
-
-      const mgrs = (mgrRes.data ?? []) as unknown as FacilityManager[];
-      const facs = (facRes.data ?? []) as unknown as Facility[];
-      const admns = (adminRes.data ?? []) as unknown as AdminUser[];
-
-      const facMap = new Map(facs.map(f => [f.id, f]));
-      const adminMap = new Map(admns.map(a => [a.id, a]));
-
-      const rows: FacilityManagerRow[] = mgrs.map(m => {
-        const f = facMap.get(m.facility_id);
-        const a = adminMap.get(m.admin_user_id);
-        return {
-          ...m,
-          facility_name: f?.name ?? 'Unknown Facility',
-          facility_location: f?.location ?? '',
-          admin_name: a?.name ?? 'Unknown Admin',
-          admin_email: a?.email ?? '',
-        };
-      });
-
-      rows.sort((x, y) => x.facility_name.localeCompare(y.facility_name));
-
-      setManagers(rows);
-      setFacilities(facs);
-      setAdmins(admns);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load data';
-      showToast(msg, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const openAdd = () => {
-    setEditing(null);
-    setForm(EMPTY_FORM);
-    setShowModal(true);
+    const [{ data: mgrData }, { data: facData }, { data: admData }] = await Promise.all([
+      supabase.from('facility_managers').select('*').order('assigned_at', { ascending: false }),
+      supabase.from('facilities').select('id, name').order('name', { ascending: true }),
+      supabase.from('admin_users').select('id, email, name').eq('is_active', true).order('email', { ascending: true }),
+    ]);
+    setManagers((mgrData as unknown as FacilityManager[]) || []);
+    setFacilities((facData as unknown as Facility[]) || []);
+    setAdmins((admData as unknown as AdminUser[]) || []);
+    setLoading(false);
   };
 
-  const openEdit = (row: FacilityManagerRow) => {
-    setEditing(row);
-    setForm({
-      facility_id: row.facility_id,
-      admin_user_id: row.admin_user_id,
-      is_primary: row.is_primary === true,
-      notes: row.notes ?? '',
-    });
-    setShowModal(true);
+  useEffect(() => { fetchData(); }, []);
+
+  const facilityName = (id: string | null) => facilities.find(f => f.id === id)?.name ?? '-';
+  const adminName = (id: string | null) => {
+    const a = admins.find(x => x.id === id);
+    return a ? (a.name || a.email) : '-';
   };
 
-  const closeModal = () => {
-    setShowModal(false);
-    setEditing(null);
-    setForm(EMPTY_FORM);
+  const openAdd = () => { setEditing(null); setForm(emptyForm); setShowModal(true); };
+  const openEdit = (m: FacilityManager) => {
+    setEditing(m);
+    setForm({ facility_id: m.facility_id ?? '', admin_user_id: m.admin_user_id ?? '', is_primary: m.is_primary ?? false, notes: m.notes ?? '' });
+    setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!form.facility_id) {
-      showToast('Please select a facility', 'warning');
-      return;
-    }
-    if (!form.admin_user_id) {
-      showToast('Please select an admin user', 'warning');
-      return;
-    }
+    if (!form.facility_id || !form.admin_user_id) { showToast('Fasilitas dan admin wajib dipilih', 'error'); return; }
     setSaving(true);
-    try {
-      const payload = {
-        facility_id: form.facility_id,
-        admin_user_id: form.admin_user_id,
-        is_primary: form.is_primary,
-        notes: form.notes.trim() || null,
-      };
-
-      if (editing) {
-        const { error } = await supabase
-          .from('facility_managers')
-          .update(payload)
-          .eq('id', editing.id);
-        if (error) throw error;
-        showToast('Assignment updated', 'success');
-      } else {
-        const { error } = await supabase.from('facility_managers').insert(payload);
-        if (error) throw error;
-        showToast('Manager assigned', 'success');
-      }
-      closeModal();
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to save assignment';
-      showToast(msg, 'error');
-    } finally {
-      setSaving(false);
+    const payload = {
+      facility_id: form.facility_id,
+      admin_user_id: form.admin_user_id,
+      is_primary: form.is_primary,
+      notes: form.notes.trim() || null,
+    };
+    if (editing) {
+      const { error } = await supabase.from('facility_managers').update(payload).eq('id', editing.id);
+      if (error) { showToast('Gagal memperbarui: ' + error.message, 'error'); }
+      else { showToast('PJ Fasilitas diperbarui', 'success'); setShowModal(false); fetchData(); }
+    } else {
+      const { error } = await supabase.from('facility_managers').insert(payload);
+      if (error) { showToast('Gagal menambah: ' + error.message, 'error'); }
+      else { showToast('PJ Fasilitas ditambahkan', 'success'); setShowModal(false); fetchData(); }
     }
+    setSaving(false);
   };
 
-  const handleDelete = async (row: FacilityManagerRow) => {
-    if (!confirm(`Remove ${row.admin_name} from ${row.facility_name}?`)) return;
-    setDeletingId(row.id);
-    try {
-      const { error } = await supabase.from('facility_managers').delete().eq('id', row.id);
-      if (error) throw error;
-      showToast('Assignment removed', 'success');
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to remove assignment';
-      showToast(msg, 'error');
-    } finally {
-      setDeletingId(null);
-    }
+  const handleDelete = async (id: string) => {
+    if (!confirm('Hapus PJ fasilitas ini?')) return;
+    const { error } = await supabase.from('facility_managers').delete().eq('id', id);
+    if (error) { showToast('Gagal menghapus', 'error'); }
+    else { showToast('PJ Fasilitas dihapus', 'success'); fetchData(); }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <UserCog className="w-6 h-6 text-blue-500" />
-            Facility Managers
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Assign admin users to manage facilities
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">PJ Fasilitas</h1>
+          <p className="text-sm text-slate-500 mt-1">Kelola penanggung jawab fasilitas</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadData}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
-          </button>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Assign Manager
-          </button>
-        </div>
+        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors">
+          <Plus className="w-4 h-4" /> Tambah PJ
+        </button>
       </div>
 
-      {/* List */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          </div>
-        ) : managers.length === 0 ? (
-          <div className="text-center py-16">
-            <UserCog className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-            <p className="text-slate-500 dark:text-slate-400 font-medium">No facility managers assigned</p>
-            <p className="text-sm text-slate-400 mt-1">Assign an admin to a facility to get started</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {managers.map(row => (
-              <div
-                key={row.id}
-                className="flex flex-col md:flex-row md:items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-              >
-                {/* Facility */}
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
-                    <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-slate-900 dark:text-white truncate">
-                      {row.facility_name}
-                    </p>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 truncate">
-                      {row.facility_location || 'No location'}
-                    </p>
-                  </div>
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>
+      ) : managers.length === 0 ? (
+        <div className="text-center py-12 text-slate-400">Belum ada PJ fasilitas</div>
+      ) : (
+        <div className="space-y-3">
+          {managers.map(m => (
+            <div key={m.id} className="card p-4 flex items-center gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-slate-900 dark:text-white">{facilityName(m.facility_id)}</p>
+                  {m.is_primary && <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600"><Star className="w-3 h-3" /> Utama</span>}
                 </div>
-
-                {/* Manager */}
-                <div className="flex items-center gap-3 md:w-64 min-w-0">
-                  <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center flex-shrink-0">
-                    <UserCog className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                      {row.admin_name}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                      {row.admin_email || '—'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Primary badge */}
-                <div className="md:w-24 flex justify-start md:justify-center">
-                  {row.is_primary ? (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400">
-                      <Star className="w-3 h-3 fill-current" />
-                      Primary
-                    </span>
-                  ) : (
-                    <span className="text-xs text-slate-400">Secondary</span>
-                  )}
-                </div>
-
-                {/* Notes */}
-                {row.notes && (
-                  <div className="md:flex-1 hidden md:block min-w-0">
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate italic">
-                      "{row.notes}"
-                    </p>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => openEdit(row)}
-                    className="p-2 rounded-xl text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                    title="Edit"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(row)}
-                    disabled={deletingId === row.id}
-                    className="p-2 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                    title="Remove"
-                  >
-                    {deletingId === row.id ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
+                <p className="text-sm text-slate-500">{adminName(m.admin_user_id)}</p>
+                {m.notes && <p className="text-xs text-slate-400 mt-1">{m.notes}</p>}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6 shadow-xl border border-slate-200 dark:border-slate-700 animate-slide-up max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {editing ? 'Edit Assignment' : 'Assign Manager'}
-              </h2>
-              <button
-                onClick={closeModal}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <button onClick={() => openEdit(m)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><Pencil className="w-4 h-4 text-slate-500" /></button>
+              <button onClick={() => handleDelete(m.id)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 className="w-4 h-4 text-red-500" /></button>
             </div>
+          ))}
+        </div>
+      )}
 
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{editing ? 'Edit PJ' : 'Tambah PJ'}</h2>
+              <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Facility *
-                </label>
-                <select
-                  value={form.facility_id}
-                  onChange={e => setForm(f => ({ ...f, facility_id: e.target.value }))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                >
-                  <option value="">— Select facility —</option>
-                  {facilities.map(f => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                      {f.location ? ` — ${f.location}` : ''}
-                    </option>
-                  ))}
+                <label className="label">Fasilitas</label>
+                <select value={form.facility_id} onChange={e => setForm({ ...form, facility_id: e.target.value })} className="input">
+                  <option value="">Pilih fasilitas...</option>
+                  {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                 </select>
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Admin User *
-                </label>
-                <select
-                  value={form.admin_user_id}
-                  onChange={e => setForm(f => ({ ...f, admin_user_id: e.target.value }))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                >
-                  <option value="">— Select admin —</option>
-                  {admins.map(a => (
-                    <option key={a.id} value={a.id}>
-                      {a.name ?? 'Unnamed'}
-                      {a.email ? ` (${a.email})` : ''}
-                    </option>
-                  ))}
+                <label className="label">Admin</label>
+                <select value={form.admin_user_id} onChange={e => setForm({ ...form, admin_user_id: e.target.value })} className="input">
+                  <option value="">Pilih admin...</option>
+                  {admins.map(a => <option key={a.id} value={a.id}>{a.name || a.email}</option>)}
                 </select>
               </div>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={form.is_primary}
-                  onClick={() => setForm(f => ({ ...f, is_primary: !f.is_primary }))}
-                  className={cn(
-                    'relative w-11 h-6 rounded-full transition-colors',
-                    form.is_primary ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform',
-                      form.is_primary && 'translate-x-5'
-                    )}
-                  />
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.is_primary} onChange={e => setForm({ ...form, is_primary: e.target.checked })} className="w-4 h-4 rounded text-blue-500" />
+                  <span className="text-sm text-slate-700 dark:text-slate-300">PJ Utama</span>
+                </label>
+              </div>
+              <div>
+                <label className="label">Catatan</label>
+                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="input" rows={3} placeholder="Catatan tambahan" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowModal(false)} className="btn-secondary flex-1">Batal</button>
+                <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Simpan'}
                 </button>
-                <span className="text-sm text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Star className="w-4 h-4 text-amber-500" />
-                  Primary manager
-                </span>
-              </label>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Notes
-                </label>
-                <textarea
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  placeholder="Optional notes about this assignment..."
-                  rows={3}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-                />
               </div>
-            </div>
-
-            <div className="flex justify-end gap-2 mt-6">
-              <button
-                onClick={closeModal}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
-              >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {editing ? 'Save Changes' : 'Assign'}
-              </button>
             </div>
           </div>
         </div>

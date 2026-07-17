@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react';
-import {
-  Users, Plus, Pencil, Trash2, X, Loader2, AlertCircle, Mail, Phone,
-} from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
+import { showToast } from '../../components/Toast';
+import {
+  Users,
+  Plus,
+  Pencil,
+  Trash2,
+  X,
+  Loader2,
+  Mail,
+  Phone,
+} from 'lucide-react';
 
 interface TeamMember {
   id: string;
@@ -15,13 +22,12 @@ interface TeamMember {
   description: string | null;
   email: string | null;
   phone: string | null;
-  order: number | null;
-  is_active: boolean | null;
+  order: number;
+  is_active: boolean;
   created_at: string;
 }
 
 interface FormData {
-  id?: string;
   name: string;
   position: string;
   role: string;
@@ -41,7 +47,7 @@ const emptyForm: FormData = {
   description: '',
   email: '',
   phone: '',
-  order: '',
+  order: '0',
   is_active: true,
 };
 
@@ -49,40 +55,38 @@ export default function TeamAdminPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<TeamMember | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchMembers();
+  const fetchMembers = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('team_members')
+      .select('*')
+      .order('order', { ascending: true });
+    if (error) {
+      showToast('Gagal memuat data tim', 'error');
+    } else {
+      setMembers((data as unknown as TeamMember[]) || []);
+    }
+    setLoading(false);
   }, []);
 
-  async function fetchMembers() {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('team_members')
-        .select('*')
-        .order('order', { ascending: true });
+  useEffect(() => {
+    fetchMembers();
+  }, [fetchMembers]);
 
-      if (error) throw error;
-      setMembers((data as unknown as TeamMember[]) || []);
-    } catch (err) {
-      console.error('Fetch team error:', err);
-      showToast('Gagal memuat data tim', 'error');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function openAdd() {
+  const openAdd = () => {
+    setEditing(null);
     setForm({ ...emptyForm, order: String(members.length) });
     setModalOpen(true);
-  }
+  };
 
-  function openEdit(m: TeamMember) {
+  const openEdit = (m: TeamMember) => {
+    setEditing(m);
     setForm({
-      id: m.id,
       name: m.name ?? '',
       position: m.position ?? '',
       role: m.role ?? '',
@@ -90,13 +94,13 @@ export default function TeamAdminPage() {
       description: m.description ?? '',
       email: m.email ?? '',
       phone: m.phone ?? '',
-      order: String(m.order ?? ''),
+      order: String(m.order ?? 0),
       is_active: m.is_active ?? true,
     });
     setModalOpen(true);
-  }
+  };
 
-  async function handleSave() {
+  const handleSave = async () => {
     if (!form.name.trim()) {
       showToast('Nama wajib diisi', 'warning');
       return;
@@ -115,8 +119,8 @@ export default function TeamAdminPage() {
         is_active: form.is_active,
       };
 
-      if (form.id) {
-        const { error } = await supabase.from('team_members').update(payload).eq('id', form.id);
+      if (editing) {
+        const { error } = await supabase.from('team_members').update(payload).eq('id', editing.id);
         if (error) throw error;
         showToast('Anggota tim diperbarui', 'success');
       } else {
@@ -126,142 +130,152 @@ export default function TeamAdminPage() {
       }
       setModalOpen(false);
       await fetchMembers();
-    } catch (err) {
-      console.error('Save error:', err);
+    } catch {
       showToast('Gagal menyimpan anggota tim', 'error');
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function handleDelete() {
+  const handleDelete = async () => {
     if (!deleteId) return;
-    setSaving(true);
     try {
       const { error } = await supabase.from('team_members').delete().eq('id', deleteId);
       if (error) throw error;
       showToast('Anggota tim dihapus', 'success');
       setDeleteId(null);
       await fetchMembers();
-    } catch (err) {
-      console.error('Delete error:', err);
+    } catch {
       showToast('Gagal menghapus anggota tim', 'error');
-    } finally {
-      setSaving(false);
     }
-  }
+  };
 
-  async function toggleActive(m: TeamMember) {
+  const toggleActive = async (m: TeamMember) => {
     try {
       const { error } = await supabase
         .from('team_members')
         .update({ is_active: !m.is_active })
         .eq('id', m.id);
       if (error) throw error;
-      showToast(`Anggota ${!m.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+      showToast(m.is_active ? 'Anggota dinonaktifkan' : 'Anggota diaktifkan', 'success');
       await fetchMembers();
-    } catch (err) {
-      console.error('Toggle error:', err);
+    } catch {
       showToast('Gagal mengubah status', 'error');
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim SARPRAS</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim</p>
         </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-medium hover:shadow-lg hover:shadow-blue-500/20 transition-all"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          <span>Tambah Anggota</span>
+          Tambah
         </button>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
         </div>
       ) : members.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-12 text-center">
           <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada anggota tim</p>
+          <p className="text-slate-500 dark:text-slate-400">Belum ada anggota tim</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {members.map((m) => (
+          {members.map(m => (
             <div
               key={m.id}
-              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5"
+              className={cn(
+                'bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm p-5',
+                !m.is_active && 'opacity-60'
+              )}
             >
               <div className="flex items-start gap-3">
-                {m.photo_url ? (
-                  <img src={m.photo_url} alt={m.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
-                ) : (
-                  <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center flex-shrink-0">
-                    <span className="text-white font-bold text-lg">{(m.name ?? 'A').charAt(0).toUpperCase()}</span>
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{m.name}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{m.position ?? '-'}</p>
-                  {m.role && (
-                    <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-medium">
-                      {m.role}
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {m.photo_url ? (
+                    <img src={m.photo_url} alt={m.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-white font-bold text-xl">
+                      {m.name?.charAt(0).toUpperCase() ?? '?'}
                     </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-slate-900 dark:text-white text-sm truncate">{m.name}</h3>
+                    <span
+                      className={cn(
+                        'px-2 py-0.5 rounded-lg text-xs font-medium flex-shrink-0',
+                        m.is_active
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
+                      )}
+                    >
+                      {m.is_active ? 'Aktif' : 'Nonaktif'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-blue-500 dark:text-blue-400 truncate">{m.position ?? '—'}</p>
+                  {m.role && (
+                    <p className="text-xs text-slate-400 truncate">{m.role}</p>
                   )}
                 </div>
               </div>
 
               {m.description && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{m.description}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{m.description}</p>
               )}
 
-              <div className="space-y-1 mt-3 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex flex-wrap gap-3 mt-3 text-xs text-slate-400">
                 {m.email && (
-                  <div className="flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="truncate">{m.email}</span>
-                  </div>
+                  <span className="flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5" />
+                    <span className="truncate max-w-[120px]">{m.email}</span>
+                  </span>
                 )}
                 {m.phone && (
-                  <div className="flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>{m.phone}</span>
-                  </div>
+                  <span className="flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5" />
+                    {m.phone}
+                  </span>
                 )}
+                <span className="text-slate-300">Urutan: {m.order}</span>
               </div>
 
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/50">
+                <button
+                  onClick={() => openEdit(m)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
+                </button>
                 <button
                   onClick={() => toggleActive(m)}
                   className={cn(
-                    'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors',
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
                     m.is_active
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50'
+                      : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50'
                   )}
                 >
-                  {m.is_active ? 'Aktif' : 'Nonaktif'}
+                  {m.is_active ? 'Nonaktifkan' : 'Aktifkan'}
                 </button>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => openEdit(m)}
-                    className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setDeleteId(m.id)}
-                    className="p-1.5 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => setDeleteId(m.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Hapus
+                </button>
               </div>
             </div>
           ))}
@@ -270,151 +284,143 @@ export default function TeamAdminPage() {
 
       {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900">
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {form.id ? 'Edit Anggota' : 'Tambah Anggota'}
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-slate-900 dark:text-white">
+                {editing ? 'Edit Anggota Tim' : 'Tambah Anggota Tim'}
               </h3>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Nama *</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Nama *</label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Jabatan</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Jabatan</label>
                   <input
                     type="text"
                     value={form.position}
-                    onChange={(e) => setForm({ ...form, position: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    onChange={e => setForm({ ...form, position: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Peran</label>
+                  <input
+                    type="text"
+                    value={form.role}
+                    onChange={e => setForm({ ...form, role: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-sm text-slate-600 dark:text-slate-300">Role</label>
-                <input
-                  type="text"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-slate-600 dark:text-slate-300">URL Foto</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-200">URL Foto</label>
                 <input
                   type="text"
                   value={form.photo_url}
-                  onChange={(e) => setForm({ ...form, photo_url: e.target.value })}
-                  placeholder="https://..."
-                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={e => setForm({ ...form, photo_url: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-600 dark:text-slate-300">Deskripsi</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  rows={2}
-                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={e => setForm({ ...form, description: e.target.value })}
+                  rows={3}
+                  className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Email</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Email</label>
                   <input
                     type="email"
                     value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    onChange={e => setForm({ ...form, email: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Telepon</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Telepon</label>
                   <input
                     type="text"
                     value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    onChange={e => setForm({ ...form, phone: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Urutan (order)</label>
-                  <input
-                    type="number"
-                    value={form.order}
-                    onChange={(e) => setForm({ ...form, order: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-slate-600 dark:text-slate-300">Status</label>
-                  <select
-                    value={String(form.is_active)}
-                    onChange={(e) => setForm({ ...form, is_active: e.target.value === 'true' })}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="true">Aktif</option>
-                    <option value="false">Nonaktif</option>
-                  </select>
-                </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Urutan</label>
+                <input
+                  type="number"
+                  value={form.order}
+                  onChange={e => setForm({ ...form, order: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
               </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.is_active}
+                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
+                  className="w-4 h-4 rounded text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-slate-700 dark:text-slate-200">Aktif</span>
+              </label>
             </div>
-            <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-800 sticky bottom-0 bg-white dark:bg-slate-900">
+            <div className="flex gap-2 mt-5">
               <button
                 onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-700"
               >
                 Batal
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:shadow-lg disabled:opacity-50 transition-all"
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 disabled:opacity-50"
               >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>Simpan</span>
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Simpan
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete confirmation */}
+      {/* Delete confirm */}
       {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full">
             <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle className="w-6 h-6 text-red-500" />
+              <Trash2 className="w-6 h-6 text-red-500" />
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">Hapus Anggota?</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">Tindakan ini tidak dapat dibatalkan.</p>
-            <div className="flex items-center justify-center gap-2">
+            <p className="text-center text-slate-700 dark:text-slate-200 mb-5">Hapus anggota tim ini?</p>
+            <div className="flex gap-2">
               <button
                 onClick={() => setDeleteId(null)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-700"
               >
                 Batal
               </button>
               <button
                 onClick={handleDelete}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600"
               >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>Hapus</span>
+                Hapus
               </button>
             </div>
           </div>

@@ -1,404 +1,174 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
-import {
-  Users,
-  Search,
-  Plus,
-  Trash2,
-  Loader2,
-  Shield,
-  ShieldCheck,
-  ShieldX,
-  Mail,
-  UserCircle,
-  RefreshCw,
-} from 'lucide-react';
+import { Search, UserPlus, Trash2, ToggleLeft, ToggleRight, Shield, Loader2 } from 'lucide-react';
 
-// ---- Types matching DB schema ----
 interface AdminUser {
   id: string;
   user_id: string | null;
-  email: string | null;
+  email: string;
   name: string | null;
   role: string | null;
   is_active: boolean | null;
-  created_at: string | null;
+  created_at: string;
 }
 
 interface Role {
   id: string;
   name: string;
-  description: string | null;
   level: number | null;
   is_system: boolean | null;
   is_active: boolean | null;
 }
 
-type NewAdminForm = {
-  email: string;
-  name: string;
-  role: string;
-};
-
 export default function UserManagementPage() {
-  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [form, setForm] = useState<NewAdminForm>({ email: '', name: '', role: '' });
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newRole, setNewRole] = useState('');
+  const [adding, setAdding] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const fetchData = async () => {
     setLoading(true);
-    try {
-      const [usersRes, rolesRes] = await Promise.all([
-        supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
-        supabase.from('roles').select('*').order('level', { ascending: true }),
-      ]);
+    const [{ data: adminData }, { data: roleData }] = await Promise.all([
+      supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
+      supabase.from('roles').select('*').order('level', { ascending: true }),
+    ]);
+    setAdmins((adminData as unknown as AdminUser[]) || []);
+    setRoles((roleData as unknown as Role[]) || []);
+    setLoading(false);
+  };
 
-      if (usersRes.error) throw usersRes.error;
-      if (rolesRes.error) throw rolesRes.error;
-
-      setAdminUsers((usersRes.data ?? []) as unknown as AdminUser[]);
-      setRoles((rolesRes.data ?? []) as unknown as Role[]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load data';
-      showToast(msg, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const filtered = adminUsers.filter(u => {
-    const q = search.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      (u.email ?? '').toLowerCase().includes(q) ||
-      (u.name ?? '').toLowerCase().includes(q) ||
-      (u.role ?? '').toLowerCase().includes(q)
-    );
-  });
+  useEffect(() => { fetchData(); }, []);
 
   const handleAdd = async () => {
-    if (!form.email.trim()) {
-      showToast('Email is required', 'warning');
-      return;
+    if (!newEmail.trim()) { showToast('Email wajib diisi', 'error'); return; }
+    setAdding(true);
+    const { data: existing } = await supabase.from('admin_users').select('id').eq('email', newEmail.trim()).single();
+    if (existing) { showToast('Admin dengan email ini sudah ada', 'error'); setAdding(false); return; }
+    const { error } = await supabase.from('admin_users').insert({
+      email: newEmail.trim(),
+      name: newName.trim() || null,
+      role: newRole || 'admin',
+      is_active: true,
+    });
+    if (error) { showToast('Gagal menambah admin: ' + error.message, 'error'); }
+    else {
+      showToast('Admin berhasil ditambahkan', 'success');
+      setShowAdd(false); setNewEmail(''); setNewName(''); setNewRole('');
+      fetchData();
     }
-    setSaving(true);
-    try {
-      const payload = {
-        email: form.email.trim(),
-        name: form.name.trim() || null,
-        role: form.role || null,
-        user_id: null,
-        is_active: true,
-      };
-      const { error } = await supabase.from('admin_users').insert(payload);
-      if (error) throw error;
-      showToast('Admin user added', 'success');
-      setForm({ email: '', name: '', role: '' });
-      setShowAdd(false);
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to add admin';
-      showToast(msg, 'error');
-    } finally {
-      setSaving(false);
-    }
+    setAdding(false);
   };
 
   const handleRemove = async (id: string) => {
-    if (!confirm('Remove this admin user? This cannot be undone.')) return;
-    setUpdatingId(id);
-    try {
-      const { error } = await supabase.from('admin_users').delete().eq('id', id);
-      if (error) throw error;
-      showToast('Admin user removed', 'success');
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to remove admin';
-      showToast(msg, 'error');
-    } finally {
-      setUpdatingId(null);
-    }
+    if (!confirm('Hapus admin ini?')) return;
+    const { error } = await supabase.from('admin_users').delete().eq('id', id);
+    if (error) { showToast('Gagal menghapus: ' + error.message, 'error'); }
+    else { showToast('Admin dihapus', 'success'); fetchData(); }
   };
 
-  const handleRoleChange = async (id: string, role: string) => {
-    setUpdatingId(id);
-    try {
-      const { error } = await supabase.from('admin_users').update({ role }).eq('id', id);
-      if (error) throw error;
-      showToast('Role updated', 'success');
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to update role';
-      showToast(msg, 'error');
-    } finally {
-      setUpdatingId(null);
-    }
+  const handleToggle = async (admin: AdminUser) => {
+    const { error } = await supabase.from('admin_users').update({ is_active: !admin.is_active }).eq('id', admin.id);
+    if (error) { showToast('Gagal mengubah status', 'error'); }
+    else { showToast('Status diperbarui', 'success'); fetchData(); }
   };
 
-  const handleToggleActive = async (user: AdminUser) => {
-    setUpdatingId(user.id);
-    try {
-      const { error } = await supabase
-        .from('admin_users')
-        .update({ is_active: !user.is_active })
-        .eq('id', user.id);
-      if (error) throw error;
-      showToast(`User ${!user.is_active ? 'activated' : 'deactivated'}`, 'success');
-      loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to toggle status';
-      showToast(msg, 'error');
-    } finally {
-      setUpdatingId(null);
-    }
+  const handleRoleChange = async (admin: AdminUser, role: string) => {
+    const { error } = await supabase.from('admin_users').update({ role }).eq('id', admin.id);
+    if (error) { showToast('Gagal mengubah role', 'error'); }
+    else { showToast('Role diperbarui', 'success'); fetchData(); }
   };
 
-  const activeRoles = roles.filter(r => r.is_active !== false);
+  const filtered = admins.filter(a =>
+    a.email.toLowerCase().includes(search.toLowerCase()) ||
+    (a.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (a.role ?? '').toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Users className="w-6 h-6 text-blue-500" />
-            User Management
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Manage admin users, roles, and access status
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Manajemen User</h1>
+          <p className="text-sm text-slate-500 mt-1">Kelola admin dan role pengguna</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadData}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
-          </button>
-          <button
-            onClick={() => setShowAdd(s => !s)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Add Admin
-          </button>
-        </div>
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors">
+          <UserPlus className="w-4 h-4" /> Tambah Admin
+        </button>
       </div>
 
-      {/* Add form */}
-      {showAdd && (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm animate-slide-up">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 flex items-center gap-2">
-            <UserCircle className="w-4 h-4 text-blue-500" />
-            Add New Admin User
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                Email *
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  placeholder="admin@example.com"
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+      <div className="mb-4 relative">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari admin..." className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none" />
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12 text-slate-400">Tidak ada admin ditemukan</div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(admin => (
+            <div key={admin.id} className="card p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                <Shield className="w-5 h-5 text-blue-500" />
               </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                Name
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="Full name"
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                Role
-              </label>
-              <select
-                value={form.role}
-                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-              >
-                <option value="">— No role —</option>
-                {activeRoles.map(r => (
-                  <option key={r.id} value={r.name}>
-                    {r.name}
-                    {r.level != null ? ` (L${r.level})` : ''}
-                  </option>
-                ))}
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-slate-900 dark:text-white truncate">{admin.name || admin.email}</p>
+                <p className="text-sm text-slate-500 truncate">{admin.email}</p>
+              </div>
+              <select value={admin.role ?? 'admin'} onChange={e => handleRoleChange(admin, e.target.value)} className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                <option value="admin">Admin</option>
+                <option value="superadmin">Super Admin</option>
+                {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
               </select>
+              <button onClick={() => handleToggle(admin)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
+                {admin.is_active ? <ToggleRight className="w-6 h-6 text-emerald-500" /> : <ToggleLeft className="w-6 h-6 text-slate-400" />}
+              </button>
+              <button onClick={() => handleRemove(admin.id)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </button>
             </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <button
-              onClick={() => {
-                setShowAdd(false);
-                setForm({ email: '', name: '', role: '' });
-              }}
-              className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleAdd}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Save Admin
-            </button>
-          </div>
+          ))}
         </div>
       )}
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name, email, or role..."
-          className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        />
-      </div>
-
-      {/* List */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowAdd(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Tambah Admin</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="label">Email</label>
+                <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="admin@example.com" className="input" />
+              </div>
+              <div>
+                <label className="label">Nama</label>
+                <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nama lengkap" className="input" />
+              </div>
+              <div>
+                <label className="label">Role</label>
+                <select value={newRole} onChange={e => setNewRole(e.target.value)} className="input">
+                  <option value="">Pilih role...</option>
+                  <option value="admin">Admin</option>
+                  <option value="superadmin">Super Admin</option>
+                  {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowAdd(false)} className="btn-secondary flex-1">Batal</button>
+                <button onClick={handleAdd} disabled={adding} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                  {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Tambah'}
+                </button>
+              </div>
+            </div>
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-16">
-            <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-            <p className="text-slate-500 dark:text-slate-400 font-medium">No admin users found</p>
-            <p className="text-sm text-slate-400 mt-1">
-              {search ? 'Try a different search term' : 'Add your first admin user to get started'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {filtered.map(user => {
-              const isUpdating = updatingId === user.id;
-              return (
-                <div
-                  key={user.id}
-                  className="flex flex-col md:flex-row md:items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-                >
-                  {/* Avatar + name/email */}
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div
-                      className={cn(
-                        'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0',
-                        user.is_active
-                          ? 'bg-blue-100 dark:bg-blue-900/30'
-                          : 'bg-slate-100 dark:bg-slate-700/50'
-                      )}
-                    >
-                      <Shield
-                        className={cn(
-                          'w-5 h-5',
-                          user.is_active
-                            ? 'text-blue-600 dark:text-blue-400'
-                            : 'text-slate-400'
-                        )}
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-slate-900 dark:text-white truncate">
-                        {user.name ?? 'Unnamed'}
-                      </p>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 truncate">
-                        {user.email ?? '—'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Role select */}
-                  <div className="md:w-52">
-                    <select
-                      value={user.role ?? ''}
-                      onChange={e => handleRoleChange(user.id, e.target.value)}
-                      disabled={isUpdating}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
-                    >
-                      <option value="">— No role —</option>
-                      {activeRoles.map(r => (
-                        <option key={r.id} value={r.name}>
-                          {r.name}
-                          {r.level != null ? ` (L${r.level})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Status + actions */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleToggleActive(user)}
-                      disabled={isUpdating}
-                      className={cn(
-                        'flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors disabled:opacity-50',
-                        user.is_active
-                          ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
-                          : 'bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                      )}
-                    >
-                      {user.is_active ? (
-                        <ShieldCheck className="w-4 h-4" />
-                      ) : (
-                        <ShieldX className="w-4 h-4" />
-                      )}
-                      {user.is_active ? 'Active' : 'Inactive'}
-                    </button>
-                    <button
-                      onClick={() => handleRemove(user.id)}
-                      disabled={isUpdating}
-                      className="p-2 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                      title="Remove admin"
-                    >
-                      {isUpdating ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Footer count */}
-      {!loading && filtered.length > 0 && (
-        <p className="text-xs text-slate-400 dark:text-slate-500 text-center">
-          Showing {filtered.length} of {adminUsers.length} admin users
-        </p>
+        </div>
       )}
     </div>
   );

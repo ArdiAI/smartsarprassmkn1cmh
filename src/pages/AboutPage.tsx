@@ -1,109 +1,140 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Info, Users, Target, Eye, Award, Calendar, Phone, Mail,
-  Building2, ShieldCheck, Zap, ClipboardList, BarChart3, Loader2, Sparkles
+  Info, Target, Eye, Users, Mail, Phone, Calendar, Building2,
+  Sparkles, ShieldCheck, Boxes, ClipboardList, BarChart3, Loader2,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
-import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
+
+interface TeamMember {
+  id: string;
+  name: string;
+  position: string | null;
+  role: string | null;
+  photo_url: string | null;
+  description: string | null;
+  email: string | null;
+  phone: string | null;
+  order: number | null;
+  is_active: boolean;
+}
 
 interface Organization {
   id: string;
   name: string;
-  type: string;
-  advisor: string;
-  leader: string;
-  description: string;
-  schedule: string;
-  contact: string;
-  logo_url: string;
-  order: number;
-  created_at: string;
+  type: string | null;
+  advisor: string | null;
+  leader: string | null;
+  description: string | null;
+  schedule: string | null;
+  contact: string | null;
+  logo_url: string | null;
+  order: number | null;
 }
 
-interface AboutSetting {
+interface AboutSettings {
   id: string;
   section: string;
   content: any;
-  updated_at: string;
 }
 
 const features = [
-  { icon: ClipboardList, title: 'Manajemen Peminjaman', description: 'Sistem peminjaman barang dan fasilitas yang terpadu dengan alur persetujuan multi-level.' },
-  { icon: Building2, title: 'Inventaris & Fasilitas', description: 'Pelacakan inventaris dan fasilitas secara real-time dengan informasi ketersediaan.' },
-  { icon: ShieldCheck, title: 'Laporan Kerusakan', description: 'Pelaporan kerusakan sarana prasarana yang cepat dan mudah dengan tracking status.' },
-  { icon: BarChart3, title: 'Statistik & Rekap', description: 'Dashboard statistik untuk memantau penggunaan dan ketersediaan sarana prasarana.' },
-  { icon: Zap, title: 'Notifikasi Otomatis', description: 'Email notifikasi otomatis untuk setiap peminjaman dan update status.' },
-  { icon: Award, title: 'Transparansi', description: 'Sistem yang transparan untuk seluruh warga sekolah dengan akses informasi yang mudah.' },
+  { icon: Boxes, title: 'Manajemen Inventaris', description: 'Kelola seluruh barang inventaris dengan pelacakan kondisi, lokasi, dan ketersediaan secara real-time.' },
+  { icon: Building2, title: 'Pengelolaan Fasilitas', description: 'Katalog fasilitas lengkap dengan informasi kapasitas, lokasi, dan penanggung jawab.' },
+  { icon: ClipboardList, title: 'Sistem Peminjaman', description: 'Pengajuan peminjaman barang dan fasilitas dengan alur persetujuan multi-langkah.' },
+  { icon: ShieldCheck, title: 'Laporan Kerusakan', description: 'Laporkan kerusakan sarana dengan tingkat keparahan dan pelacakan status penanganan.' },
+  { icon: BarChart3, title: 'Rekap & Statistik', description: 'Ringkasan data inventaris, fasilitas, dan peminjaman dalam satu dashboard.' },
+  { icon: Sparkles, title: 'Notifikasi Otomatis', description: 'Email otomatis untuk pengajuan, persetujuan, dan status peminjaman.' },
 ];
 
+function getInitials(name: string) {
+  return name
+    .split(' ')
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+}
+
 export default function AboutPage() {
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [settings, setSettings] = useState<AboutSetting[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [orgs, setOrgs] = useState<Organization[]>([]);
+  const [settings, setSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchData() {
+    async function load() {
       try {
-        const [orgRes, setRes] = await Promise.all([
-          supabase.from('organizations').select('*').order('order', { ascending: true }),
+        const [tm, og, st] = await Promise.all([
+          supabase
+            .from('team_members')
+            .select('*')
+            .eq('is_active', true)
+            .order('order', { ascending: true }),
+          supabase
+            .from('organizations')
+            .select('*')
+            .order('order', { ascending: true }),
           supabase.from('about_settings').select('*'),
         ]);
-
-        if (orgRes.data) setOrganizations(orgRes.data as unknown as Organization[]);
-        if (setRes.data) setSettings(setRes.data as unknown as AboutSetting[]);
+        setTeam((tm.data as unknown as TeamMember[]) || []);
+        setOrgs((og.data as unknown as Organization[]) || []);
+        const settingsMap: Record<string, any> = {};
+        ((st.data as unknown as AboutSettings[]) || []).forEach((s) => {
+          settingsMap[s.section] = s.content;
+        });
+        setSettings(settingsMap);
       } catch (e) {
-        console.error('Error fetching about data:', e);
+        // ignore
       } finally {
         setLoading(false);
       }
     }
-    fetchData();
+    load();
   }, []);
 
-  const visionSetting = settings.find((s) => s.section === 'vision');
-  const missionSetting = settings.find((s) => s.section === 'mission');
+  const vision = settings.visi?.text || settings.visi || 'Menjadi sistem manajemen sarana dan prasarana terdepan yang terintegrasi, transparan, dan efisien untuk mendukung kegiatan belajar mengajar yang optimal.';
+  const mission = settings.misi?.text || settings.misi || [
+    'Menyediakan platform terpadu untuk pengelolaan sarana dan prasarana.',
+    'Memastikan transparansi dan akuntabilitas dalam setiap peminjaman.',
+    'Meningkatkan efisiensi pengelolaan inventaris dan fasilitas.',
+    'Memberikan layanan yang cepat dan responsif kepada seluruh warga sekolah.',
+  ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Hero */}
+      <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
         <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium mb-6">
-            <Sparkles className="w-4 h-4" />
-            Tentang Sistem
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium mb-4">
+            <Info className="w-4 h-4" />
+            Tentang Kami
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white mb-4">
-            <span className="bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
-              {brandConfig.system.name}
-            </span>
+          <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white">
+            SMART SARPRAS
           </h1>
-          <p className="text-lg text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-            {brandConfig.system.fullName} — sebuah sistem terpadu untuk mengelola sarana dan prasarana sekolah dengan efisien, transparan, dan modern.
+          <p className="mt-3 text-slate-600 dark:text-slate-300 max-w-2xl mx-auto">
+            Sistem Manajemen Sarana dan Prasarana Terpadu — platform digital untuk
+            mengelola inventaris, fasilitas, peminjaman, dan pelaporan kerusakan dalam
+            satu sistem yang terintegrasi.
           </p>
         </div>
 
         {/* Features */}
         <section className="mb-12">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
-            <Zap className="w-6 h-6 text-blue-500" />
-            Fitur Utama
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((f, i) => (
-              <div
-                key={i}
-                className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-4">
-                  <f.icon className="w-6 h-6 text-white" />
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Fitur Utama</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {features.map((f) => (
+              <div key={f.title} className="card p-5 hover:shadow-md transition-shadow">
+                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-3">
+                  <f.icon className="w-5 h-5 text-white" />
                 </div>
-                <h3 className="font-semibold text-slate-900 dark:text-white mb-2">{f.title}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-400">{f.description}</p>
+                <h3 className="font-semibold text-slate-900 dark:text-white">{f.title}</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{f.description}</p>
               </div>
             ))}
           </div>
@@ -111,117 +142,97 @@ export default function AboutPage() {
 
         {/* Vision & Mission */}
         <section className="mb-12">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Vision */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="card p-6">
+              <div className="flex items-center gap-2 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
-                  <Eye className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <Eye className="w-5 h-5 text-blue-500" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Visi</h3>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Visi</h2>
               </div>
-              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                {visionSetting?.content?.text ||
-                  'Menjadi sistem manajemen sarana dan prasarana terpadu yang unggul, transparan, dan mendukung optimalisasi pembelajaran di sekolah.'}
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                {typeof vision === 'string' ? vision : JSON.stringify(vision)}
               </p>
             </div>
-
-            {/* Mission */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
+            <div className="card p-6">
+              <div className="flex items-center gap-2 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 flex items-center justify-center">
-                  <Target className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                  <Target className="w-5 h-5 text-cyan-500" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Misi</h3>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Misi</h2>
               </div>
-              {missionSetting?.content?.items ? (
+              {Array.isArray(mission) ? (
                 <ul className="space-y-2">
-                  {(missionSetting.content.items as string[]).map((item, i) => (
-                    <li key={i} className="text-sm text-slate-600 dark:text-slate-400 flex items-start gap-2">
-                      <span className="text-blue-500 mt-0.5">•</span>
-                      <span>{item}</span>
+                  {mission.map((m, i) => (
+                    <li key={i} className="flex items-start gap-2 text-slate-600 dark:text-slate-300">
+                      <span className="text-blue-500 mt-1">•</span>
+                      <span>{typeof m === 'string' ? m : JSON.stringify(m)}</span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <ul className="space-y-2">
-                  <li className="text-sm text-slate-600 dark:text-slate-400 flex items-start gap-2">
-                    <span className="text-blue-500 mt-0.5">•</span>
-                    <span>Menyediakan sistem manajemen sarana prasarana yang efisien dan mudah digunakan.</span>
-                  </li>
-                  <li className="text-sm text-slate-600 dark:text-slate-400 flex items-start gap-2">
-                    <span className="text-blue-500 mt-0.5">•</span>
-                    <span>Memastikan transparansi dalam pengelolaan peminjaman dan pelaporan.</span>
-                  </li>
-                  <li className="text-sm text-slate-600 dark:text-slate-400 flex items-start gap-2">
-                    <span className="text-blue-500 mt-0.5">•</span>
-                    <span>Mendukung optimalisasi pemanfaatan sarana prasarana sekolah.</span>
-                  </li>
-                </ul>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {typeof mission === 'string' ? mission : JSON.stringify(mission)}
+                </p>
               )}
             </div>
           </div>
         </section>
 
-        {/* Organizations */}
+        {/* Team */}
         <section className="mb-12">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-6">
             <Users className="w-6 h-6 text-blue-500" />
-            Organisasi & Ekstrakurikuler
-          </h2>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h2>
+          </div>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
+            <div className="flex justify-center py-8">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
             </div>
-          ) : organizations.length === 0 ? (
-            <EmptyState icon={Users} title="Belum ada data organisasi" description="Data organisasi akan muncul di sini" />
+          ) : team.length === 0 ? (
+            <div className="card">
+              <EmptyState icon={Users} title="Belum ada anggota tim" description="Anggota tim akan ditampilkan di sini." />
+            </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {organizations.map((org) => (
-                <div
-                  key={org.id}
-                  className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow"
-                >
-                  <div className="flex items-start gap-3 mb-4">
-                    {org.logo_url ? (
-                      <img src={org.logo_url} alt={org.name} className="w-12 h-12 rounded-xl object-cover" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {team.map((m) => (
+                <div key={m.id} className="card p-5 text-center">
+                  <div className="w-20 h-20 rounded-full mx-auto mb-3 overflow-hidden bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                    {m.photo_url ? (
+                      <img
+                        src={m.photo_url}
+                        alt={m.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                     ) : (
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                        <Users className="w-6 h-6 text-white" />
-                      </div>
+                      <span className="text-white font-bold text-2xl">{getInitials(m.name)}</span>
                     )}
-                    <div>
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{org.name}</h3>
-                      {org.type && <span className="text-xs text-slate-400 dark:text-slate-500">{org.type}</span>}
-                    </div>
                   </div>
-                  {org.description && (
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 line-clamp-3">{org.description}</p>
+                  <h3 className="font-semibold text-slate-900 dark:text-white">{m.name}</h3>
+                  {m.position && (
+                    <p className="text-sm text-blue-600 dark:text-blue-400 mt-0.5">{m.position}</p>
                   )}
-                  <div className="space-y-2 text-sm text-slate-500 dark:text-slate-400">
-                    {org.leader && (
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        <span>Ketua: {org.leader}</span>
-                      </div>
+                  {m.role && (
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{m.role}</p>
+                  )}
+                  {m.description && (
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{m.description}</p>
+                  )}
+                  <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    {m.email && (
+                      <a href={`mailto:${m.email}`} className="flex items-center justify-center gap-1.5 hover:text-blue-500">
+                        <Mail className="w-3.5 h-3.5" />
+                        {m.email}
+                      </a>
                     )}
-                    {org.advisor && (
-                      <div className="flex items-center gap-2">
-                        <Award className="w-4 h-4" />
-                        <span>Pembina: {org.advisor}</span>
-                      </div>
-                    )}
-                    {org.schedule && (
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4" />
-                        <span>{org.schedule}</span>
-                      </div>
-                    )}
-                    {org.contact && (
-                      <div className="flex items-center gap-2">
-                        <Phone className="w-4 h-4" />
-                        <span>{org.contact}</span>
-                      </div>
+                    {m.phone && (
+                      <a href={`tel:${m.phone}`} className="flex items-center justify-center gap-1.5 hover:text-blue-500">
+                        <Phone className="w-3.5 h-3.5" />
+                        {m.phone}
+                      </a>
                     )}
                   </div>
                 </div>
@@ -230,36 +241,52 @@ export default function AboutPage() {
           )}
         </section>
 
-        {/* Contact / Info */}
-        <section className="mb-8">
-          <div className="bg-gradient-to-br from-blue-600 to-cyan-600 rounded-2xl p-8 text-white">
-            <div className="flex items-center gap-3 mb-4">
-              <Info className="w-6 h-6" />
-              <h2 className="text-xl font-bold">Informasi Kontak</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-blue-100 mb-1">Sekolah</p>
-                <p className="font-medium">{brandConfig.school.name}</p>
-              </div>
-              <div>
-                <p className="text-blue-100 mb-1">Alamat</p>
-                <p className="font-medium">{brandConfig.school.address}</p>
-              </div>
-              {brandConfig.school.email && (
-                <div className="flex items-center gap-2">
-                  <Mail className="w-4 h-4" />
-                  <span>{brandConfig.school.email}</span>
-                </div>
-              )}
-              {brandConfig.school.phone && (
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4" />
-                  <span>{brandConfig.school.phone}</span>
-                </div>
-              )}
-            </div>
+        {/* Organizations */}
+        <section className="mb-12">
+          <div className="flex items-center gap-2 mb-6">
+            <Building2 className="w-6 h-6 text-blue-500" />
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Organisasi</h2>
           </div>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+            </div>
+          ) : orgs.length === 0 ? (
+            <div className="card">
+              <EmptyState icon={Building2} title="Belum ada organisasi" description="Data organisasi akan ditampilkan di sini." />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {orgs.map((o) => (
+                <div key={o.id} className="card p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {o.logo_url ? (
+                        <img src={o.logo_url} alt={o.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <Building2 className="w-6 h-6 text-slate-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{o.name}</h3>
+                      {o.type && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">{o.type}</p>
+                      )}
+                      {o.description && (
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{o.description}</p>
+                      )}
+                      <div className="mt-2 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                        {o.leader && <p>Ketua: {o.leader}</p>}
+                        {o.advisor && <p>Pembina: {o.advisor}</p>}
+                        {o.schedule && <p>Jadwal: {o.schedule}</p>}
+                        {o.contact && <p>Kontak: {o.contact}</p>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </main>
       <Footer />
