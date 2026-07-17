@@ -3,291 +3,319 @@ import { supabase } from '../../../lib/supabase';
 import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
 import {
-  Settings, Save, Loader2, RefreshCw, Search,
-  ToggleLeft, Hash, Type, AlertCircle,
+  Settings,
+  Loader2,
+  Save,
+  CheckCircle2,
+  Hash,
+  Type,
+  ToggleLeft,
+  Search,
 } from 'lucide-react';
 
-/* ----------------------------- Types ----------------------------- */
+// ---- Types ----
 interface SystemConfig {
   id: string;
   key: string;
-  value: unknown;
-  label: string | null;
+  value: unknown; // jsonb
+  label: string;
   description: string | null;
-  config_group: string | null;
+  config_group: string;
+  updated_at: string | null;
 }
 
-type ValueType = 'boolean' | 'number' | 'string';
+type ValueType = 'boolean' | 'number' | 'string' | 'unknown';
 
-const detectType = (v: unknown): ValueType => {
+// Local working copy with stringified editable values
+interface ConfigDraft {
+  id: string;
+  key: string;
+  label: string;
+  description: string | null;
+  config_group: string;
+  type: ValueType;
+  // editable representation
+  boolValue: boolean;
+  numValue: string;
+  strValue: string;
+  dirty: boolean;
+}
+
+// ---- Helpers ----
+function detectType(v: unknown): ValueType {
   if (typeof v === 'boolean') return 'boolean';
   if (typeof v === 'number') return 'number';
-  return 'string';
-};
+  if (typeof v === 'string') return 'string';
+  return 'unknown';
+}
 
-/* --------------------------- Component ---------------------------- */
+function buildDraft(c: SystemConfig): ConfigDraft {
+  const type = detectType(c.value);
+  return {
+    id: c.id,
+    key: c.key,
+    label: c.label,
+    description: c.description,
+    config_group: c.config_group,
+    type,
+    boolValue: type === 'boolean' ? (c.value as boolean) : false,
+    numValue: type === 'number' ? String(c.value as number) : '',
+    strValue: type === 'string' ? (c.value as string) : '',
+    dirty: false,
+  };
+}
+
+function draftToJsonValue(d: ConfigDraft): unknown {
+  if (d.type === 'boolean') return d.boolValue;
+  if (d.type === 'number') {
+    const n = Number(d.numValue);
+    return Number.isNaN(n) ? 0 : n;
+  }
+  if (d.type === 'string') return d.strValue;
+  return null;
+}
+
+// ---- Component ----
 export default function SystemConfigPage() {
-  const [configs, setConfigs] = useState<SystemConfig[]>([]);
+  const [drafts, setDrafts] = useState<ConfigDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [groupFilter, setGroupFilter] = useState<string>('');
-  const [drafts, setDrafts] = useState<Record<string, unknown>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('system_config')
-        .select('*')
-        .order('config_group', { ascending: true });
+        .select('id, key, value, label, description, config_group, updated_at')
+        .order('config_group', { ascending: true })
+        .order('key', { ascending: true });
       if (error) throw error;
-      const list = (data as unknown as SystemConfig[]) || [];
-      setConfigs(list);
-      // Reset drafts to current values
-      const init: Record<string, unknown> = {};
-      list.forEach((c) => { init[c.id] = c.value; });
-      setDrafts(init);
+      setDrafts((data ?? []).map(buildDraft));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load config';
+      const msg = err instanceof Error ? err.message : 'Gagal memuat konfigurasi';
       showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => {
+    void loadConfig();
+  }, [loadConfig]);
 
-  const groups = Array.from(new Set(configs.map((c) => c.config_group).filter(Boolean))) as string[];
+  const groups = Array.from(new Set(drafts.map(d => d.config_group))).sort();
 
-  const filtered = configs.filter((c) => {
-    const q = search.toLowerCase();
-    const matchesSearch =
-      c.key.toLowerCase().includes(q) ||
-      (c.label?.toLowerCase().includes(q) ?? false) ||
-      (c.description?.toLowerCase().includes(q) ?? false);
-    const matchesGroup = !groupFilter || c.config_group === groupFilter;
-    return matchesSearch && matchesGroup;
-  });
+  const filteredDrafts = (group: string) =>
+    drafts.filter(d => {
+      if (d.config_group !== group) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        d.key.toLowerCase().includes(q) ||
+        d.label.toLowerCase().includes(q) ||
+        (d.description ?? '').toLowerCase().includes(q)
+      );
+    });
 
-  const isDirty = (c: SystemConfig) => {
-    const draft = drafts[c.id];
-    return draft !== undefined && JSON.stringify(draft) !== JSON.stringify(c.value);
+  const updateDraft = (id: string, patch: Partial<ConfigDraft>) => {
+    setDrafts(prev =>
+      prev.map(d => (d.id === id ? { ...d, ...patch, dirty: true } : d))
+    );
   };
 
-  const handleSave = async (c: SystemConfig) => {
-    const draft = drafts[c.id];
-    if (draft === undefined) return;
-    setSavingId(c.id);
+  const handleSave = async (d: ConfigDraft) => {
+    setSavingId(d.id);
     try {
+      const jsonValue = draftToJsonValue(d);
       const { error } = await supabase
         .from('system_config')
-        .update({ value: draft })
-        .eq('id', c.id);
+        .update({ value: jsonValue })
+        .eq('id', d.id);
       if (error) throw error;
-      setConfigs((prev) =>
-        prev.map((x) => (x.id === c.id ? { ...x, value: draft } : x))
+      showToast(`Konfigurasi "${d.label}" disimpan`, 'success');
+      setDrafts(prev =>
+        prev.map(x => (x.id === d.id ? { ...x, dirty: false } : x))
       );
-      showToast(`Saved “${c.label || c.key}”`, 'success');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to save config';
+      const msg = err instanceof Error ? err.message : 'Gagal menyimpan';
       showToast(msg, 'error');
     } finally {
       setSavingId(null);
     }
   };
 
-  const typeIcon = (t: ValueType) => {
-    if (t === 'boolean') return ToggleLeft;
-    if (t === 'number') return Hash;
-    return Type;
+  const typeIcon = (type: ValueType) => {
+    switch (type) {
+      case 'boolean':
+        return <ToggleLeft className="w-4 h-4 text-blue-500" />;
+      case 'number':
+        return <Hash className="w-4 h-4 text-cyan-500" />;
+      case 'string':
+        return <Type className="w-4 h-4 text-slate-400" />;
+      default:
+        return <Settings className="w-4 h-4 text-slate-400" />;
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-500/20">
-              <Settings className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">System Configuration</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Edit application settings
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => void loadData()}
-            className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors self-start"
-            title="Refresh"
-          >
-            <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
-          </button>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+          <Settings className="w-6 h-6 text-blue-500" />
+          Konfigurasi Sistem
+        </h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Kelola pengaturan sistem (otomatis deteksi tipe nilai)
+        </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Cari konfigurasi..."
+          className="w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
         </div>
-
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by key, label, or description…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <select
-            value={groupFilter}
-            onChange={(e) => setGroupFilter(e.target.value)}
-            className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All groups</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>{g}</option>
-            ))}
-          </select>
+      ) : drafts.length === 0 ? (
+        <div className="py-16 text-center text-slate-500 dark:text-slate-400">
+          Belum ada konfigurasi
         </div>
-
-        {/* List */}
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-20 text-slate-500 dark:text-slate-400">
-            <Settings className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p>No configuration entries found.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filtered.map((c) => {
-              const type = detectType(c.value);
-              const draft = drafts[c.id];
-              const Icon = typeIcon(type);
-              const dirty = isDirty(c);
-              return (
-                <div
-                  key={c.id}
-                  className={cn(
-                    'p-5 rounded-2xl border bg-white dark:bg-slate-900 shadow-sm transition-all',
-                    dirty
-                      ? 'border-blue-300 dark:border-blue-700 ring-1 ring-blue-200 dark:ring-blue-800'
-                      : 'border-slate-200 dark:border-slate-700'
-                  )}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="p-2 rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex-shrink-0">
-                      <Icon className="w-5 h-5" />
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-slate-900 dark:text-white">
-                          {c.label || c.key}
-                        </h3>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-                          {c.key}
-                        </span>
-                        {c.config_group && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
-                            {c.config_group}
+      ) : (
+        <div className="space-y-6">
+          {groups.map(group => {
+            const items = filteredDrafts(group);
+            if (items.length === 0) return null;
+            return (
+              <div key={group}>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-3">
+                  {group}
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {items.map(d => (
+                    <div
+                      key={d.id}
+                      className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {typeIcon(d.type)}
+                            <h3 className="font-medium text-slate-900 dark:text-white">
+                              {d.label}
+                            </h3>
+                          </div>
+                          <code className="text-xs text-slate-400 font-mono">
+                            {d.key}
+                          </code>
+                        </div>
+                        {d.dirty && (
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            Belum disimpan
                           </span>
                         )}
                       </div>
-                      {c.description && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                          {c.description}
+
+                      {d.description && (
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+                          {d.description}
                         </p>
                       )}
 
-                      {/* Value editor */}
-                      <div className="mt-2">
-                        {type === 'boolean' && (
-                          <label className="flex items-center gap-3 cursor-pointer">
-                            <button
-                              type="button"
-                              onClick={() => setDrafts((d) => ({ ...d, [c.id]: !d }))}
+                      {/* Value editor by type */}
+                      {d.type === 'boolean' && (
+                        <label className="flex items-center gap-2.5 cursor-pointer">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateDraft(d.id, { boolValue: !d.boolValue })
+                            }
+                            className={cn(
+                              'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                              d.boolValue
+                                ? 'bg-blue-500'
+                                : 'bg-slate-300 dark:bg-slate-600'
+                            )}
+                          >
+                            <span
                               className={cn(
-                                'relative w-11 h-6 rounded-full transition-colors',
-                                draft ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-700'
+                                'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                                d.boolValue ? 'translate-x-6' : 'translate-x-1'
                               )}
-                            >
-                              <span
-                                className={cn(
-                                  'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform',
-                                  draft ? 'translate-x-5' : ''
-                                )}
-                              />
-                            </button>
-                            <span className="text-sm text-slate-700 dark:text-slate-300">
-                              {draft ? 'Enabled' : 'Disabled'}
-                            </span>
-                          </label>
-                        )}
+                            />
+                          </button>
+                          <span className="text-sm text-slate-700 dark:text-slate-300">
+                            {d.boolValue ? 'Aktif' : 'Nonaktif'}
+                          </span>
+                        </label>
+                      )}
 
-                        {type === 'number' && (
-                          <input
-                            type="number"
-                            value={typeof draft === 'number' ? draft : Number(draft) || 0}
-                            onChange={(e) =>
-                              setDrafts((d) => ({ ...d, [c.id]: Number(e.target.value) }))
-                            }
-                            className="w-full sm:w-48 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        )}
+                      {d.type === 'number' && (
+                        <input
+                          type="number"
+                          value={d.numValue}
+                          onChange={e =>
+                            updateDraft(d.id, { numValue: e.target.value })
+                          }
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        />
+                      )}
 
-                        {type === 'string' && (
-                          <input
-                            type="text"
-                            value={typeof draft === 'string' ? draft : String(draft ?? '')}
-                            onChange={(e) =>
-                              setDrafts((d) => ({ ...d, [c.id]: e.target.value }))
-                            }
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        )}
+                      {d.type === 'string' && (
+                        <input
+                          type="text"
+                          value={d.strValue}
+                          onChange={e =>
+                            updateDraft(d.id, { strValue: e.target.value })
+                          }
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        />
+                      )}
+
+                      {d.type === 'unknown' && (
+                        <p className="text-sm text-slate-400 italic">
+                          Tipe nilai tidak didukung untuk edit langsung
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                        <span className="text-xs text-slate-400">
+                          Tipe: <span className="font-mono">{d.type}</span>
+                        </span>
+                        <button
+                          onClick={() => handleSave(d)}
+                          disabled={!d.dirty || savingId === d.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {savingId === d.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : d.dirty ? (
+                            <Save className="w-4 h-4" />
+                          ) : (
+                            <CheckCircle2 className="w-4 h-4" />
+                          )}
+                          Simpan
+                        </button>
                       </div>
                     </div>
-
-                    <button
-                      onClick={() => void handleSave(c)}
-                      disabled={!dirty || savingId === c.id}
-                      className={cn(
-                        'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all flex-shrink-0',
-                        dirty
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-sm'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                      )}
-                    >
-                      {savingId === c.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Save className="w-4 h-4" />
-                      )}
-                      <span className="hidden sm:inline">Save</span>
-                    </button>
-                  </div>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Info banner */}
-        {!loading && configs.length > 0 && (
-          <div className="mt-6 flex items-start gap-3 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300">
-            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <p className="text-sm">
-              Changes are saved per-config. Values are stored as JSONB — boolean toggles,
-              number inputs, and text fields are auto-detected from the current value type.
-            </p>
-          </div>
-        )}
-      </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

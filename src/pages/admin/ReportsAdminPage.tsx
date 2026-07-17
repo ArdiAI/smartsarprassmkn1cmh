@@ -1,22 +1,22 @@
-import { useEffect, useState } from 'react';
-import {
-  AlertTriangle, X, Loader2, FileText, CheckCircle, Clock, Wrench, AlertCircle,
-} from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { AlertTriangle, X, Loader2, CheckCircle, Clock, Wrench } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
+import { cn } from '../../utils/cn';
 
 interface DamageReport {
   id: string;
-  item_name: string;
-  description: string | null;
+  inventory_id: string | null;
+  facility_id: string | null;
+  reporter_name: string;
+  reporter_email: string;
+  description: string;
   severity: string;
   status: string;
-  reporter_name: string | null;
-  reporter_email: string | null;
   resolution_notes: string | null;
   created_at: string;
-  updated_at: string;
+  inventory: { name: string } | null;
+  facility: { name: string } | null;
 }
 
 const severityBadge = (severity: string) => {
@@ -26,7 +26,7 @@ const severityBadge = (severity: string) => {
     high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
     critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   };
-  return map[severity] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+  return map[severity] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
 };
 
 const statusBadge = (status: string) => {
@@ -35,47 +35,44 @@ const statusBadge = (status: string) => {
     in_progress: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     resolved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
   };
-  return map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+  return map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
 };
 
-const statusIcon = (status: string) => {
-  switch (status) {
-    case 'pending': return Clock;
-    case 'in_progress': return Wrench;
-    case 'resolved': return CheckCircle;
-    default: return AlertCircle;
-  }
-};
+const statusOrder = ['pending', 'in_progress', 'resolved'];
 
 export default function ReportsAdminPage() {
   const [reports, setReports] = useState<DamageReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<DamageReport | null>(null);
+  const [resolutionModal, setResolutionModal] = useState<DamageReport | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchReports();
-  }, []);
-
-  const fetchReports = async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('damage_reports')
-        .select('id, item_name, description, severity, status, reporter_name, reporter_email, resolution_notes, created_at, updated_at')
+        .select(`
+          id, inventory_id, facility_id, reporter_name, reporter_email, description,
+          severity, status, resolution_notes, created_at,
+          inventory:inventory_id (name),
+          facility:facility_id (name)
+        `)
         .order('created_at', { ascending: false });
-
       if (error) throw error;
-      setReports((data as unknown as DamageReport[]) || []);
+      setReports((data ?? []) as unknown as DamageReport[]);
     } catch {
       showToast('Gagal memuat laporan', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const filtered = reports.filter((r) => {
     if (severityFilter !== 'all' && r.severity !== severityFilter) return false;
@@ -83,74 +80,74 @@ export default function ReportsAdminPage() {
     return true;
   });
 
-  const openStatusModal = (report: DamageReport) => {
-    setEditing(report);
-    setResolutionNotes(report.resolution_notes || '');
-    setModalOpen(true);
+  const updateStatus = async (report: DamageReport, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from('damage_reports')
+        .update({ status: newStatus })
+        .eq('id', report.id);
+      if (error) throw error;
+      showToast('Status laporan diperbarui', 'success');
+      await load();
+    } catch {
+      showToast('Gagal memperbarui status', 'error');
+    }
   };
 
-  const handleUpdateStatus = async (newStatus: string) => {
-    if (!editing) return;
+  const openResolution = (report: DamageReport) => {
+    setResolutionModal(report);
+    setResolutionNotes(report.resolution_notes || '');
+  };
+
+  const handleResolve = async () => {
+    if (!resolutionModal) return;
     setSaving(true);
     try {
       const { error } = await supabase
         .from('damage_reports')
-        .update({
-          status: newStatus,
-          resolution_notes: resolutionNotes || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', editing.id);
-
+        .update({ status: 'resolved', resolution_notes: resolutionNotes.trim() || null })
+        .eq('id', resolutionModal.id);
       if (error) throw error;
-      showToast('Status laporan diperbarui', 'success');
-      setModalOpen(false);
-      fetchReports();
+      showToast('Laporan diselesaikan', 'success');
+      setResolutionModal(null);
+      await load();
     } catch {
-      showToast('Gagal memperbarui status', 'error');
+      showToast('Gagal menyelesaikan laporan', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const getNextStatus = (current: string): string | null => {
+    const idx = statusOrder.indexOf(current);
+    if (idx === -1 || idx === statusOrder.length - 1) return null;
+    return statusOrder[idx + 1];
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Laporan Kerusakan</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola laporan kerusakan barang</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola laporan kerusakan fasilitas dan inventaris</p>
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div>
-          <label className="label">Tingkat Keparahan</label>
-          <select
-            className="input"
-            value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value)}
-          >
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400 block mb-1">Severity</label>
+          <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">Semua</option>
-            <option value="low">Rendah</option>
-            <option value="medium">Sedang</option>
-            <option value="high">Tinggi</option>
-            <option value="critical">Kritis</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
           </select>
         </div>
         <div>
-          <label className="label">Status</label>
-          <select
-            className="input"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400 block mb-1">Status</label>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">Semua</option>
             <option value="pending">Pending</option>
             <option value="in_progress">In Progress</option>
@@ -159,133 +156,109 @@ export default function ReportsAdminPage() {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="card p-10 text-center">
-          <AlertCircle className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada laporan</p>
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center">
+          <AlertTriangle className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
+          <p className="text-slate-500 dark:text-slate-400">Belum ada laporan</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtered.map((r) => {
-            const StatusIcon = statusIcon(r.status);
+        <div className="space-y-3">
+          {filtered.map((report) => {
+            const nextStatus = getNextStatus(report.status);
+            const itemName = report.inventory?.name || report.facility?.name || 'Unknown';
             return (
-              <div key={r.id} className="card p-5">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                      <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <div key={report.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{itemName}</h3>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium capitalize', severityBadge(report.severity))}>
+                        {report.severity}
+                      </span>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium capitalize flex items-center gap-1', statusBadge(report.status))}>
+                        {report.status === 'pending' && <Clock className="w-3 h-3" />}
+                        {report.status === 'in_progress' && <Wrench className="w-3 h-3" />}
+                        {report.status === 'resolved' && <CheckCircle className="w-3 h-3" />}
+                        {report.status.replace('_', ' ')}
+                      </span>
                     </div>
-                    <div>
-                      <p className="font-semibold text-slate-900 dark:text-white">{r.item_name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {new Date(r.created_at).toLocaleDateString('id-ID')}
-                      </p>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{report.description}</p>
+                    <div className="flex items-center gap-4 mt-3 text-xs text-slate-500 dark:text-slate-400">
+                      <span>Oleh: {report.reporter_name}</span>
+                      <span>{new Date(report.created_at).toLocaleDateString('id-ID')}</span>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium capitalize', severityBadge(r.severity))}>
-                      {r.severity}
-                    </span>
+                    {report.resolution_notes && (
+                      <div className="mt-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-1">Resolution Notes:</p>
+                        <p className="text-sm text-emerald-800 dark:text-emerald-300">{report.resolution_notes}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {r.description && (
-                  <p className="text-sm text-slate-600 dark:text-slate-300 mb-3">{r.description}</p>
+                {/* Actions */}
+                {report.status !== 'resolved' && (
+                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                    {nextStatus && (
+                      <button
+                        onClick={() => updateStatus(report, nextStatus)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+                      >
+                        <Wrench className="w-4 h-4" />
+                        Set to {nextStatus.replace('_', ' ')}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => openResolution(report)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Resolve
+                    </button>
+                  </div>
                 )}
-
-                <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mb-3">
-                  {r.reporter_name && <span>👤 {r.reporter_name}</span>}
-                  {r.reporter_email && <span>✉️ {r.reporter_email}</span>}
-                </div>
-
-                {r.resolution_notes && (
-                  <div className="rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3 mb-3">
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Catatan Resolusi</p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">{r.resolution_notes}</p>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between">
-                  <span className={cn('flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium', statusBadge(r.status))}>
-                    <StatusIcon className="w-3 h-3" />
-                    {r.status.replace('_', ' ')}
-                  </span>
-                  <button
-                    onClick={() => openStatusModal(r)}
-                    className="text-sm text-blue-500 hover:text-blue-600 font-medium"
-                  >
-                    Update Status
-                  </button>
-                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Modal */}
-      {modalOpen && editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setModalOpen(false)} />
-          <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Update Laporan</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600">
+      {/* Resolution modal */}
+      {resolutionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setResolutionModal(null)}>
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Resolve Laporan</h2>
+              <button onClick={() => setResolutionModal(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Laporan: <span className="font-medium text-slate-900 dark:text-white">{resolutionModal.inventory?.name || resolutionModal.facility?.name}</span>
+              </p>
               <div>
-                <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Barang</p>
-                <p className="text-slate-900 dark:text-white">{editing.item_name}</p>
-              </div>
-              <div>
-                <label className="label">Status</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { val: 'pending', label: 'Pending', icon: Clock },
-                    { val: 'in_progress', label: 'In Progress', icon: Wrench },
-                    { val: 'resolved', label: 'Resolved', icon: CheckCircle },
-                  ].map((opt) => {
-                    const Icon = opt.icon;
-                    return (
-                      <button
-                        key={opt.val}
-                        onClick={() => handleUpdateStatus(opt.val)}
-                        disabled={saving}
-                        className={cn(
-                          'flex flex-col items-center gap-1 p-3 rounded-xl border-2 text-sm font-medium transition-all disabled:opacity-50',
-                          editing.status === opt.val
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600'
-                            : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'
-                        )}
-                      >
-                        <Icon className="w-4 h-4" />
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div>
-                <label className="label">Catatan Resolusi</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">Resolution Notes</label>
                 <textarea
-                  className="input min-h-[100px] resize-y"
                   value={resolutionNotes}
                   onChange={(e) => setResolutionNotes(e.target.value)}
-                  placeholder="Tindakan yang diambil..."
+                  rows={4}
+                  placeholder="Jelaskan tindakan yang diambil..."
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setModalOpen(false)} className="btn-secondary">Tutup</button>
-              <button
-                onClick={() => handleUpdateStatus(editing.status)}
-                disabled={saving}
-                className="btn-primary flex items-center gap-2"
-              >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                Simpan Catatan
+            <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-800">
+              <button onClick={() => setResolutionModal(null)} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">Batal</button>
+              <button onClick={handleResolve} disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                Resolve
               </button>
             </div>
           </div>

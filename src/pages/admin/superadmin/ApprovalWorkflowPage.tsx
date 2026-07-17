@@ -3,39 +3,51 @@ import { supabase } from '../../../lib/supabase';
 import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
 import {
-  Workflow, Plus, Trash2, X, Loader2, RefreshCw,
-  ArrowRight, Info, Power, ChevronDown, ChevronUp, GitBranch,
+  Workflow,
+  Plus,
+  Trash2,
+  Loader2,
+  XCircle,
+  ChevronRight,
+  ToggleLeft,
+  ToggleRight,
+  Info,
+  GripVertical,
+  ArrowDown,
 } from 'lucide-react';
 
-/* ----------------------------- Types ----------------------------- */
+// ---- Types ----
 interface WorkflowStep {
   id: string;
-  template_id: string;
+  workflow_template_id: string;
   step_order: number;
   step_label: string;
-  role_name: string;
+  role_id: string | null;
   is_info_only: boolean;
+  role?: Role | null;
 }
+
 interface WorkflowTemplate {
   id: string;
   name: string;
   description: string | null;
   is_active: boolean;
-  steps?: WorkflowStep[];
+  created_at: string | null;
+  workflow_steps?: WorkflowStep[];
 }
+
 interface Role {
   id: string;
   name: string;
   level: number;
-  is_active: boolean;
 }
+
 interface StepDraft {
-  id?: string;
-  step_order: number;
   step_label: string;
-  role_name: string;
+  role_id: string;
   is_info_only: boolean;
 }
+
 interface TemplateForm {
   name: string;
   description: string;
@@ -47,159 +59,142 @@ const emptyForm: TemplateForm = {
   name: '',
   description: '',
   is_active: true,
-  steps: [],
+  steps: [{ step_label: '', role_id: '', is_info_only: false }],
 };
 
-/* --------------------------- Component ---------------------------- */
+// ---- Component ----
 export default function ApprovalWorkflowPage() {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<TemplateForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [tplRes, rolesRes] = await Promise.all([
-        supabase.from('workflow_templates').select('*').order('name', { ascending: true }),
-        supabase.from('roles').select('id, name, level, is_active').order('level', { ascending: true }),
+        supabase
+          .from('workflow_templates')
+          .select(
+            'id, name, description, is_active, created_at, workflow_steps:workflow_steps(id, workflow_template_id, step_order, step_label, role_id, is_info_only, role:roles(id, name, level))'
+          )
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('roles')
+          .select('id, name, level')
+          .eq('is_active', true)
+          .order('level', { ascending: true }),
       ]);
+
       if (tplRes.error) throw tplRes.error;
       if (rolesRes.error) throw rolesRes.error;
-      const tplList = (tplRes.data as unknown as WorkflowTemplate[]) || [];
-      const roleList = (rolesRes.data as unknown as Role[]) || [];
 
-      // Fetch steps for all templates
-      if (tplList.length > 0) {
-        const { data: stepsData, error: stepsErr } = await supabase
-          .from('workflow_steps')
-          .select('*')
-          .order('step_order', { ascending: true });
-        if (stepsErr) throw stepsErr;
-        const steps = (stepsData as unknown as WorkflowStep[]) || [];
-        tplList.forEach((t) => {
-          t.steps = steps.filter((s) => s.template_id === t.id);
-        });
-      }
-      setTemplates(tplList);
-      setRoles(roleList);
+      // Sort steps by step_order client-side
+      const tpls = (tplRes.data ?? []) as unknown as WorkflowTemplate[];
+      tpls.forEach(t => {
+        if (t.workflow_steps) {
+          t.workflow_steps.sort((a, b) => a.step_order - b.step_order);
+        }
+      });
+      setTemplates(tpls);
+      setRoles((rolesRes.data ?? []) as unknown as Role[]);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load workflows';
+      const msg = err instanceof Error ? err.message : 'Gagal memuat data';
       showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
-  const toggleExpand = (id: string) => setExpanded((s) => (s === id ? null : id));
-
-  const openAdd = () => {
-    setForm({
-      ...emptyForm,
-      steps: [
-        { step_order: 1, step_label: '', role_name: '', is_info_only: false },
-      ],
-    });
+  const openCreate = () => {
+    setForm(emptyForm);
     setShowModal(true);
   };
 
   const addStep = () => {
-    setForm((s) => ({
-      ...s,
+    setForm(prev => ({
+      ...prev,
       steps: [
-        ...s.steps,
-        {
-          step_order: s.steps.length + 1,
-          step_label: '',
-          role_name: '',
-          is_info_only: false,
-        },
+        ...prev.steps,
+        { step_label: '', role_id: '', is_info_only: false },
       ],
     }));
   };
 
-  const updateStep = (idx: number, patch: Partial<StepDraft>) => {
-    setForm((s) => ({
-      ...s,
-      steps: s.steps.map((st, i) => (i === idx ? { ...st, ...patch } : st)),
+  const removeStep = (index: number) => {
+    setForm(prev => ({
+      ...prev,
+      steps: prev.steps.filter((_, i) => i !== index),
     }));
   };
 
-  const removeStep = (idx: number) => {
-    setForm((s) => ({
-      ...s,
-      steps: s.steps
-        .filter((_, i) => i !== idx)
-        .map((st, i) => ({ ...st, step_order: i + 1 })),
+  const updateStep = (index: number, patch: Partial<StepDraft>) => {
+    setForm(prev => ({
+      ...prev,
+      steps: prev.steps.map((s, i) => (i === index ? { ...s, ...patch } : s)),
     }));
   };
 
-  const moveStep = (idx: number, dir: -1 | 1) => {
-    setForm((s) => {
-      const arr = [...s.steps];
-      const target = idx + dir;
-      if (target < 0 || target >= arr.length) return s;
-      [arr[idx], arr[target]] = [arr[target], arr[idx]];
-      return {
-        ...s,
-        steps: arr.map((st, i) => ({ ...st, step_order: i + 1 })),
-      };
+  const moveStep = (index: number, dir: -1 | 1) => {
+    setForm(prev => {
+      const next = [...prev.steps];
+      const target = index + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return { ...prev, steps: next };
     });
   };
 
-  const handleSave = async () => {
+  const handleCreate = async () => {
     if (!form.name.trim()) {
-      showToast('Template name is required', 'warning');
+      showToast('Nama template wajib diisi', 'warning');
       return;
     }
-    const validSteps = form.steps.filter((s) => s.step_label.trim() && s.role_name);
+    const validSteps = form.steps.filter(s => s.step_label.trim());
     if (validSteps.length === 0) {
-      showToast('Add at least one complete step', 'warning');
+      showToast('Minimal satu langkah wajib diisi', 'warning');
       return;
     }
     setSaving(true);
     try {
-      const { data: tpl, error: tplErr } = await supabase
+      // 1. Insert template
+      const { data: tplData, error: tplError } = await supabase
         .from('workflow_templates')
         .insert({
           name: form.name.trim(),
-          description: form.description.trim() || null,
+          description: form.description.trim(),
           is_active: form.is_active,
         })
-        .select('*')
+        .select('id')
         .single();
-      if (tplErr) throw tplErr;
-      const newTpl = tpl as unknown as WorkflowTemplate;
+      if (tplError) throw tplError;
+      const templateId = (tplData as unknown as { id: string }).id;
 
-      const stepPayload = validSteps.map((s, i) => ({
-        template_id: newTpl.id,
+      // 2. Insert steps
+      const stepRows = validSteps.map((s, i) => ({
+        workflow_template_id: templateId,
         step_order: i + 1,
         step_label: s.step_label.trim(),
-        role_name: s.role_name,
+        role_id: s.role_id || null,
         is_info_only: s.is_info_only,
       }));
-      const { error: stepErr } = await supabase
+      const { error: stepsError } = await supabase
         .from('workflow_steps')
-        .insert(stepPayload);
-      if (stepErr) throw stepErr;
+        .insert(stepRows);
+      if (stepsError) throw stepsError;
 
-      const { data: freshSteps } = await supabase
-        .from('workflow_steps')
-        .select('*')
-        .eq('template_id', newTpl.id)
-        .order('step_order', { ascending: true });
-      newTpl.steps = (freshSteps as unknown as WorkflowStep[]) || [];
-
-      setTemplates((prev) => [...(prev as WorkflowTemplate[]), newTpl]);
+      showToast('Template workflow dibuat', 'success');
       setShowModal(false);
-      showToast('Workflow template created', 'success');
+      await loadData();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create template';
+      const msg = err instanceof Error ? err.message : 'Gagal membuat template';
       showToast(msg, 'error');
     } finally {
       setSaving(false);
@@ -207,349 +202,357 @@ export default function ApprovalWorkflowPage() {
   };
 
   const handleToggleActive = async (tpl: WorkflowTemplate) => {
+    setTogglingId(tpl.id);
     try {
       const { error } = await supabase
         .from('workflow_templates')
         .update({ is_active: !tpl.is_active })
         .eq('id', tpl.id);
       if (error) throw error;
-      setTemplates((prev) =>
-        prev.map((t) => (t.id === tpl.id ? { ...t, is_active: !t.is_active } : t))
+      showToast(`Template ${!tpl.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+      setTemplates(prev =>
+        prev.map(t => (t.id === tpl.id ? { ...t, is_active: !t.is_active } : t))
       );
-      showToast(`Template ${!tpl.is_active ? 'activated' : 'deactivated'}`, 'success');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to toggle template';
+      const msg = err instanceof Error ? err.message : 'Gagal mengubah status';
       showToast(msg, 'error');
+    } finally {
+      setTogglingId(null);
     }
   };
 
   const handleDelete = async (tpl: WorkflowTemplate) => {
-    if (!confirm(`Delete workflow "${tpl.name}" and all its steps?`)) return;
+    if (!confirm(`Hapus template "${tpl.name}"? Semua langkah akan ikut terhapus.`)) return;
     try {
-      await supabase.from('workflow_steps').delete().eq('template_id', tpl.id);
-      const { error } = await supabase.from('workflow_templates').delete().eq('id', tpl.id);
+      // Steps should cascade; delete template
+      const { error } = await supabase
+        .from('workflow_templates')
+        .delete()
+        .eq('id', tpl.id);
       if (error) throw error;
-      setTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
-      showToast('Workflow deleted', 'success');
+      showToast('Template dihapus', 'success');
+      setTemplates(prev => prev.filter(t => t.id !== tpl.id));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete workflow';
+      const msg = err instanceof Error ? err.message : 'Gagal menghapus template';
       showToast(msg, 'error');
     }
   };
 
+  const roleName = (roleId: string | null): string => {
+    if (!roleId) return '—';
+    const r = roles.find(x => x.id === roleId);
+    return r ? r.name : '—';
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-500/20">
-              <Workflow className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Approval Workflows</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Build multi-step approval chains
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void loadData()}
-              className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
-            </button>
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium shadow-lg shadow-blue-500/20 hover:from-blue-600 hover:to-cyan-600 transition-all"
-            >
-              <Plus className="w-5 h-5" />
-              <span className="hidden sm:inline">New Template</span>
-            </button>
-          </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Workflow className="w-6 h-6 text-blue-500" />
+            Approval Workflow
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Kelola template dan rangkaian langkah persetujuan
+          </p>
         </div>
-
-        {/* List */}
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          </div>
-        ) : templates.length === 0 ? (
-          <div className="text-center py-20 text-slate-500 dark:text-slate-400">
-            <GitBranch className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p>No workflow templates yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {templates.map((tpl) => {
-              const isOpen = expanded === tpl.id;
-              return (
-                <div
-                  key={tpl.id}
-                  className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm overflow-hidden"
-                >
-                  <div
-                    className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                    onClick={() => toggleExpand(tpl.id)}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div
-                        className={cn(
-                          'p-2 rounded-xl flex-shrink-0',
-                          tpl.is_active
-                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
-                        )}
-                      >
-                        <Workflow className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-slate-900 dark:text-white truncate">
-                            {tpl.name}
-                          </p>
-                          <span
-                            className={cn(
-                              'text-[10px] font-medium px-2 py-0.5 rounded-md',
-                              tpl.is_active
-                                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
-                            )}
-                          >
-                            {tpl.is_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                          {tpl.steps?.length ?? 0} step{(tpl.steps?.length ?? 0) !== 1 ? 's' : ''}
-                          {tpl.description ? ` · ${tpl.description}` : ''}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void handleToggleActive(tpl); }}
-                        className={cn(
-                          'p-2 rounded-lg transition-colors',
-                          tpl.is_active
-                            ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
-                            : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        )}
-                        title={tpl.is_active ? 'Deactivate' : 'Activate'}
-                      >
-                        <Power className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void handleDelete(tpl); }}
-                        className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                      {isOpen ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-                    </div>
-                  </div>
-
-                  {isOpen && (
-                    <div className="px-4 pb-4 pt-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30">
-                      {tpl.steps && tpl.steps.length > 0 ? (
-                        <div className="flex flex-wrap items-center gap-2 py-2">
-                          {tpl.steps.map((step, i) => (
-                            <div key={step.id} className="flex items-center gap-2">
-                              <div
-                                className={cn(
-                                  'flex items-center gap-2 px-3 py-2 rounded-xl border',
-                                  step.is_info_only
-                                    ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20'
-                                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'
-                                )}
-                              >
-                                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-bold flex-shrink-0">
-                                  {step.step_order}
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                                    {step.step_label}
-                                  </p>
-                                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                                    {step.role_name}
-                                    {step.is_info_only && ' · info only'}
-                                  </p>
-                                </div>
-                              </div>
-                              {i < tpl.steps!.length - 1 && (
-                                <ArrowRight className="w-4 h-4 text-slate-300 dark:text-slate-600 flex-shrink-0" />
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-slate-400 py-2">No steps defined.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <button
+          onClick={openCreate}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          Buat Template
+        </button>
       </div>
 
-      {/* Modal */}
+      {/* Templates list */}
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        </div>
+      ) : templates.length === 0 ? (
+        <div className="py-16 text-center text-slate-500 dark:text-slate-400">
+          Belum ada template workflow
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {templates.map(tpl => (
+            <div
+              key={tpl.id}
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-5 border-b border-slate-100 dark:border-slate-700">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-slate-900 dark:text-white">
+                      {tpl.name}
+                    </h3>
+                    {tpl.is_active ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">
+                        <ToggleRight className="w-3.5 h-3.5" />
+                        Aktif
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-slate-500 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">
+                        <ToggleLeft className="w-3.5 h-3.5" />
+                        Nonaktif
+                      </span>
+                    )}
+                  </div>
+                  {tpl.description && (
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                      {tpl.description}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleToggleActive(tpl)}
+                    disabled={togglingId === tpl.id}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50',
+                      tpl.is_active
+                        ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                        : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                    )}
+                  >
+                    {togglingId === tpl.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : tpl.is_active ? (
+                      <ToggleLeft className="w-4 h-4" />
+                    ) : (
+                      <ToggleRight className="w-4 h-4" />
+                    )}
+                    {tpl.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(tpl)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Hapus
+                  </button>
+                </div>
+              </div>
+
+              {/* Step chain */}
+              <div className="p-5">
+                {tpl.workflow_steps && tpl.workflow_steps.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {tpl.workflow_steps.map((step, idx) => (
+                      <div key={step.id} className="flex items-center gap-2">
+                        <div
+                          className={cn(
+                            'inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-sm',
+                            step.is_info_only
+                              ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                              : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300'
+                          )}
+                        >
+                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-500 text-white text-xs font-bold">
+                            {step.step_order}
+                          </span>
+                          <span className="font-medium">{step.step_label}</span>
+                          <span className="text-xs text-slate-400">
+                            · {roleName(step.role_id)}
+                          </span>
+                          {step.is_info_only && (
+                            <Info className="w-3.5 h-3.5 text-blue-500" />
+                          )}
+                        </div>
+                        {idx < tpl.workflow_steps!.length - 1 && (
+                          <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 flex-shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">Tidak ada langkah</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Create Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="w-full max-w-2xl p-6 rounded-2xl bg-white dark:bg-slate-900 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">New Workflow Template</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-6">
+            <div className="flex items-center justify-between mb-4 sticky top-0">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                Buat Template Workflow
+              </h2>
               <button
                 onClick={() => setShowModal(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
-                <X className="w-5 h-5" />
+                <XCircle className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Name <span className="text-red-500">*</span>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                  Nama Template <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.name}
-                  onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                  placeholder="e.g. Purchase Approval"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  placeholder="contoh: Approval Peminjaman Ruangan"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
-
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
-                  Description
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                  Deskripsi
                 </label>
                 <input
                   type="text"
                   value={form.description}
-                  onChange={(e) => setForm((s) => ({ ...s, description: e.target.value }))}
-                  placeholder="Short summary"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={e =>
+                    setForm({ ...form, description: e.target.value })
+                  }
+                  placeholder="Deskripsi singkat..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <button
-                  type="button"
-                  onClick={() => setForm((s) => ({ ...s, is_active: !s.is_active }))}
-                  className={cn(
-                    'relative w-11 h-6 rounded-full transition-colors',
-                    form.is_active ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-700'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform',
-                      form.is_active && 'translate-x-5'
-                    )}
-                  />
-                </button>
-                <span className="text-sm text-slate-700 dark:text-slate-300">Active</span>
-              </label>
-
-              {/* Step builder */}
+              {/* Steps builder */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Steps
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Langkah-langkah <span className="text-red-500">*</span>
                   </label>
                   <button
                     onClick={addStep}
-                    className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Add step
+                    <Plus className="w-4 h-4" />
+                    Tambah langkah
                   </button>
                 </div>
-
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {form.steps.map((step, idx) => (
                     <div
                       key={idx}
-                      className="flex items-start gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50"
+                      className="flex items-start gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30"
                     >
-                      <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-500 text-white text-xs font-bold flex-shrink-0 mt-0.5">
-                        {step.step_order}
-                      </span>
+                      <div className="flex flex-col items-center gap-1 pt-1">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-bold">
+                          {idx + 1}
+                        </span>
+                      </div>
                       <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
                           type="text"
                           value={step.step_label}
-                          onChange={(e) => updateStep(idx, { step_label: e.target.value })}
-                          placeholder="Step label"
-                          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          onChange={e =>
+                            updateStep(idx, { step_label: e.target.value })
+                          }
+                          placeholder="Label langkah (cth: Review Operator)"
+                          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                         />
                         <select
-                          value={step.role_name}
-                          onChange={(e) => updateStep(idx, { role_name: e.target.value })}
-                          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={step.role_id}
+                          onChange={e =>
+                            updateStep(idx, { role_id: e.target.value })
+                          }
+                          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                         >
-                          <option value="">Select role…</option>
-                          {roles.filter((r) => r.is_active).map((r) => (
-                            <option key={r.id} value={r.name}>{r.name}</option>
+                          <option value="">— Pilih Role —</option>
+                          {roles.map(r => (
+                            <option key={r.id} value={r.id}>
+                              {r.name} (Lv {r.level})
+                            </option>
                           ))}
                         </select>
-                        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 sm:col-span-2 cursor-pointer">
+                      </div>
+                      <div className="flex flex-col items-center gap-1">
+                        <label className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={step.is_info_only}
-                            onChange={(e) => updateStep(idx, { is_info_only: e.target.checked })}
-                            className="rounded border-slate-300 dark:border-slate-600 text-blue-500 focus:ring-blue-500"
+                            onChange={e =>
+                              updateStep(idx, { is_info_only: e.target.checked })
+                            }
+                            className="rounded border-slate-300 text-blue-500 focus:ring-blue-500"
                           />
-                          <Info className="w-3.5 h-3.5 text-blue-400" />
-                          Info only (no approval required)
+                          Info only
                         </label>
                       </div>
                       <div className="flex flex-col gap-1">
                         <button
                           onClick={() => moveStep(idx, -1)}
                           disabled={idx === 0}
-                          className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-30 transition-colors"
+                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-30"
+                          title="Naik"
                         >
-                          <ChevronUp className="w-4 h-4" />
+                          <GripVertical className="w-4 h-4 rotate-180" />
                         </button>
                         <button
                           onClick={() => moveStep(idx, 1)}
                           disabled={idx === form.steps.length - 1}
-                          className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-30 transition-colors"
+                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-30"
+                          title="Turun"
                         >
-                          <ChevronDown className="w-4 h-4" />
+                          <ArrowDown className="w-4 h-4" />
                         </button>
                       </div>
-                      <button
-                        onClick={() => removeStep(idx)}
-                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex-shrink-0 mt-0.5"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {form.steps.length > 1 && (
+                        <button
+                          onClick={() => removeStep(idx)}
+                          className="p-1 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          title="Hapus langkah"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
+
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm({ ...form, is_active: !form.is_active })
+                  }
+                  className={cn(
+                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                    form.is_active ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                      form.is_active ? 'translate-x-6' : 'translate-x-1'
+                    )}
+                  />
+                </button>
+                <span className="text-sm text-slate-700 dark:text-slate-300">
+                  Template aktif
+                </span>
+              </label>
             </div>
 
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
               >
-                Cancel
+                Batal
               </button>
               <button
-                onClick={() => void handleSave()}
+                onClick={handleCreate}
                 disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Workflow className="w-4 h-4" />}
-                Create Template
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Buat Template
               </button>
             </div>
           </div>

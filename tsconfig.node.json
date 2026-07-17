@@ -8,7 +8,8 @@
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "noEmit": true,
+    "composite": true,
+    "noEmit": false,
     "strict": true
   },
   "include": ["vite.config.ts"]
