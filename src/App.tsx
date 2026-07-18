@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode } from 'react';
 import { useAuth } from './context/AuthContext';
-import { supabase } from './lib/supabase';
 import Toast from './components/Toast';
 
 import AuthPage from './pages/AuthPage';
@@ -56,28 +55,12 @@ function RedirectIfAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// FIX: AdminRoute now reads `isAdmin` from AuthContext (which fetches admin_users at login)
+// instead of re-querying admin_users itself. This ensures the role check is consistent
+// with the session and refreshable via refreshAdminProfile().
 function AdminRoute({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const check = async () => {
-      if (user) {
-        const { data } = await supabase
-          .from('admin_users')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .single();
-        setIsAdmin(!!data);
-      } else {
-        setIsAdmin(false);
-      }
-    };
-    if (!loading) check();
-  }, [user, loading]);
-
-  if (loading || isAdmin === null) return <Spinner />;
+  const { user, loading, isAdmin } = useAuth();
+  if (loading) return <Spinner />;
   if (!user) return <Navigate to="/auth" replace />;
   if (!isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;

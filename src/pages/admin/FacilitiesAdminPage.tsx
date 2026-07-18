@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
 import {
-  Building2, Plus, Edit2, Trash2, X, Loader2, MapPin, Users,
+  Building2, Plus, Pencil, Trash2, X, Loader2, AlertCircle, MapPin, Users,
 } from 'lucide-react';
 
 interface Facility {
@@ -13,7 +12,6 @@ interface Facility {
   location: string | null;
   capacity: number | null;
   image_url: string | null;
-  created_at: string;
   facility_type: string | null;
   category: string | null;
   department: string | null;
@@ -21,9 +19,10 @@ interface Facility {
   status: string | null;
   manager_name: string | null;
   manager_role: string | null;
+  created_at: string;
 }
 
-interface FormData {
+interface FormState {
   name: string;
   description: string;
   location: string;
@@ -34,11 +33,11 @@ interface FormData {
   department: string;
 }
 
-const emptyForm: FormData = {
+const emptyForm: FormState = {
   name: '',
   description: '',
   location: '',
-  capacity: '0',
+  capacity: '',
   image_url: '',
   facility_type: '',
   category: '',
@@ -49,22 +48,21 @@ export default function FacilitiesAdminPage() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
-  const [form, setForm] = useState<FormData>(emptyForm);
+  const [editing, setEditing] = useState<Facility | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<Facility | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchFacilities = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('facilities')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('facilities').select('*').order('created_at', { ascending: false });
     if (error) {
       showToast('Gagal memuat data fasilitas', 'error');
-    } else {
-      setFacilities((data as unknown as Facility[]) || []);
+      setLoading(false);
+      return;
     }
+    setFacilities((data as unknown as Facility[]) || []);
     setLoading(false);
   }, []);
 
@@ -73,56 +71,56 @@ export default function FacilitiesAdminPage() {
   }, [fetchFacilities]);
 
   const openAdd = () => {
-    setEditingFacility(null);
+    setEditing(null);
     setForm(emptyForm);
     setModalOpen(true);
   };
 
-  const openEdit = (facility: Facility) => {
-    setEditingFacility(facility);
+  const openEdit = (f: Facility) => {
+    setEditing(f);
     setForm({
-      name: facility.name ?? '',
-      description: facility.description ?? '',
-      location: facility.location ?? '',
-      capacity: String(facility.capacity ?? 0),
-      image_url: facility.image_url ?? '',
-      facility_type: facility.facility_type ?? '',
-      category: facility.category ?? '',
-      department: facility.department ?? '',
+      name: f.name ?? '',
+      description: f.description ?? '',
+      location: f.location ?? '',
+      capacity: f.capacity?.toString() ?? '',
+      image_url: f.image_url ?? '',
+      facility_type: f.facility_type ?? '',
+      category: f.category ?? '',
+      department: f.department ?? '',
     });
     setModalOpen(true);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name) {
+  const handleSave = async () => {
+    if (!form.name.trim()) {
       showToast('Nama fasilitas wajib diisi', 'warning');
       return;
     }
     setSaving(true);
     const payload = {
-      name: form.name,
-      description: form.description || null,
-      location: form.location || null,
-      capacity: parseInt(form.capacity) || 0,
-      image_url: form.image_url || null,
-      facility_type: form.facility_type || null,
-      category: form.category || null,
-      department: form.department || null,
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      location: form.location.trim() || null,
+      capacity: form.capacity ? parseInt(form.capacity, 10) : null,
+      image_url: form.image_url.trim() || null,
+      facility_type: form.facility_type.trim() || null,
+      category: form.category.trim() || null,
+      department: form.department.trim() || null,
     };
     try {
-      if (editingFacility) {
-        const { error } = await supabase.from('facilities').update(payload).eq('id', editingFacility.id);
+      if (editing) {
+        const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
         if (error) throw error;
-        showToast('Fasilitas berhasil diperbarui', 'success');
+        showToast('Fasilitas diperbarui', 'success');
       } else {
         const { error } = await supabase.from('facilities').insert(payload);
         if (error) throw error;
-        showToast('Fasilitas berhasil ditambahkan', 'success');
+        showToast('Fasilitas ditambahkan', 'success');
       }
       setModalOpen(false);
-      fetchFacilities();
-    } catch {
+      await fetchFacilities();
+    } catch (e) {
+      console.error(e);
       showToast('Gagal menyimpan fasilitas', 'error');
     } finally {
       setSaving(false);
@@ -130,97 +128,107 @@ export default function FacilitiesAdminPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirmDelete) return;
-    const { error } = await supabase.from('facilities').delete().eq('id', confirmDelete.id);
-    if (error) {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      const { error } = await supabase.from('facilities').delete().eq('id', deleteId);
+      if (error) throw error;
+      showToast('Fasilitas dihapus', 'success');
+      setDeleteId(null);
+      await fetchFacilities();
+    } catch (e) {
+      console.error(e);
       showToast('Gagal menghapus fasilitas', 'error');
-    } else {
-      showToast('Fasilitas berhasil dihapus', 'success');
-      fetchFacilities();
+    } finally {
+      setDeleting(false);
     }
-    setConfirmDelete(null);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola data fasilitas</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data fasilitas dan ruangan</p>
         </div>
         <button onClick={openAdd} className="btn-primary flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Tambah Fasilitas
+          <Plus className="w-4 h-4" /> Tambah
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      ) : facilities.length === 0 ? (
-        <div className="card py-16 text-center">
-          <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada data fasilitas</p>
+      {facilities.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Building2 className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada fasilitas</p>
+          <p className="text-sm text-slate-400 mt-1">Tambahkan fasilitas baru untuk memulai</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {facilities.map(facility => (
-            <div key={facility.id} className="card overflow-hidden group">
-              {facility.image_url ? (
-                <div className="h-40 overflow-hidden bg-slate-100 dark:bg-slate-700">
-                  <img
-                    src={facility.image_url}
-                    alt={facility.name}
-                    className="w-full h-full object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                  />
-                </div>
-              ) : (
-                <div className="h-40 bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                  <Building2 className="w-12 h-12 text-white/80" />
-                </div>
-              )}
+          {facilities.map(f => (
+            <div key={f.id} className="card overflow-hidden group">
+              <div className="aspect-video bg-slate-100 dark:bg-slate-700/50 relative overflow-hidden">
+                {f.image_url ? (
+                  <img src={f.image_url} alt={f.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-600" />
+                  </div>
+                )}
+                {f.facility_type && (
+                  <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-medium bg-white/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300">
+                    {f.facility_type}
+                  </span>
+                )}
+              </div>
               <div className="p-4">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <h3 className="font-semibold text-slate-900 dark:text-white">{facility.name ?? '-'}</h3>
-                  {facility.facility_type && (
-                    <span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 flex-shrink-0">
-                      {facility.facility_type}
+                <h3 className="font-semibold text-slate-900 dark:text-white">{f.name}</h3>
+                {f.description && <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{f.description}</p>}
+                <div className="flex items-center gap-3 mt-3 text-sm text-slate-500 dark:text-slate-400">
+                  {f.location && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5" /> {f.location}
+                    </span>
+                  )}
+                  {f.capacity != null && (
+                    <span className="flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5" /> {f.capacity}
                     </span>
                   )}
                 </div>
-                {facility.description && (
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-3 line-clamp-2">
-                    {facility.description}
-                  </p>
+                {(f.category || f.department) && (
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    {f.category && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                        {f.category}
+                      </span>
+                    )}
+                    {f.department && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+                        {f.department}
+                      </span>
+                    )}
+                  </div>
                 )}
-                <div className="space-y-1.5 text-xs text-slate-500 dark:text-slate-400 mb-4">
-                  {facility.location && (
-                    <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5" /> {facility.location}
-                    </div>
-                  )}
-                  {facility.capacity != null && (
-                    <div className="flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" /> Kapasitas: {facility.capacity}
-                    </div>
-                  )}
-                  {facility.department && (
-                    <div className="flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5" /> {facility.department}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-end gap-1 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/50">
                   <button
-                    onClick={() => openEdit(facility)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                    onClick={() => openEdit(f)}
+                    className="p-2 rounded-lg text-slate-500 hover:bg-blue-100 hover:text-blue-600 dark:hover:bg-blue-900/30 transition-colors"
                   >
-                    <Edit2 className="w-4 h-4" /> Edit
+                    <Pencil className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setConfirmDelete(facility)}
-                    className="p-2 rounded-xl text-red-500 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                    onClick={() => setDeleteId(f.id)}
+                    className="p-2 rounded-lg text-slate-500 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -231,26 +239,25 @@ export default function FacilitiesAdminPage() {
         </div>
       )}
 
-      {/* Modal Form */}
+      {/* Add/Edit Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-              <h3 className="font-semibold text-slate-900 dark:text-white">
-                {editingFacility ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
-              </h3>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+          <div className="card w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                {editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
+              </h2>
+              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSave} className="p-5 space-y-4">
+            <div className="p-5 space-y-4">
               <div>
-                <label className="label">Nama Fasilitas</label>
+                <label className="label">Nama <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
-                  required
                   className="input"
                   placeholder="Nama fasilitas"
                 />
@@ -280,10 +287,10 @@ export default function FacilitiesAdminPage() {
                   <label className="label">Kapasitas</label>
                   <input
                     type="number"
-                    min="0"
                     value={form.capacity}
                     onChange={e => setForm({ ...form, capacity: e.target.value })}
                     className="input"
+                    placeholder="0"
                   />
                 </div>
               </div>
@@ -305,7 +312,7 @@ export default function FacilitiesAdminPage() {
                     value={form.facility_type}
                     onChange={e => setForm({ ...form, facility_type: e.target.value })}
                     className="input"
-                    placeholder="Tipe"
+                    placeholder="Mis. Ruang Kelas"
                   />
                 </div>
                 <div>
@@ -329,38 +336,39 @@ export default function FacilitiesAdminPage() {
                   placeholder="Departemen"
                 />
               </div>
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setModalOpen(false)} className="btn-secondary">
-                  Batal
-                </button>
-                <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {editingFacility ? 'Simpan' : 'Tambah'}
-                </button>
-              </div>
-            </form>
+            </div>
+            <div className="flex justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700">
+              <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
+              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {editing ? 'Simpan' : 'Tambah'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Delete confirm */}
-      {confirmDelete && (
+      {/* Delete Confirm */}
+      {deleteId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <Trash2 className="w-5 h-5 text-red-500" />
+          <div className="card w-full max-w-sm">
+            <div className="p-6 text-center">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-6 h-6 text-red-500" />
               </div>
-              <h3 className="font-semibold text-slate-900 dark:text-white">Hapus Fasilitas?</h3>
-            </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-              Yakin ingin menghapus "{confirmDelete.name}"? Tindakan ini tidak dapat dibatalkan.
-            </p>
-            <div className="flex items-center justify-end gap-3">
-              <button onClick={() => setConfirmDelete(null)} className="btn-secondary">Batal</button>
-              <button onClick={handleDelete} className="px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors">
-                Hapus
-              </button>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Hapus Fasilitas?</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Tindakan ini tidak dapat dibatalkan.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteId(null)} className="btn-secondary flex-1">Batal</button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Hapus
+                </button>
+              </div>
             </div>
           </div>
         </div>

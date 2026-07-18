@@ -3,32 +3,13 @@ import { useState, useEffect } from 'react';
 import { Menu, X, Moon, Sun, LogOut, User, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { supabase } from '../lib/supabase';
 import { brandConfig } from '../brand/config';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    const check = async () => {
-      if (user) {
-        const { data } = await supabase
-          .from('admin_users')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .single();
-        setIsAdmin(!!data);
-      } else {
-        setIsAdmin(false);
-      }
-    };
-    check();
-  }, [user]);
 
   const handleSignOut = async () => {
     await signOut();

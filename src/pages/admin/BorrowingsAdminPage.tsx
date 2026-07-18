@@ -15,8 +15,8 @@ import {
 } from '../../lib/workflow';
 import { showToast } from '../../components/Toast';
 import {
-  CheckCircle, XCircle, Clock, Loader2, Package, Calendar, User, Mail, Phone,
-  FileText, ChevronDown, ChevronUp, AlertCircle, ArrowRight, History,
+  CheckCircle, XCircle, Loader2, Package, Calendar, User, Mail, Phone,
+  FileText, ChevronDown, ChevronUp, ArrowRight, History,
 } from 'lucide-react';
 
 interface BorrowingItem {
@@ -91,34 +91,20 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export default function BorrowingsAdminPage() {
-  const { user } = useAuth();
+  const { user, adminProfile } = useAuth();
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [filteredBorrowings, setFilteredBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
   const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
 
-  // FIX: workflow cache stored in a ref so updating it does NOT trigger a re-render.
-  // Previously it was useState, and fetchBorrowings listed it in useCallback deps while
-  // also calling setWorkflowCache inside — creating an infinite render loop that kept
-  // the page in "Loading..." forever.
   const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
 
-  const fetchAdminUser = useCallback(async () => {
-    if (!user) return;
-    const { data } = await supabase
-      .from('admin_users')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single();
-    if (data) setAdminUser(data as unknown as AdminUser);
-  }, [user]);
+  const adminUser: AdminUser | null = adminProfile;
 
   const fetchBorrowings = useCallback(async () => {
     setLoading(true);
@@ -158,12 +144,8 @@ export default function BorrowingsAdminPage() {
   }, []);
 
   useEffect(() => {
-    fetchAdminUser();
-  }, [fetchAdminUser]);
-
-  useEffect(() => {
-    if (adminUser) fetchBorrowings();
-  }, [adminUser, fetchBorrowings]);
+    fetchBorrowings();
+  }, [fetchBorrowings]);
 
   const displayList = (adminUser?.role === 'superadmin' ? borrowings : filteredBorrowings).filter(b => {
     if (statusFilter !== 'all' && b.status !== statusFilter) return false;
