@@ -1,33 +1,58 @@
-import { useEffect, useState, FormEvent } from 'react';
-import {
-  AlertCircle, Send, CheckCircle2, Plus, MapPin, Calendar,
-  User, Mail, Phone, Package, Loader2, RotateCcw, Image as ImageIcon,
-} from 'lucide-react';
+import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { showToast } from '../components/Toast';
 import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
+import { showToast } from '../components/Toast';
+import {
+  Wrench, Loader2, Send, CheckCircle, AlertTriangle, MapPin,
+  Mail, Phone, Building2, Package, Plus, Calendar, Clock,
+} from 'lucide-react';
 
 interface DamageReport {
   id: string;
-  inventory_id: string | null;
   reporter_name: string;
+  reporter_email: string;
+  reporter_unit: string;
+  reporter_phone: string | null;
   description: string;
+  location: string;
   image_url: string | null;
   severity: 'minor' | 'moderate' | 'severe';
   status: 'pending' | 'in_progress' | 'resolved';
   resolution_notes: string | null;
   created_at: string;
   resolved_at: string | null;
-  reporter_unit: string | null;
-  reporter_email: string | null;
-  reporter_phone: string | null;
-  location: string | null;
 }
 
-interface FormState {
+const severityConfig: Record<string, { label: string; color: string; cardColor: string; icon: string }> = {
+  minor: {
+    label: 'Ringan',
+    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    cardColor: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20',
+    icon: '🟢',
+  },
+  moderate: {
+    label: 'Sedang',
+    color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    cardColor: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20',
+    icon: '🟡',
+  },
+  severe: {
+    label: 'Berat',
+    color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    cardColor: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20',
+    icon: '🔴',
+  },
+};
+
+const statusConfig: Record<string, { label: string; color: string }> = {
+  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+};
+
+interface FormData {
   reporter_name: string;
   reporter_email: string;
   reporter_unit: string;
@@ -38,7 +63,7 @@ interface FormState {
   image_url: string;
 }
 
-const initialForm: FormState = {
+const initialForm: FormData = {
   reporter_name: '',
   reporter_email: '',
   reporter_unit: '',
@@ -49,91 +74,63 @@ const initialForm: FormState = {
   image_url: '',
 };
 
-const severityOptions: { value: 'minor' | 'moderate' | 'severe'; label: string; classes: string; border: string }[] = [
-  { value: 'minor', label: 'Ringan', classes: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400', border: 'border-emerald-300 dark:border-emerald-700' },
-  { value: 'moderate', label: 'Sedang', classes: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400', border: 'border-amber-300 dark:border-amber-700' },
-  { value: 'severe', label: 'Berat', classes: 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400', border: 'border-red-300 dark:border-red-700' },
-];
-
-const statusConfig: Record<string, { label: string; classes: string }> = {
-  pending: { label: 'Menunggu', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  in_progress: { label: 'Diproses', classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-  resolved: { label: 'Selesai', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-};
-
-const severityBadge: Record<string, { label: string; classes: string }> = {
-  minor: { label: 'Ringan', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  moderate: { label: 'Sedang', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  severe: { label: 'Berat', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
-};
-
 export default function ReportPage() {
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormData>(initialForm);
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [submittedReport, setSubmittedReport] = useState<DamageReport | null>(null);
-  const [reports, setReports] = useState<DamageReport[]>([]);
+  const [recentReports, setRecentReports] = useState<DamageReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  async function fetchReports(email?: string) {
-    const targetEmail = email || form.reporter_email;
-    if (!targetEmail) {
-      setReports([]);
+  const fetchRecentReports = async (email?: string) => {
+    const emailToUse = email || form.reporter_email;
+    if (!emailToUse) {
+      setRecentReports([]);
       setLoadingReports(false);
       return;
     }
+    setLoadingReports(true);
     try {
       const { data, error } = await supabase
         .from('damage_reports')
-        .select('id, inventory_id, reporter_name, description, image_url, severity, status, resolution_notes, created_at, resolved_at, reporter_unit, reporter_email, reporter_phone, location')
-        .eq('reporter_email', targetEmail)
+        .select('*')
+        .eq('reporter_email', emailToUse)
         .order('created_at', { ascending: false })
         .limit(10);
+
       if (error) throw error;
-      setReports((data as unknown as DamageReport[]) || []);
-    } catch (err) {
-      console.error('Error fetching reports:', err);
+      setRecentReports((data as unknown as DamageReport[]) || []);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoadingReports(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchReports();
+    fetchRecentReports();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleChange(field: keyof FormState, value: string) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
+  const validate = (): boolean => {
+    const e: Record<string, string> = {};
+    if (!form.reporter_name.trim()) e.reporter_name = 'Nama pelapor wajib diisi';
+    if (!form.reporter_email.trim()) e.reporter_email = 'Email wajib diisi';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.reporter_email)) e.reporter_email = 'Format email tidak valid';
+    if (!form.reporter_unit.trim()) e.reporter_unit = 'Unit/Kelas wajib diisi';
+    if (!form.description.trim()) e.description = 'Nama barang wajib diisi';
+    if (!form.location.trim()) e.location = 'Lokasi wajib diisi';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
 
-  function validate(): boolean {
-    if (!form.reporter_name.trim()) {
-      showToast('Nama pelapor wajib diisi', 'error');
-      return false;
-    }
-    if (!form.reporter_email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.reporter_email)) {
-      showToast('Email pelapor tidak valid', 'error');
-      return false;
-    }
-    if (!form.reporter_unit.trim()) {
-      showToast('Unit/Kelas wajib diisi', 'error');
-      return false;
-    }
-    if (!form.description.trim()) {
-      showToast('Nama barang/item wajib diisi', 'error');
-      return false;
-    }
-    if (!form.location.trim()) {
-      showToast('Lokasi wajib diisi', 'error');
-      return false;
-    }
-    return true;
-  }
-
-  async function handleSubmit(e: FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    if (!validate()) {
+      showToast('Mohon lengkapi semua field yang wajib diisi', 'error');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -147,319 +144,296 @@ export default function ReportPage() {
         image_url: form.image_url.trim() || null,
         status: 'pending' as const,
       };
-      const { data, error } = await supabase.from('damage_reports').insert(payload).select('*').single();
+
+      const { data, error } = await supabase
+        .from('damage_reports')
+        .insert(payload)
+        .select('*')
+        .single();
+
       if (error) throw error;
-      const newReport = data as unknown as DamageReport;
-      setSubmittedReport(newReport);
-      setSuccess(true);
+
+      const report = data as unknown as DamageReport;
+      setSubmittedReport(report);
       showToast('Laporan kerusakan berhasil dikirim!', 'success');
-      fetchReports(form.reporter_email);
+      fetchRecentReports(form.reporter_email);
     } catch (err) {
-      console.error('Error submitting report:', err);
+      console.error(err);
       showToast('Gagal mengirim laporan. Silakan coba lagi.', 'error');
     } finally {
       setSubmitting(false);
     }
-  }
+  };
 
-  function resetForm() {
+  const resetForm = () => {
     setForm(initialForm);
-    setSuccess(false);
+    setErrors({});
     setSubmittedReport(null);
-  }
+  };
 
-  const inputClasses =
-    'w-full px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors';
+  const updateField = (field: keyof FormData, value: string) => {
+    setForm(prev => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors(prev => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <main className="flex-1 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center">
-              <AlertCircle className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white">Laporan Kerusakan</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Laporkan kerusakan sarana atau prasarana</p>
-            </div>
-          </div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Wrench className="w-6 h-6 text-blue-500" /> Laporan Kerusakan
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Laporkan kerusakan sarana dan prasarana</p>
         </div>
 
-        {success && submittedReport ? (
-          /* Success State */
-          <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 text-center animate-fade-in">
+        {/* Success State */}
+        {submittedReport ? (
+          <div className="card p-8 text-center">
             <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+              <CheckCircle className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
             </div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Laporan Berhasil Dikirim!</h2>
-            <p className="text-slate-500 dark:text-slate-400 mb-6">Laporan Anda akan ditinjau oleh tim sarpras. Anda akan mendapat informasi melalui email.</p>
+            <p className="text-slate-500 dark:text-slate-400 mb-6">Laporan Anda akan ditinjau oleh tim sarana dan prasarana.</p>
 
-            {/* Summary */}
-            <div className="text-left rounded-2xl bg-slate-50 dark:bg-slate-700/30 p-5 mb-6 space-y-3">
-              <div className="flex items-center gap-2 text-sm">
-                <Package className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-500 dark:text-slate-400">Item:</span>
-                <span className="font-medium text-slate-900 dark:text-white">{submittedReport.description}</span>
+            {/* Report Summary */}
+            <div className="text-left max-w-md mx-auto space-y-3 p-5 rounded-xl bg-slate-50 dark:bg-slate-700/30 mb-6">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Pelapor</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{submittedReport.reporter_name}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <MapPin className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-500 dark:text-slate-400">Lokasi:</span>
-                <span className="font-medium text-slate-900 dark:text-white">{submittedReport.location}</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Unit/Kelas</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{submittedReport.reporter_unit}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <User className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-500 dark:text-slate-400">Pelapor:</span>
-                <span className="font-medium text-slate-900 dark:text-white">{submittedReport.reporter_name} ({submittedReport.reporter_unit})</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Barang</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{submittedReport.description}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <AlertCircle className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-500 dark:text-slate-400">Keparahan:</span>
-                <span className={cn('px-2 py-0.5 rounded-md text-xs font-medium', severityBadge[submittedReport.severity].classes)}>
-                  {severityBadge[submittedReport.severity].label}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Lokasi</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{submittedReport.location}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Keparahan</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${severityConfig[submittedReport.severity].color}`}>
+                  {severityConfig[submittedReport.severity].label}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Status</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusConfig[submittedReport.status].color}`}>
+                  {statusConfig[submittedReport.status].label}
                 </span>
               </div>
             </div>
 
             <button
               onClick={resetForm}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold hover:shadow-lg transition-all"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
             >
-              <RotateCcw className="w-5 h-5" />
-              Buat Laporan Lain
+              <Plus className="w-5 h-5" /> Buat Laporan Lain
             </button>
           </div>
         ) : (
           /* Form */
-          <form onSubmit={handleSubmit} className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-6 md:p-8 space-y-5">
-            {/* Reporter Name */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Nama Pelapor <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <form onSubmit={handleSubmit} className="card p-6 space-y-5">
+            {/* Reporter Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Nama Pelapor <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={form.reporter_name}
-                  onChange={(e) => handleChange('reporter_name', e.target.value)}
-                  placeholder="Masukkan nama lengkap"
-                  required
-                  className={cn(inputClasses, 'pl-10')}
+                  onChange={e => updateField('reporter_name', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  placeholder="Masukkan nama Anda"
                 />
+                {errors.reporter_name && <p className="text-xs text-red-500 mt-1">{errors.reporter_name}</p>}
               </div>
-            </div>
-
-            {/* Reporter Email */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Email Pelapor <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Email Pelapor <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="email"
                   value={form.reporter_email}
-                  onChange={(e) => handleChange('reporter_email', e.target.value)}
-                  placeholder="email@sekolah.sch.id"
-                  required
-                  className={cn(inputClasses, 'pl-10')}
+                  onChange={e => updateField('reporter_email', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  placeholder="email@example.com"
                 />
+                {errors.reporter_email && <p className="text-xs text-red-500 mt-1">{errors.reporter_email}</p>}
               </div>
             </div>
 
-            {/* Reporter Unit */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Unit/Kelas <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.reporter_unit}
-                onChange={(e) => handleChange('reporter_unit', e.target.value)}
-                placeholder="Contoh: XII IPA 1 / TU / Lab Komputer"
-                required
-                className={inputClasses}
-              />
-            </div>
-
-            {/* Reporter Phone */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                No. Telepon <span className="text-slate-400 text-xs">(opsional)</span>
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Unit/Kelas <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.reporter_unit}
+                  onChange={e => updateField('reporter_unit', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  placeholder="Contoh: Kelas 10A, Unit TU"
+                />
+                {errors.reporter_unit && <p className="text-xs text-red-500 mt-1">{errors.reporter_unit}</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  No. Telepon <span className="text-slate-400 text-xs">(opsional)</span>
+                </label>
                 <input
                   type="text"
                   value={form.reporter_phone}
-                  onChange={(e) => handleChange('reporter_phone', e.target.value)}
+                  onChange={e => updateField('reporter_phone', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                   placeholder="08xxxxxxxxxx"
-                  className={cn(inputClasses, 'pl-10')}
                 />
               </div>
             </div>
 
-            {/* Description (Item name) */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Nama Barang/Item <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            {/* Item Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Nama Barang/Item <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={form.description}
-                  onChange={(e) => handleChange('description', e.target.value)}
-                  placeholder="Contoh: Proyektor ruang kelas, AC lab komputer"
-                  required
-                  className={cn(inputClasses, 'pl-10')}
+                  onChange={e => updateField('description', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  placeholder="Contoh: Proyektor Ruang A101"
                 />
+                {errors.description && <p className="text-xs text-red-500 mt-1">{errors.description}</p>}
               </div>
-            </div>
-
-            {/* Location */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Lokasi <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
+                  Lokasi <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={form.location}
-                  onChange={(e) => handleChange('location', e.target.value)}
-                  placeholder="Contoh: Ruang Kelas XII IPA 1"
-                  required
-                  className={cn(inputClasses, 'pl-10')}
+                  onChange={e => updateField('location', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  placeholder="Contoh: Ruang A101, Lantai 1"
                 />
+                {errors.location && <p className="text-xs text-red-500 mt-1">{errors.location}</p>}
               </div>
             </div>
 
             {/* Severity */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
                 Tingkat Keparahan <span className="text-red-500">*</span>
               </label>
               <div className="grid grid-cols-3 gap-3">
-                {severityOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => handleChange('severity', opt.value)}
-                    className={cn(
-                      'rounded-2xl border-2 p-4 text-center transition-all',
-                      form.severity === opt.value
-                        ? cn(opt.classes, opt.border, 'ring-2 ring-offset-0')
-                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600',
-                    )}
-                  >
-                    <AlertCircle className={cn('w-6 h-6 mx-auto mb-1.5', form.severity === opt.value ? '' : 'text-slate-400')} />
-                    <span className="text-sm font-medium block">{opt.label}</span>
-                  </button>
-                ))}
+                {(['minor', 'moderate', 'severe'] as const).map(sev => {
+                  const cfg = severityConfig[sev];
+                  const isSelected = form.severity === sev;
+                  return (
+                    <button
+                      key={sev}
+                      type="button"
+                      onClick={() => updateField('severity', sev)}
+                      className={`p-4 rounded-xl border-2 transition-all text-center ${isSelected
+                        ? `${cfg.cardColor} ring-2 ring-blue-500`
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                        }`}
+                    >
+                      <div className="text-2xl mb-1">{cfg.icon}</div>
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">{cfg.label}</p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {/* Image URL */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 block">
                 URL Foto <span className="text-slate-400 text-xs">(opsional)</span>
               </label>
-              <div className="relative">
-                <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="text"
-                  value={form.image_url}
-                  onChange={(e) => handleChange('image_url', e.target.value)}
-                  placeholder="https://link-foto.com/foto.jpg"
-                  className={cn(inputClasses, 'pl-10')}
-                />
-              </div>
+              <input
+                type="text"
+                value={form.image_url}
+                onChange={e => updateField('image_url', e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                placeholder="https://example.com/foto-kerusakan.jpg"
+              />
             </div>
 
             {/* Submit */}
             <button
               type="submit"
               disabled={submitting}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Mengirim Laporan...
-                </>
+                <><Loader2 className="w-5 h-5 animate-spin" /> Mengirim...</>
               ) : (
-                <>
-                  <Send className="w-5 h-5" />
-                  Kirim Laporan
-                </>
+                <><Send className="w-5 h-5" /> Kirim Laporan</>
               )}
             </button>
           </form>
         )}
 
         {/* Recent Reports */}
-        {form.reporter_email && (
+        {!submittedReport && (
           <div className="mt-8">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-500" />
-              Laporan Terbaru Anda
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-blue-500" /> Laporan Terbaru Anda
             </h2>
             {loadingReports ? (
-              <div className="space-y-3">
-                {[1, 2].map((i) => (
-                  <div key={i} className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
-                    <div className="h-4 w-1/2 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mb-2" />
-                    <div className="h-3 w-1/3 bg-slate-100 dark:bg-slate-700/50 rounded animate-pulse" />
-                  </div>
-                ))}
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
               </div>
-            ) : reports.length === 0 ? (
-              <EmptyState icon={AlertCircle} title="Belum ada laporan" description="Laporan yang Anda buat akan muncul di sini" />
+            ) : recentReports.length === 0 ? (
+              <div className="card p-6">
+                <EmptyState icon={Wrench} title="Belum ada laporan" description="Laporan yang Anda buat akan muncul di sini" />
+              </div>
             ) : (
               <div className="space-y-3">
-                {reports.map((r) => {
-                  const sev = severityBadge[r.severity] || severityBadge.minor;
-                  const st = statusConfig[r.status] || statusConfig.pending;
+                {recentReports.map(report => {
+                  const sev = severityConfig[report.severity] || severityConfig.minor;
+                  const st = statusConfig[report.status] || statusConfig.pending;
                   return (
-                    <div
-                      key={r.id}
-                      className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div className="flex items-center gap-2">
-                          <Package className="w-5 h-5 text-slate-400 flex-shrink-0" />
-                          <h3 className="font-medium text-slate-900 dark:text-white">{r.description}</h3>
+                    <div key={report.id} className="card p-5">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900 dark:text-white truncate">{report.description}</p>
+                            <div className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                              <MapPin className="w-3.5 h-3.5" /> {report.location}
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex gap-1.5 flex-shrink-0">
-                          <span className={cn('px-2 py-0.5 rounded-md text-xs font-medium', sev.classes)}>
-                            {sev.label}
-                          </span>
-                          <span className={cn('px-2 py-0.5 rounded-md text-xs font-medium', st.classes)}>
-                            {st.label}
-                          </span>
+                        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${sev.color}`}>{sev.label}</span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${st.color}`}>{st.label}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-                        {r.location && (
-                          <span className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3" />
-                            {r.location}
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
-                          {new Date(r.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </span>
+                      <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-slate-100 dark:border-slate-700 text-xs text-slate-400 dark:text-slate-500">
+                        <span className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" /> {report.reporter_unit}</span>
+                        <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> {report.reporter_email}</span>
+                        {report.reporter_phone && <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> {report.reporter_phone}</span>}
+                        <span className="ml-auto flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> {new Date(report.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                       </div>
-                      {r.resolution_notes && (
-                        <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded-lg">
-                          Resolusi: {r.resolution_notes}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -467,7 +441,9 @@ export default function ReportPage() {
             )}
           </div>
         )}
-      </main>
+      </div>
+
+      <div className="flex-1" />
       <Footer />
     </div>
   );

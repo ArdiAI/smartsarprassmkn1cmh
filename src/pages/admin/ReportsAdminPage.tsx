@@ -1,17 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
 import {
-  FileText, Loader2, Search, Wrench, CheckCircle, Clock, X,
+  Wrench, Loader2, Search, X, AlertTriangle, MapPin, User, Mail, Phone, Clock,
 } from 'lucide-react';
 
 interface DamageReport {
   id: string;
   inventory_id: string | null;
   reporter_name: string;
-  description: string;
+  description: string | null;
   image_url: string | null;
   severity: string;
   status: string;
@@ -22,7 +22,11 @@ interface DamageReport {
   reporter_email: string | null;
   reporter_phone: string | null;
   location: string | null;
-  inventory: { name: string } | null;
+}
+
+interface InventoryLookup {
+  id: string;
+  name: string;
 }
 
 const severityConfig: Record<string, { label: string; color: string }> = {
@@ -37,40 +41,67 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
 };
 
+const statusFlow: Record<string, string> = {
+  pending: 'in_progress',
+  in_progress: 'resolved',
+};
+
+const statusActionLabel: Record<string, string> = {
+  pending: 'Proses',
+  in_progress: 'Selesaikan',
+};
+
 export default function ReportsAdminPage() {
   const { hasPermission } = useAuth();
   const canManage = hasPermission('reports', 'manage');
 
   const [reports, setReports] = useState<DamageReport[]>([]);
+  const [inventoryMap, setInventoryMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<DamageReport | null>(null);
-  const [resolutionNotes, setResolutionNotes] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [notesModal, setNotesModal] = useState<DamageReport | null>(null);
+  const [notesText, setNotesText] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('damage_reports')
-      .select('*, inventory(name)')
-      .order('created_at', { ascending: false });
-    if (error) {
+    try {
+      const { data, error } = await supabase
+        .from('damage_reports')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const list = (data as unknown as DamageReport[]) || [];
+      setReports(list);
+
+      // Build inventory lookup
+      const invIds = [...new Set(list.map(r => r.inventory_id).filter(Boolean) as string[])];
+      if (invIds.length > 0) {
+        const { data: invData } = await supabase
+          .from('inventory')
+          .select('id, name')
+          .in('id', invIds);
+        const inv = (invData as unknown as InventoryLookup[]) || [];
+        const map: Record<string, string> = {};
+        for (const i of inv) map[i.id] = i.name;
+        setInventoryMap(map);
+      }
+    } catch (e) {
+      console.error(e);
       showToast('Gagal memuat laporan kerusakan', 'error');
+    } finally {
       setLoading(false);
-      return;
     }
-    setReports((data as unknown as DamageReport[]) ?? []);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
 
-  const filtered = reports.filter((r) => {
+  const filtered = reports.filter(r => {
     if (severityFilter !== 'all' && r.severity !== severityFilter) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (search) {
@@ -84,29 +115,57 @@ export default function ReportsAdminPage() {
     return true;
   });
 
-  const openManage = (r: DamageReport) => {
-    setEditing(r);
-    setResolutionNotes(r.resolution_notes ?? '');
-    setModalOpen(true);
-  };
-
-  const handleUpdateStatus = async (status: string, notes?: string) => {
-    if (!editing) return;
-    setSaving(true);
-    const payload: Record<string, unknown> = { status };
-    if (notes !== undefined) payload.resolution_notes = notes;
-    if (status === 'resolved') payload.resolved_at = new Date().toISOString();
-    const { error } = await supabase.from('damage_reports').update(payload).eq('id', editing.id);
-    if (error) {
-      showToast('Gagal memperbarui status', 'error');
-      setSaving(false);
+  const handleAdvanceStatus = async (report: DamageReport) => {
+    if (!canManage) {
+      showToast('Anda tidak memiliki izin untuk mengubah status', 'error');
       return;
     }
-    showToast('Status diperbarui', 'success');
-    setModalOpen(false);
-    setEditing(null);
-    setSaving(false);
-    await fetchReports();
+    const next = statusFlow[report.status];
+    if (!next) return;
+    setActionLoading(report.id);
+    try {
+      const payload: Record<string, string | null> = { status: next };
+      if (next === 'resolved') payload.resolved_at = new Date().toISOString();
+      const { error } = await supabase.from('damage_reports').update(payload).eq('id', report.id);
+      if (error) throw error;
+      showToast(`Status diperbarui ke "${statusConfig[next].label}"`, 'success');
+      await fetchReports();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal memperbarui status', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const openNotes = (report: DamageReport) => {
+    setNotesModal(report);
+    setNotesText(report.resolution_notes ?? '');
+  };
+
+  const handleSaveNotes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notesModal) return;
+    if (!canManage) {
+      showToast('Anda tidak memiliki izin untuk mengelola laporan', 'error');
+      return;
+    }
+    setSavingNotes(true);
+    try {
+      const { error } = await supabase
+        .from('damage_reports')
+        .update({ resolution_notes: notesText.trim() || null })
+        .eq('id', notesModal.id);
+      if (error) throw error;
+      showToast('Catatan resolusi disimpan', 'success');
+      setNotesModal(null);
+      await fetchReports();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal menyimpan catatan', 'error');
+    } finally {
+      setSavingNotes(false);
+    }
   };
 
   if (loading) {
@@ -121,7 +180,7 @@ export default function ReportsAdminPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Laporan Kerusakan</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola laporan kerusakan barang</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Tinjau dan kelola laporan kerusakan barang</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -131,13 +190,13 @@ export default function ReportsAdminPage() {
             type="text"
             placeholder="Cari pelapor, deskripsi, atau lokasi..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={e => setSearch(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
           />
         </div>
         <select
           value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
+          onChange={e => setSeverityFilter(e.target.value)}
           className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
         >
           <option value="all">Semua Tingkat</option>
@@ -147,7 +206,7 @@ export default function ReportsAdminPage() {
         </select>
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={e => setStatusFilter(e.target.value)}
           className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
         >
           <option value="all">Semua Status</option>
@@ -160,53 +219,79 @@ export default function ReportsAdminPage() {
       {filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <FileText className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+            <Wrench className="w-8 h-8 text-slate-300 dark:text-slate-500" />
           </div>
           <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada laporan</p>
+          <p className="text-sm text-slate-400 mt-1">Belum ada laporan kerusakan yang sesuai filter</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((r) => {
+        <div className="space-y-4">
+          {filtered.map(r => {
             const sev = severityConfig[r.severity] || severityConfig.minor;
-            const st = statusConfig[r.status] || statusConfig.pending;
+            const sc = statusConfig[r.status] || statusConfig.pending;
+            const itemName = r.inventory_id ? (inventoryMap[r.inventory_id] ?? 'Barang tidak ditemukan') : null;
+            const nextStatus = statusFlow[r.status];
             return (
               <div key={r.id} className="card p-5">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.reporter_name}</h3>
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.reporter_name ?? 'Anonim'}</h3>
                       <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sev.color)}>{sev.label}</span>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', st.color)}>{st.label}</span>
+                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
                     </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                      {r.reporter_unit ?? '-'} · {new Date(r.created_at).toLocaleDateString('id-ID')}
-                    </p>
-                    {r.inventory?.name && (
-                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-                        <Wrench className="w-3.5 h-3.5 inline mr-1" /> {r.inventory.name}
-                      </p>
+                    {itemName && (
+                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Barang: {itemName}</p>
                     )}
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{r.description}</p>
-                    {r.location && (
-                      <p className="text-xs text-slate-500 mt-1">Lokasi: {r.location}</p>
+                    {r.description && (
+                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{r.description}</p>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 text-sm text-slate-500 dark:text-slate-400">
+                      {r.reporter_unit && (
+                        <div className="flex items-center gap-1.5"><User className="w-4 h-4" /> {r.reporter_unit}</div>
+                      )}
+                      {r.reporter_email && (
+                        <div className="flex items-center gap-1.5"><Mail className="w-4 h-4" /> {r.reporter_email}</div>
+                      )}
+                      {r.reporter_phone && (
+                        <div className="flex items-center gap-1.5"><Phone className="w-4 h-4" /> {r.reporter_phone}</div>
+                      )}
+                      {r.location && (
+                        <div className="flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {r.location}</div>
+                      )}
+                      <div className="flex items-center gap-1.5"><Clock className="w-4 h-4" /> {new Date(r.created_at).toLocaleString('id-ID')}</div>
+                    </div>
+                    {r.image_url && (
+                      <a href={r.image_url} target="_blank" rel="noreferrer" className="inline-block mt-3 text-sm text-blue-500 hover:underline">
+                        Lihat foto kerusakan
+                      </a>
                     )}
                     {r.resolution_notes && (
-                      <div className="mt-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30">
-                        <p className="text-xs font-medium text-slate-500 mb-1">Catatan Resolusi:</p>
-                        <p className="text-sm text-slate-700 dark:text-slate-300">{r.resolution_notes}</p>
+                      <div className="mt-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30 text-sm text-slate-600 dark:text-slate-300">
+                        <span className="font-medium">Catatan resolusi:</span> {r.resolution_notes}
                       </div>
                     )}
                   </div>
-                  <div className="flex-shrink-0">
-                    {canManage && (
+                  {canManage && (
+                    <div className="flex flex-col gap-2 flex-shrink-0">
+                      {nextStatus && (
+                        <button
+                          onClick={() => handleAdvanceStatus(r)}
+                          disabled={actionLoading === r.id}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === r.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
+                          {statusActionLabel[r.status]}
+                        </button>
+                      )}
                       <button
-                        onClick={() => openManage(r)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+                        onClick={() => openNotes(r)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                       >
-                        Kelola
+                        <Wrench className="w-4 h-4" /> Catatan
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -214,52 +299,45 @@ export default function ReportsAdminPage() {
         </div>
       )}
 
-      {modalOpen && editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
-          <div className="w-full max-w-lg bg-white dark:bg-slate-800 rounded-2xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+      {/* Notes Modal */}
+      {notesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="font-semibold text-slate-900 dark:text-white">Kelola Laporan</h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Catatan Resolusi</h2>
+              <button onClick={() => setNotesModal(null)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <form onSubmit={handleSaveNotes} className="p-5 space-y-4">
               <div>
-                <p className="text-sm text-slate-500">Pelapor</p>
-                <p className="font-medium text-slate-900 dark:text-white">{editing.reporter_name}</p>
-                <p className="text-sm text-slate-500 mt-1">{editing.description}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan Resolusi</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan</label>
                 <textarea
-                  value={resolutionNotes}
-                  onChange={(e) => setResolutionNotes(e.target.value)}
-                  rows={3}
-                  placeholder="Tulis catatan resolusi..."
+                  value={notesText}
+                  onChange={e => setNotesText(e.target.value)}
+                  rows={4}
+                  placeholder="Tulis catatan resolusi untuk laporan ini..."
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
-              <div className="flex flex-wrap gap-2">
-                {editing.status !== 'in_progress' && (
-                  <button
-                    onClick={() => handleUpdateStatus('in_progress', resolutionNotes)}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 disabled:opacity-50"
-                  >
-                    <Clock className="w-4 h-4" /> Proses
-                  </button>
-                )}
-                {editing.status !== 'resolved' && (
-                  <button
-                    onClick={() => handleUpdateStatus('resolved', resolutionNotes)}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 disabled:opacity-50"
-                  >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Selesai
-                  </button>
-                )}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNotesModal(null)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingNotes}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                >
+                  {savingNotes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
+                  Simpan
+                </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}

@@ -10,14 +10,6 @@ export interface Permission {
   description: string;
 }
 
-export interface RoleInfo {
-  id: string;
-  name: string;
-  level: number;
-  is_system: boolean;
-  is_active: boolean;
-}
-
 export interface AdminProfile {
   id: string;
   user_id: string;
@@ -35,10 +27,10 @@ export interface AdminRoleAssignment {
 
 /**
  * Fetch the full set of permissions for a user by joining:
- *   auth.users.id  ->  admin_users.user_id  (find the admin row)
- *   admin_users.id ->  admin_user_roles.admin_user_id  (role assignments)
- *   admin_user_roles.role_id -> role_permissions.role_id  (permission links)
- *   role_permissions.permission_id -> permissions.id  (the actual permission)
+ *   auth.users.id  ->  admin_users.user_id
+ *   admin_users.id ->  admin_user_roles.admin_user_id
+ *   admin_user_roles.role_id -> role_permissions.role_id
+ *   role_permissions.permission_id -> permissions.id
  *
  * Fallback: if no admin_user_roles rows exist, use the legacy
  * admin_users.role text column to resolve a single role.

@@ -1,16 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
 import {
-  Users, Plus, Pencil, Trash2, X, Loader2, Mail, Phone,
+  Users, Plus, Pencil, Trash2, Loader2, Search, X, Mail, Phone, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 
 interface TeamMember {
   id: string;
   name: string;
-  position: string;
+  position: string | null;
   role: string | null;
   photo_url: string | null;
   description: string | null;
@@ -21,19 +21,7 @@ interface TeamMember {
   created_at: string;
 }
 
-interface FormData {
-  name: string;
-  position: string;
-  role: string;
-  photo_url: string;
-  description: string;
-  email: string;
-  phone: string;
-  order: string;
-  is_active: boolean;
-}
-
-const emptyForm: FormData = {
+const emptyForm = {
   name: '',
   position: '',
   role: '',
@@ -53,34 +41,54 @@ export default function TeamAdminPage() {
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<FormData>(emptyForm);
+  const [editing, setEditing] = useState<TeamMember | null>(null);
+  const [form, setForm] = useState({ ...emptyForm });
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchMembers = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('team_members').select('*').order('order', { ascending: true });
-    if (error) {
+    try {
+      const { data, error } = await supabase
+        .from('team_members')
+        .select('*')
+        .order('order', { ascending: true });
+      if (error) throw error;
+      setMembers((data as unknown as TeamMember[]) || []);
+    } catch (e) {
+      console.error(e);
       showToast('Gagal memuat data tim', 'error');
+    } finally {
       setLoading(false);
-      return;
     }
-    setMembers((data as unknown as TeamMember[]) ?? []);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchMembers();
   }, [fetchMembers]);
 
-  const openAdd = () => {
+  const filtered = members.filter(m => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      m.name?.toLowerCase().includes(q) ||
+      m.position?.toLowerCase().includes(q) ||
+      m.role?.toLowerCase().includes(q) ||
+      m.email?.toLowerCase().includes(q)
+    );
+  });
+
+  const openCreate = () => {
+    setEditing(null);
     setForm({ ...emptyForm, order: String(members.length) });
-    setEditingId(null);
     setModalOpen(true);
   };
 
   const openEdit = (m: TeamMember) => {
+    setEditing(m);
     setForm({
       name: m.name ?? '',
       position: m.position ?? '',
@@ -89,70 +97,101 @@ export default function TeamAdminPage() {
       description: m.description ?? '',
       email: m.email ?? '',
       phone: m.phone ?? '',
-      order: String(m.order ?? 0),
+      order: m.order?.toString() ?? '0',
       is_active: m.is_active ?? true,
     });
-    setEditingId(m.id);
     setModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name || !form.position) {
-      showToast('Nama dan jabatan wajib diisi', 'warning');
+    if (!form.name.trim()) {
+      showToast('Nama wajib diisi', 'warning');
       return;
     }
+    const isEdit = !!editing;
+    if (isEdit && !canUpdate) {
+      showToast('Anda tidak memiliki izin untuk mengubah data', 'error');
+      return;
+    }
+    if (!isEdit && !canCreate) {
+      showToast('Anda tidak memiliki izin untuk menambah data', 'error');
+      return;
+    }
+
     setSaving(true);
-    const payload = {
-      name: form.name,
-      position: form.position,
-      role: form.role || null,
-      photo_url: form.photo_url || null,
-      description: form.description || null,
-      email: form.email || null,
-      phone: form.phone || null,
-      order: parseInt(form.order, 10) || 0,
-      is_active: form.is_active,
-    };
     try {
-      if (editingId) {
-        const { error } = await supabase.from('team_members').update(payload).eq('id', editingId);
+      const payload = {
+        name: form.name.trim(),
+        position: form.position.trim() || null,
+        role: form.role.trim() || null,
+        photo_url: form.photo_url.trim() || null,
+        description: form.description.trim() || null,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        order: form.order ? Number(form.order) : 0,
+        is_active: form.is_active,
+      };
+
+      if (isEdit && editing) {
+        const { error } = await supabase.from('team_members').update(payload).eq('id', editing.id);
         if (error) throw error;
-        showToast('Anggota tim diperbarui', 'success');
+        showToast('Anggota tim berhasil diperbarui', 'success');
       } else {
         const { error } = await supabase.from('team_members').insert(payload);
         if (error) throw error;
-        showToast('Anggota tim ditambahkan', 'success');
+        showToast('Anggota tim berhasil ditambahkan', 'success');
       }
       setModalOpen(false);
       await fetchMembers();
-    } catch (err) {
-      console.error(err);
+    } catch (e) {
+      console.error(e);
       showToast('Gagal menyimpan anggota tim', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Hapus anggota tim ini?')) return;
-    const { error } = await supabase.from('team_members').delete().eq('id', id);
-    if (error) {
-      showToast('Gagal menghapus anggota tim', 'error');
+  const handleDelete = async (m: TeamMember) => {
+    if (!canDelete) {
+      showToast('Anda tidak memiliki izin untuk menghapus data', 'error');
       return;
     }
-    showToast('Anggota tim dihapus', 'success');
-    await fetchMembers();
+    if (!confirm(`Hapus anggota tim "${m.name}"?`)) return;
+    setDeletingId(m.id);
+    try {
+      const { error } = await supabase.from('team_members').delete().eq('id', m.id);
+      if (error) throw error;
+      showToast('Anggota tim berhasil dihapus', 'success');
+      await fetchMembers();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal menghapus anggota tim', 'error');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
-  const toggleActive = async (m: TeamMember) => {
-    const { error } = await supabase.from('team_members').update({ is_active: !m.is_active }).eq('id', m.id);
-    if (error) {
-      showToast('Gagal mengubah status', 'error');
+  const handleToggleActive = async (m: TeamMember) => {
+    if (!canUpdate) {
+      showToast('Anda tidak memiliki izin untuk mengubah data', 'error');
       return;
     }
-    showToast('Status diperbarui', 'success');
-    await fetchMembers();
+    setTogglingId(m.id);
+    try {
+      const { error } = await supabase
+        .from('team_members')
+        .update({ is_active: !m.is_active })
+        .eq('id', m.id);
+      if (error) throw error;
+      showToast(`Anggota ${!m.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+      await fetchMembers();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal mengubah status anggota', 'error');
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   if (loading) {
@@ -165,139 +204,174 @@ export default function TeamAdminPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola anggota tim sarana dan prasarana</p>
         </div>
         {canCreate && (
           <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 transition-opacity"
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
           >
             <Plus className="w-4 h-4" /> Tambah
           </button>
         )}
       </div>
 
-      {members.length === 0 ? (
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          placeholder="Cari nama, posisi, atau email..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+        />
+      </div>
+
+      {filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
             <Users className="w-8 h-8 text-slate-300 dark:text-slate-500" />
           </div>
           <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada anggota tim</p>
+          <p className="text-sm text-slate-400 mt-1">Belum ada anggota yang ditambahkan</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {members.map((m) => (
-            <div key={m.id} className="card p-5">
-              <div className="flex items-start gap-4">
+          {filtered.map(m => (
+            <div key={m.id} className="card p-5 flex flex-col">
+              <div className="flex items-start gap-3">
                 {m.photo_url ? (
-                  <img src={m.photo_url} alt={m.name} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
+                  <img src={m.photo_url} alt={m.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                    <span className="text-white font-bold text-xl">{(m.name || '?').charAt(0).toUpperCase()}</span>
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-slate-700 dark:to-slate-600 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xl font-bold text-blue-600 dark:text-blue-400">
+                      {(m.name ?? '?').charAt(0).toUpperCase()}
+                    </span>
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-slate-900 dark:text-white truncate">{m.name}</h3>
-                    <span
-                      className={cn(
-                        'px-2 py-0.5 rounded-full text-xs font-medium',
-                        m.is_active
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                          : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
-                      )}
-                    >
+                    <h3 className="font-semibold text-slate-900 dark:text-white truncate">{m.name ?? ''}</h3>
+                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
+                      m.is_active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400')}>
                       {m.is_active ? 'Aktif' : 'Nonaktif'}
                     </span>
                   </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{m.position}</p>
-                  {m.role && <p className="text-xs text-slate-400 mt-0.5">{m.role}</p>}
+                  {m.position && <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">{m.position}</p>}
+                  {m.role && <p className="text-xs text-slate-500 dark:text-slate-400">{m.role}</p>}
                 </div>
               </div>
               {m.description && (
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-3 line-clamp-3">{m.description}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{m.description}</p>
               )}
-              <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+              <div className="mt-3 space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
                 {m.email && (
-                  <div className="flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5" /> {m.email}
-                  </div>
+                  <div className="flex items-center gap-1.5"><Mail className="w-4 h-4 text-slate-400" /> {m.email}</div>
                 )}
                 {m.phone && (
-                  <div className="flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5" /> {m.phone}
-                  </div>
+                  <div className="flex items-center gap-1.5"><Phone className="w-4 h-4 text-slate-400" /> {m.phone}</div>
                 )}
+                <div className="text-xs text-slate-400">Urutan: {m.order ?? 0}</div>
               </div>
-              <div className="mt-4 flex items-center justify-between">
-                <span className="text-xs text-slate-400">Urutan: {m.order}</span>
-                <div className="flex items-center gap-2">
-                  {canUpdate && (
-                    <>
-                      <button onClick={() => toggleActive(m)} className="text-xs px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">
-                        {m.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                      </button>
-                      <button onClick={() => openEdit(m)} className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20">
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    </>
-                  )}
-                  {canDelete && (
-                    <button onClick={() => handleDelete(m.id)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                      <Trash2 className="w-4 h-4" />
+              <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
+                {canUpdate && (
+                  <>
+                    <button
+                      onClick={() => openEdit(m)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" /> Edit
                     </button>
-                  )}
-                </div>
+                    <button
+                      onClick={() => handleToggleActive(m)}
+                      disabled={togglingId === m.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-50"
+                    >
+                      {togglingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : m.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                      {m.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                    </button>
+                  </>
+                )}
+                {canDelete && (
+                  <button
+                    onClick={() => handleDelete(m)}
+                    disabled={deletingId === m.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 ml-auto"
+                  >
+                    {deletingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Hapus
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
+      {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
-          <div
-            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="font-semibold text-slate-900 dark:text-white">
-                {editingId ? 'Edit Anggota Tim' : 'Tambah Anggota Tim'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                {editing ? 'Edit Anggota Tim' : 'Tambah Anggota Tim'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Nama *</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Nama <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onChange={e => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Posisi</label>
+                  <input
+                    type="text"
+                    value={form.position}
+                    onChange={e => setForm({ ...form, position: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Peran (Role)</label>
+                  <input
+                    type="text"
+                    value={form.role}
+                    onChange={e => setForm({ ...form, role: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Jabatan *</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Urutan (Order)</label>
                   <input
-                    type="text"
-                    value={form.position}
-                    onChange={(e) => setForm({ ...form, position: e.target.value })}
+                    type="number"
+                    min={0}
+                    value={form.order}
+                    onChange={e => setForm({ ...form, order: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Role</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">URL Foto</label>
                 <input
                   type="text"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
+                  value={form.photo_url}
+                  onChange={e => setForm({ ...form, photo_url: e.target.value })}
+                  placeholder="https://..."
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
@@ -305,7 +379,7 @@ export default function TeamAdminPage() {
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  onChange={e => setForm({ ...form, description: e.target.value })}
                   rows={2}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
@@ -316,7 +390,7 @@ export default function TeamAdminPage() {
                   <input
                     type="email"
                     value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    onChange={e => setForm({ ...form, email: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
@@ -325,28 +399,7 @@ export default function TeamAdminPage() {
                   <input
                     type="text"
                     value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">URL Foto</label>
-                  <input
-                    type="text"
-                    value={form.photo_url}
-                    onChange={(e) => setForm({ ...form, photo_url: e.target.value })}
-                    placeholder="https://..."
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Urutan (order)</label>
-                  <input
-                    type="number"
-                    value={form.order}
-                    onChange={(e) => setForm({ ...form, order: e.target.value })}
+                    onChange={e => setForm({ ...form, phone: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
@@ -355,26 +408,26 @@ export default function TeamAdminPage() {
                 <input
                   type="checkbox"
                   checked={form.is_active}
-                  onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
                   className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-blue-500 focus:ring-blue-500"
                 />
                 <span className="text-sm text-slate-700 dark:text-slate-300">Aktif</span>
               </label>
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
                 >
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {editingId ? 'Simpan' : 'Tambah'}
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  {editing ? 'Simpan' : 'Tambah'}
                 </button>
               </div>
             </form>

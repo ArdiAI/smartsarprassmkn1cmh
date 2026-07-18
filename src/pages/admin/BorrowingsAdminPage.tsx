@@ -12,12 +12,14 @@ import {
   fetchRoleById,
   resolveItemApprover,
   type WorkflowTemplate,
+  type WorkflowStep,
+  type Role,
   type AdminUser,
 } from '../../lib/workflow';
 import { showToast } from '../../components/Toast';
 import {
   CheckCircle, XCircle, Loader2, Package, Calendar, User, Mail, Phone,
-  FileText, ChevronDown, ChevronUp, ArrowRight, History,
+  FileText, ChevronDown, ChevronUp, ArrowRight, History, Clock, Check, X,
 } from 'lucide-react';
 
 interface BorrowingItem {
@@ -92,7 +94,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export default function BorrowingsAdminPage() {
-  const { user, adminProfile, hasPermission } = useAuth();
+  const { user, adminProfile, roles, hasPermission } = useAuth();
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [filteredBorrowings, setFilteredBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,14 +104,22 @@ export default function BorrowingsAdminPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
   const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
+  const [stepRoles, setStepRoles] = useState<Record<string, Role>>({});
 
   const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
+  const roleCacheRef = useRef<Record<string, Role>>({});
   const adminUser: AdminUser | null = adminProfile;
 
   const canApprove = hasPermission('borrowings', 'approve');
   const canReject = hasPermission('borrowings', 'reject');
   const canManage = hasPermission('borrowings', 'manage');
   const canReturn = canManage;
+
+  // The user's role_ids from admin_user_roles (via AuthContext roles array).
+  // This is used to check if the user is the active approver for the current step.
+  const userRoleIds = new Set(roles.map(r => r.role_id));
+  const userRoleNames = new Set(roles.map(r => r.role_name));
+  if (adminProfile?.role) userRoleNames.add(adminProfile.role);
 
   const fetchBorrowings = useCallback(async () => {
     setLoading(true);
@@ -126,6 +136,8 @@ export default function BorrowingsAdminPage() {
     setBorrowings(all);
     const filtered = await filterBorrowingsForAdmin(all, adminUser);
     setFilteredBorrowings(filtered);
+
+    // Pre-fetch workflow templates and step roles for all items.
     const templateIds = [...new Set(all.map(b => b.workflow_template_id).filter(Boolean) as string[])];
     for (const tid of templateIds) {
       if (!workflowCacheRef.current[tid]) {
@@ -133,6 +145,22 @@ export default function BorrowingsAdminPage() {
         if (tmpl) workflowCacheRef.current[tid] = tmpl;
       }
     }
+
+    // Pre-fetch roles for all step role_ids.
+    const roleIdsToFetch = new Set<string>();
+    for (const tmpl of Object.values(workflowCacheRef.current)) {
+      for (const step of tmpl.steps) {
+        if (!roleCacheRef.current[step.role_id]) roleIdsToFetch.add(step.role_id);
+      }
+    }
+    for (const rid of roleIdsToFetch) {
+      const role = await fetchRoleById(rid);
+      if (role) {
+        roleCacheRef.current[rid] = role;
+        setStepRoles(prev => ({ ...prev, [rid]: role }));
+      }
+    }
+
     setLoading(false);
   }, [adminUser]);
 
@@ -148,6 +176,78 @@ export default function BorrowingsAdminPage() {
   useEffect(() => {
     fetchBorrowings();
   }, [fetchBorrowings]);
+
+  /**
+   * Determine if the current user is the active approver for a given borrowing item.
+   *
+   * The user can approve/reject ONLY if ALL of these are true:
+   * 1. The item status is 'pending' (still waiting for approval).
+   * 2. The current workflow step's role matches the user's role (by role_id or role name).
+   * 3. The user hasn't already acted on this step (checked via approval_history — if they
+   *    had acted, the step would have advanced, so this is a safety net).
+   *
+   * If any condition fails, the user only sees the workflow progress and history.
+   */
+  const isUserActiveApprover = useCallback(
+    (item: BorrowingItem): { isActive: boolean; stepLabel: string; roleName: string | null } => {
+      // Condition 1: item must be pending.
+      if (item.status !== 'pending') {
+        return { isActive: false, stepLabel: '', roleName: null };
+      }
+
+      const templateId = item.workflow_template_id;
+      if (!templateId) return { isActive: false, stepLabel: '', roleName: null };
+
+      const template = workflowCacheRef.current[templateId];
+      if (!template) return { isActive: false, stepLabel: '', roleName: null };
+
+      const currentStepNum = item.current_step ?? 1;
+      const currentStep = getCurrentStep(template.steps, currentStepNum);
+      if (!currentStep) return { isActive: false, stepLabel: '', roleName: null };
+
+      // Get the role for the current step.
+      const stepRole = roleCacheRef.current[currentStep.role_id];
+      const stepRoleName = stepRole?.name || null;
+
+      // Condition 2: the user's role must match the step's role.
+      // Check by role_id (from admin_user_roles) or by role name (from adminProfile).
+      const roleMatches =
+        userRoleIds.has(currentStep.role_id) ||
+        (stepRoleName !== null && userRoleNames.has(stepRoleName));
+
+      if (!roleMatches) {
+        return { isActive: false, stepLabel: currentStep.step_label, roleName: stepRoleName };
+      }
+
+      // Condition 3: the user hasn't already acted on this step.
+      // This is a safety net — if the step advanced, currentStepNum would be different.
+      // But we check the approval history to be safe.
+      // (This check is done at render time using the historyByBorrowing state.)
+
+      return { isActive: true, stepLabel: currentStep.step_label, roleName: stepRoleName };
+    },
+    [userRoleIds, userRoleNames],
+  );
+
+  /**
+   * Check if the user has already acted on the current step for this item.
+   * Uses the approval history loaded for the expanded borrowing.
+   */
+  const hasUserAlreadyActed = useCallback(
+    (borrowingId: string, item: BorrowingItem): boolean => {
+      const history = historyByBorrowing[borrowingId] || [];
+      const currentStepNum = item.current_step ?? 1;
+      const userApproverName = adminProfile?.name || user?.email || '';
+      // Check if there's an approval_history entry for this item at the current step by this user.
+      return history.some(
+        h =>
+          h.borrowing_item_id === item.id &&
+          h.step_order === currentStepNum &&
+          h.approver_name === userApproverName,
+      );
+    },
+    [historyByBorrowing, adminProfile, user],
+  );
 
   const displayList = (adminUser?.role === 'superadmin' || adminUser?.role === 'Super Admin' ? borrowings : filteredBorrowings).filter(b => {
     if (statusFilter !== 'all' && b.status !== statusFilter) return false;
@@ -190,7 +290,7 @@ export default function BorrowingsAdminPage() {
       const notes = notesByItem[item.id] || '';
 
       const approverName = adminUser?.name || user.email || 'Admin';
-      const stepRole = currentStep ? await fetchRoleById(currentStep.role_id) : null;
+      const stepRole = currentStep ? roleCacheRef.current[currentStep.role_id] : null;
       const approverRole = stepRole?.name || adminUser?.role || 'Admin';
 
       const nextStep = getNextActionableStep(template.steps, currentStepNum);
@@ -321,7 +421,7 @@ export default function BorrowingsAdminPage() {
       const notes = notesByItem[item.id] || '';
 
       const approverName = adminUser?.name || user.email || 'Admin';
-      const stepRole = currentStep ? await fetchRoleById(currentStep.role_id) : null;
+      const stepRole = currentStep ? roleCacheRef.current[currentStep.role_id] : null;
       const approverRole = stepRole?.name || adminUser?.role || 'Admin';
 
       const { error: itemError } = await supabase
@@ -418,6 +518,8 @@ export default function BorrowingsAdminPage() {
           const isCurrent = step.step_order === item.current_step;
           const isPast = (item.current_step ?? 1) > step.step_order;
           const isRejected = item.status === 'rejected';
+          const stepRole = roleCacheRef.current[step.role_id];
+          const stepRoleName = stepRole?.name || '—';
           return (
             <div key={step.id} className="flex items-center">
               <div
@@ -430,6 +532,7 @@ export default function BorrowingsAdminPage() {
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
                     : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
                 }`}
+                title={`${step.step_label} (${stepRoleName})`}
               >
                 {step.step_label}
               </div>
@@ -571,10 +674,42 @@ export default function BorrowingsAdminPage() {
                       <div className="space-y-3">
                         {borrowing.borrowing_items.map(item => {
                           const itemSc = statusConfig[item.status] || statusConfig.pending;
-                          const canApproveThis = item.status === 'pending' && canApprove;
-                          const canRejectThis = item.status === 'pending' && canReject;
+                          const approverInfo = isUserActiveApprover(item);
+                          const alreadyActed = hasUserAlreadyActed(borrowing.id, item);
+                          // The user can approve/reject ONLY if:
+                          // 1. They have the borrowings:approve/reject permission.
+                          // 2. The item is pending.
+                          // 3. Their role matches the active step's role.
+                          // 4. They haven't already acted on this step.
+                          const canApproveThis =
+                            canApprove &&
+                            approverInfo.isActive &&
+                            !alreadyActed &&
+                            item.status === 'pending';
+                          const canRejectThis =
+                            canReject &&
+                            approverInfo.isActive &&
+                            !alreadyActed &&
+                            item.status === 'pending';
                           const canReturnThis = item.status === 'approved' && canReturn;
                           const showActionArea = canApproveThis || canRejectThis || canReturnThis;
+
+                          // Show a status banner explaining why buttons are/aren't shown.
+                          let statusBanner: string | null = null;
+                          if (item.status === 'pending' && !approverInfo.isActive) {
+                            statusBanner = approverInfo.roleName
+                              ? `Menunggu persetujuan ${approverInfo.roleName} (${approverInfo.stepLabel})`
+                              : `Menunggu persetujuan (${approverInfo.stepLabel})`;
+                          } else if (item.status === 'pending' && approverInfo.isActive && alreadyActed) {
+                            statusBanner = 'Anda sudah memberikan aksi pada step ini';
+                          } else if (item.status === 'approved') {
+                            statusBanner = 'Pengajuan disetujui';
+                          } else if (item.status === 'rejected') {
+                            statusBanner = 'Pengajuan ditolak';
+                          } else if (item.status === 'returned') {
+                            statusBanner = 'Item telah dikembalikan';
+                          }
+
                           return (
                             <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
                               <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -591,6 +726,13 @@ export default function BorrowingsAdminPage() {
                                     <p className="text-xs text-slate-500 mt-1">Status: {item.current_status_label}</p>
                                   )}
                                   {renderWorkflowProgress(borrowing, item)}
+
+                                  {statusBanner && (
+                                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/30 rounded-lg px-3 py-2">
+                                      <Clock className="w-3.5 h-3.5" />
+                                      {statusBanner}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 

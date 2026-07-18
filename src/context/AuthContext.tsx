@@ -18,7 +18,6 @@ interface AuthContextType {
   adminRole: string | null;
   roles: AdminRoleAssignment[];
   permissions: Set<PermissionKey>;
-  /** Derived purely from permissions: any user with at least one permission is an admin. */
   isAdmin: boolean;
   hasPermission: (module: string, action: string) => boolean;
   hasAnyPermission: (checks: Array<{ module: string; action: string }>) => boolean;
@@ -39,12 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<Set<PermissionKey>>(new Set());
 
   const loadProfile = useCallback(async (uid: string) => {
-    const {
-      permissions: perms,
-      roles: roleList,
-      primaryRole,
-      adminProfile: profile,
-    } = await fetchUserPermissions(uid);
+    const { permissions: perms, roles: roleList, primaryRole, adminProfile: profile } = await fetchUserPermissions(uid);
     setPermissions(perms);
     setRoles(roleList);
     if (profile) {
@@ -60,31 +54,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-
     supabase.auth.getSession().then(async ({ data }) => {
       if (!mounted) return;
       setSession(data.session);
       setUser(data.session?.user ?? null);
-      if (data.session?.user) {
-        await loadProfile(data.session.user.id);
-      }
+      if (data.session?.user) await loadProfile(data.session.user.id);
       setLoading(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
       setSession(session);
       setUser(session?.user ?? null);
-      if (session?.user) {
-        await loadProfile(session.user.id);
-      } else {
+      if (session?.user) await loadProfile(session.user.id);
+      else {
         setAdminProfile(null);
         setRoles([]);
         setPermissions(new Set());
       }
       setLoading(false);
     });
-
     return () => {
       mounted = false;
       subscription.unsubscribe();
@@ -109,24 +97,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPermissions(new Set());
   };
 
-  // isAdmin is derived from permissions, not from a boolean column or a role string.
   const isAdmin = permissions.size > 0;
 
   const value = useMemo<AuthContextType>(() => ({
-    user,
-    session,
-    loading,
-    adminProfile,
+    user, session, loading, adminProfile,
     adminRole: adminProfile?.role ?? null,
-    roles,
-    permissions,
-    isAdmin,
+    roles, permissions, isAdmin,
     hasPermission: (module: string, action: string) => hasPerm(permissions, module, action),
     hasAnyPermission: (checks: Array<{ module: string; action: string }>) => hasAnyPermission(permissions, checks),
-    refreshAdminProfile,
-    signIn,
-    signUp,
-    signOut,
+    refreshAdminProfile, signIn, signUp, signOut,
   }), [user, session, loading, adminProfile, roles, permissions, isAdmin, refreshAdminProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

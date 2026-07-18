@@ -56,7 +56,6 @@ function RedirectIfAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// AdminRoute: access granted purely based on permissions (isAdmin = permissions.size > 0).
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user, loading, isAdmin } = useAuth();
   if (loading) return <Spinner />;
@@ -67,7 +66,6 @@ function AdminRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// PermissionRoute: gate a single admin page by required permission(s).
 function PermissionRoute({ permission, children }: { permission: { module: string; action: string }; children: ReactNode }) {
   const { hasPermission } = useAuth();
   if (!hasPermission(permission.module, permission.action)) {

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Search, Package, MapPin, Tag, Boxes, CheckCircle2 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
-import { cn } from '../utils/cn';
+import {
+  Package, Search, Loader2, MapPin, Tag, Filter,
+} from 'lucide-react';
 
 interface InventoryItem {
   id: string;
@@ -18,8 +19,8 @@ interface InventoryItem {
   purchase_date: string | null;
   price: number | null;
   description: string | null;
-  created_at: string;
   available_quantity: number;
+  created_at: string;
   categories: { name: string } | null;
 }
 
@@ -28,41 +29,26 @@ interface Category {
   name: string;
 }
 
-const conditionConfig: Record<string, { label: string; classes: string }> = {
-  good: { label: 'Baik', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  fair: { label: 'Cukup Baik', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  poor: { label: 'Kurang Baik', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+const conditionConfig: Record<string, { label: string; color: string }> = {
+  good: { label: 'Baik', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  fair: { label: 'Cukup', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  poor: { label: 'Buruk', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
 };
 
-function InventorySkeleton() {
-  return (
-    <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5">
-      <div className="flex items-start gap-4">
-        <div className="w-16 h-16 rounded-2xl bg-slate-200 dark:bg-slate-700 animate-pulse flex-shrink-0" />
-        <div className="flex-1 space-y-2">
-          <div className="h-5 w-2/3 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
-          <div className="h-4 w-1/2 bg-slate-100 dark:bg-slate-700/50 rounded animate-pulse" />
-          <div className="flex gap-2 pt-1">
-            <div className="h-6 w-16 bg-slate-100 dark:bg-slate-700/50 rounded-lg animate-pulse" />
-            <div className="h-6 w-16 bg-slate-100 dark:bg-slate-700/50 rounded-lg animate-pulse" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const pexelsFallback = 'https://images.pexels.com/photos/256541/pexels-photo-256541.jpeg?auto=compress&cs=tinysrgb&w=800';
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState('');
 
   useEffect(() => {
-    async function fetchData() {
+    (async () => {
+      setLoading(true);
       try {
-        const [invRes, catRes] = await Promise.all([
+        const [itemsRes, catRes] = await Promise.all([
           supabase
             .from('inventory')
             .select('*, categories!category_id(name)')
@@ -70,154 +56,158 @@ export default function InventoryPage() {
           supabase.from('categories').select('id, name').order('name', { ascending: true }),
         ]);
 
-        if (invRes.error) throw invRes.error;
-        setItems((invRes.data as unknown as InventoryItem[]) || []);
+        if (itemsRes.error) throw itemsRes.error;
+        setItems((itemsRes.data as unknown as InventoryItem[]) || []);
         setCategories((catRes.data as unknown as Category[]) || []);
-      } catch (err) {
-        console.error('Error fetching inventory:', err);
+      } catch (e) {
+        console.error(e);
       } finally {
         setLoading(false);
       }
-    }
-    fetchData();
+    })();
   }, []);
 
-  const filtered = items.filter((item) => {
-    const matchSearch =
+  const filtered = items.filter(item => {
+    const matchSearch = !search ||
       item.name.toLowerCase().includes(search.toLowerCase()) ||
-      (item.code || '').toLowerCase().includes(search.toLowerCase());
-    const matchCategory = selectedCategory === 'all' || item.category_id === selectedCategory;
+      item.code?.toLowerCase().includes(search.toLowerCase());
+    const matchCategory = !categoryFilter || item.category_id === categoryFilter;
     return matchSearch && matchCategory;
   });
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <Package className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Daftar barang inventaris sekolah</p>
-            </div>
-          </div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Package className="w-6 h-6 text-blue-500" /> Inventaris
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Daftar barang inventaris yang tersedia</p>
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
               type="text"
-              placeholder="Cari barang atau kode..."
+              placeholder="Cari barang berdasarkan nama atau kode..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
             />
           </div>
-          <div className="relative">
-            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
+          <div className="relative sm:w-56">
+            <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
             <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="pl-10 pr-8 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none cursor-pointer min-w-[200px]"
+              value={categoryFilter}
+              onChange={e => setCategoryFilter(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none"
             >
-              <option value="all">Semua Kategori</option>
-              {categories.map((cat) => (
+              <option value="">Semua Kategori</option>
+              {categories.map(cat => (
                 <option key={cat.id} value={cat.id}>{cat.name}</option>
               ))}
             </select>
           </div>
         </div>
 
-        {/* Grid */}
+        {/* Content */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <InventorySkeleton key={i} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
+              <div key={i} className="card p-5 animate-pulse">
+                <div className="w-16 h-16 rounded-xl bg-slate-200 dark:bg-slate-700 mb-4" />
+                <div className="h-5 w-3/4 bg-slate-200 dark:bg-slate-700 rounded mb-2" />
+                <div className="h-4 w-full bg-slate-200 dark:bg-slate-700 rounded mb-4" />
+                <div className="flex gap-2">
+                  <div className="h-6 w-16 bg-slate-200 dark:bg-slate-700 rounded-full" />
+                  <div className="h-6 w-16 bg-slate-200 dark:bg-slate-700 rounded-full" />
+                </div>
+              </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState icon={Package} title="Inventaris tidak ditemukan" description={search || selectedCategory !== 'all' ? 'Coba filter lain' : 'Belum ada barang yang terdaftar'} />
+          <EmptyState
+            icon={Package}
+            title="Tidak ada barang ditemukan"
+            description={search || categoryFilter ? 'Coba filter lain' : 'Belum ada barang inventaris'}
+          />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filtered.map((item) => {
-              const cond = conditionConfig[item.condition] || conditionConfig.fair;
-              const available = item.available_quantity ?? 0;
-              const total = item.quantity ?? 0;
-              const isAvailable = available > 0;
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/30 dark:to-cyan-900/30 flex items-center justify-center flex-shrink-0">
-                      {item.image_url ? (
-                        <img src={item.image_url} alt={item.name} className="w-full h-full object-cover rounded-2xl" loading="lazy" />
-                      ) : (
-                        <Package className="w-8 h-8 text-blue-500" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="font-semibold text-slate-900 dark:text-white truncate">{item.name}</h3>
+          <>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Menampilkan {filtered.length} barang
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {filtered.map(item => {
+                const cond = conditionConfig[item.condition] || conditionConfig.fair;
+                return (
+                  <div key={item.id} className="card p-5 hover:shadow-lg transition-shadow">
+                    <div className="flex items-start gap-4">
+                      <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-700 overflow-hidden flex-shrink-0">
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = pexelsFallback;
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Package className="w-7 h-7 text-slate-300 dark:text-slate-500" />
+                          </div>
+                        )}
                       </div>
-                      {item.code && (
-                        <p className="text-xs text-slate-400 dark:text-slate-500 font-mono mt-0.5">{item.code}</p>
-                      )}
-                      {item.categories?.name && (
-                        <span className="inline-block mt-1.5 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/20 text-xs text-blue-600 dark:text-blue-400">
-                          {item.categories.name}
-                        </span>
-                      )}
+                      <div className="flex-1 min-w-0">
+                        {item.code && (
+                          <p className="text-xs text-slate-400 dark:text-slate-500 mb-0.5">{item.code}</p>
+                        )}
+                        <h3 className="font-semibold text-slate-900 dark:text-white truncate">{item.name}</h3>
+                        {item.categories?.name && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <Tag className="w-3 h-3 text-slate-400" />
+                            <span className="text-xs text-slate-500 dark:text-slate-400">{item.categories.name}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {item.description && (
+                      <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2 mt-3">{item.description}</p>
+                    )}
+
+                    {item.location && (
+                      <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mt-3">
+                        <MapPin className="w-4 h-4 flex-shrink-0" />
+                        <span className="truncate">{item.location}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${cond.color}`}>
+                        {cond.label}
+                      </span>
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">
+                          {item.available_quantity}<span className="text-slate-400">/{item.quantity}</span>
+                        </p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Tersedia/Total</p>
+                      </div>
                     </div>
                   </div>
-
-                  {item.description && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">{item.description}</p>
-                  )}
-
-                  <div className="flex items-center gap-4 mt-3 text-sm">
-                    <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-                      <MapPin className="w-4 h-4 text-slate-400" />
-                      <span className="truncate">{item.location || 'N/A'}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-                    <span className={cn('px-2.5 py-1 rounded-lg text-xs font-medium', cond.classes)}>
-                      {cond.label}
-                    </span>
-                    <div className="flex items-center gap-1.5 text-sm">
-                      <Boxes className="w-4 h-4 text-slate-400" />
-                      {isAvailable ? (
-                        <span className="text-slate-600 dark:text-slate-300">
-                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">{available}</span>
-                          <span className="text-slate-400"> / {total}</span>
-                        </span>
-                      ) : (
-                        <span className="text-red-500 font-medium">Habis</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {isAvailable && (
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-600 dark:text-emerald-400">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Tersedia untuk dipinjam</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
-      </main>
+      </div>
+
+      <div className="flex-1" />
       <Footer />
     </div>
   );
