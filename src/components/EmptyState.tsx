@@ -1,11 +1,27 @@
-export default function EmptyState({ icon: Icon, title, description }: { icon: any; title: string; description?: string }) {
+import type { ReactNode } from 'react';
+import { Inbox } from 'lucide-react';
+import { cn } from '../utils/cn';
+
+interface EmptyStateProps {
+  title?: string;
+  description?: string;
+  icon?: ReactNode;
+  className?: string;
+}
+
+export default function EmptyState({
+  title = 'Tidak ada data',
+  description = 'Belum ada data untuk ditampilkan.',
+  icon,
+  className,
+}: EmptyStateProps) {
   return (
-    <div className="text-center py-12">
-      <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-        <Icon className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+    <div className={cn('flex flex-col items-center justify-center py-12 text-center', className)}>
+      <div className="mb-3 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
+        {icon ?? <Inbox className="h-8 w-8 text-slate-400" />}
       </div>
-      <p className="text-slate-600 dark:text-slate-400 font-medium">{title}</p>
-      {description && <p className="text-sm text-slate-400 mt-1">{description}</p>}
+      <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>
     </div>
   );
 }

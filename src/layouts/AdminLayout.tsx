@@ -1,175 +1,167 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import {
-  LayoutDashboard, Package, Building2, FileText, BarChart3, Users,
-  Megaphone, MessageSquare, Menu, X, Moon, Sun, LogOut, Settings,
-  Shield, UserCog, Workflow, Mail, ChevronDown, Calendar, CalendarDays,
+  LayoutDashboard,
+  Package,
+  Building2,
+  ClipboardList,
+  CalendarDays,
+  CalendarRange,
+  FileText,
+  Users,
+  Megaphone,
+  MessageSquare,
+  BarChart3,
+  UserCog,
+  ShieldCheck,
+  Workflow,
+  Settings,
+  Mail,
+  LogOut,
+  Menu,
+  X,
+  Moon,
+  Sun,
 } from 'lucide-react';
+import { brand } from '../brand/config';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { brandConfig } from '../brand/config';
+import { cn } from '../utils/cn';
 
 interface NavItem {
   to: string;
   label: string;
-  icon: any;
-  permission: { module: string; action: string };
-  end?: boolean;
+  icon: typeof LayoutDashboard;
+  permission?: string;
 }
 
+const mainNav: NavItem[] = [
+  { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard:read' },
+  { to: '/admin/borrowings', label: 'Peminjaman', icon: ClipboardList, permission: 'borrowings:read' },
+  { to: '/admin/agenda', label: 'Agenda', icon: CalendarDays, permission: 'agenda:read' },
+  { to: '/admin/timeline', label: 'Timeline', icon: CalendarRange, permission: 'timeline:read' },
+  { to: '/admin/inventory', label: 'Inventaris', icon: Package, permission: 'inventory:read' },
+  { to: '/admin/facilities', label: 'Fasilitas', icon: Building2, permission: 'facilities:read' },
+  { to: '/admin/reports', label: 'Laporan', icon: FileText, permission: 'reports:read' },
+  { to: '/admin/team', label: 'Tim', icon: Users, permission: 'team:read' },
+  { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone, permission: 'announcements:read' },
+  { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare, permission: 'aspirasi:read' },
+  { to: '/admin/statistics', label: 'Statistik', icon: BarChart3, permission: 'statistics:read' },
+];
+
+const superNav: NavItem[] = [
+  { to: '/admin/users', label: 'Manajemen User', icon: UserCog, permission: 'users:read' },
+  { to: '/admin/roles', label: 'Roles & Permissions', icon: ShieldCheck, permission: 'roles:read' },
+  { to: '/admin/facility-managers', label: 'PJ Fasilitas', icon: Building2, permission: 'facility_managers:read' },
+  { to: '/admin/workflows', label: 'Workflow', icon: Workflow, permission: 'workflows:read' },
+  { to: '/admin/system-config', label: 'Konfigurasi Sistem', icon: Settings, permission: 'system_config:read' },
+  { to: '/admin/approver-emails', label: 'Email Approver', icon: Mail, permission: 'approver_emails:read' },
+];
+
 export default function AdminLayout() {
-  const { user, adminProfile, permissions, hasPermission, signOut } = useAuth();
-  const { theme, toggle } = useTheme();
+  const location = useLocation();
   const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [superOpen, setSuperOpen] = useState(true);
+  const { adminProfile, signOut, hasPermission } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const [open, setOpen] = useState(false);
 
-  const navItems: NavItem[] = [
-    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, permission: { module: '', action: '' }, end: true },
-    { to: '/admin/borrowings', label: 'Peminjaman', icon: Package, permission: { module: 'borrowings', action: 'read' } },
-    { to: '/admin/agendas', label: 'Agenda', icon: Calendar, permission: { module: 'agendas', action: 'read' } },
-    { to: '/admin/timeline', label: 'Timeline', icon: CalendarDays, permission: { module: 'timeline', action: 'read' } },
-    { to: '/admin/inventory', label: 'Inventaris', icon: Package, permission: { module: 'inventory', action: 'read' } },
-    { to: '/admin/facilities', label: 'Fasilitas', icon: Building2, permission: { module: 'facilities', action: 'read' } },
-    { to: '/admin/reports', label: 'Laporan', icon: FileText, permission: { module: 'reports', action: 'read' } },
-    { to: '/admin/statistics', label: 'Statistik', icon: BarChart3, permission: { module: 'statistics', action: 'read' } },
-    { to: '/admin/team', label: 'Tim', icon: Users, permission: { module: 'team', action: 'read' } },
-    { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone, permission: { module: 'announcements', action: 'read' } },
-    { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare, permission: { module: 'aspirasi', action: 'read' } },
-  ];
-
-  const superItems: NavItem[] = [
-    { to: '/admin/super/users', label: 'Manajemen User', icon: UserCog, permission: { module: 'users', action: 'read' } },
-    { to: '/admin/super/roles', label: 'Roles & Permissions', icon: Shield, permission: { module: 'roles', action: 'read' } },
-    { to: '/admin/super/facility-managers', label: 'PJ Fasilitas', icon: Users, permission: { module: 'facility_managers', action: 'read' } },
-    { to: '/admin/super/workflows', label: 'Approval Workflow', icon: Workflow, permission: { module: 'workflows', action: 'read' } },
-    { to: '/admin/super/approver-emails', label: 'Email Approver', icon: Mail, permission: { module: 'approver_emails', action: 'read' } },
-    { to: '/admin/super/config', label: 'Konfigurasi', icon: Settings, permission: { module: 'system_config', action: 'read' } },
-  ];
-
-  const visibleNav = navItems.filter(item => !item.permission.module || hasPermission(item.permission.module, item.permission.action));
-  const visibleSuper = superItems.filter(item => hasPermission(item.permission.module, item.permission.action));
-  const hasSuper = visibleSuper.length > 0;
+  const visibleMain = mainNav.filter((n) => !n.permission || hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
+  const visibleSuper = superNav.filter((n) => !n.permission || hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
 
   const handleSignOut = async () => {
     await signOut();
-    navigate('/auth');
+    navigate('/');
   };
 
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-      isActive
-        ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md'
-        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50'
-    }`;
+  const renderNav = (items: NavItem[]) =>
+    items.map((item) => {
+      const active = location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+      return (
+        <Link
+          key={item.to}
+          to={item.to}
+          onClick={() => setOpen(false)}
+          className={cn(
+            'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition',
+            active
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+          )}
+        >
+          <item.icon className="h-5 w-5" />
+          {item.label}
+        </Link>
+      );
+    });
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex">
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
-      )}
-
+    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
+      {/* Sidebar */}
       <aside
-        className={`fixed md:sticky top-0 left-0 h-screen w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 z-40 transform transition-transform ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        } flex flex-col`}
+        className={cn(
+          'fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-200 bg-white transition-transform dark:border-slate-800 dark:bg-slate-900 lg:translate-x-0',
+          open ? 'translate-x-0' : '-translate-x-full',
+        )}
       >
-        <div className="p-5 border-b border-slate-200 dark:border-slate-700">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <span className="text-white font-bold">S</span>
+        <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4 dark:border-slate-800">
+          <Link to="/admin/dashboard" className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
+              <Building2 className="h-4 w-4" />
             </div>
-            <div>
-              <p className="font-bold text-slate-900 dark:text-white text-sm">{brandConfig.system.name}</p>
-              <p className="text-xs text-slate-500">Admin Panel</p>
-            </div>
-          </div>
+            <span className="font-bold text-slate-900 dark:text-white">{brand.name}</span>
+          </Link>
+          <button onClick={() => setOpen(false)} className="lg:hidden">
+            <X className="h-5 w-5 text-slate-500" />
+          </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {visibleNav.map(item => {
-            const Icon = item.icon;
-            return (
-              <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={() => setSidebarOpen(false)}>
-                <Icon className="w-4 h-4" />
-                {item.label}
-              </NavLink>
-            );
-          })}
+        <div className="flex h-[calc(100vh-4rem)] flex-col overflow-y-auto px-3 py-4">
+          <div className="mb-2 px-3 text-xs font-semibold uppercase text-slate-400">Menu Utama</div>
+          <div className="mb-4 flex flex-col gap-1">{renderNav(visibleMain)}</div>
 
-          {hasSuper && (
+          {visibleSuper.length > 0 && (
             <>
-              <button
-                onClick={() => setSuperOpen(!superOpen)}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-all"
-              >
-                <Shield className="w-4 h-4" />
-                Super Admin
-                <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${superOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {superOpen &&
-                visibleSuper.map(item => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink key={item.to} to={item.to} className={linkClass} onClick={() => setSidebarOpen(false)}>
-                      <Icon className="w-4 h-4" />
-                      {item.label}
-                    </NavLink>
-                  );
-                })}
+              <div className="mb-2 px-3 text-xs font-semibold uppercase text-slate-400">Superadmin</div>
+              <div className="mb-4 flex flex-col gap-1">{renderNav(visibleSuper)}</div>
             </>
           )}
-        </nav>
 
-        <div className="p-3 border-t border-slate-200 dark:border-slate-700">
-          <div className="flex items-center gap-3 px-3 py-2 mb-2">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">
-                {(adminProfile?.name || user?.email || 'A').charAt(0).toUpperCase()}
-              </span>
+          <div className="mt-auto border-t border-slate-200 pt-4 dark:border-slate-800">
+            <div className="mb-3 px-3 text-sm">
+              <p className="font-semibold text-slate-800 dark:text-slate-200">{adminProfile?.name ?? 'Admin'}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{adminProfile?.email ?? ''}</p>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                {adminProfile?.name || user?.email}
-              </p>
-              <p className="text-xs text-slate-500 truncate">
-                {permissions.size > 0 ? `${permissions.size} permissions` : 'admin'}
-              </p>
-            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
+              <LogOut className="h-5 w-5" />
+              Keluar
+            </button>
           </div>
-          <button
-            onClick={handleSignOut}
-            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-          >
-            <LogOut className="w-4 h-4" /> Keluar
-          </button>
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-20 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
-          <button onClick={() => setSidebarOpen(true)} className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-300">
-            <Menu className="w-5 h-5" />
+      {/* Main */}
+      <div className="flex flex-1 flex-col lg:pl-64">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
+          <button onClick={() => setOpen(true)} className="lg:hidden">
+            <Menu className="h-6 w-6 text-slate-600 dark:text-slate-300" />
           </button>
-          <h1 className="text-lg font-semibold text-slate-900 dark:text-white hidden md:block">Admin Panel</h1>
-          <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-            {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+          <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+            Panel Admin
+          </h1>
+          <button
+            onClick={toggleTheme}
+            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
           </button>
         </header>
-
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
       </div>
-
-      {sidebarOpen && (
-        <button
-          onClick={() => setSidebarOpen(false)}
-          className="fixed top-4 right-4 z-50 md:hidden p-2 rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      )}
     </div>
   );
 }

@@ -1,34 +1,27 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { useEffect, useState, useMemo } from 'react';
 import {
-  fetchWorkflowTemplate,
-  getNextActionableStep,
-  isLastActionableStep,
-  getCurrentStep,
-  fetchNextApprover,
-  notifyNextApprover,
-  filterBorrowingsForAdmin,
-  fetchRoleById,
-  resolveItemApprover,
-  type WorkflowTemplate,
-  type WorkflowStep,
-  type Role,
-  type AdminUser,
-} from '../../lib/workflow';
-import { showToast } from '../../components/Toast';
-import {
-  CheckCircle, XCircle, Loader2, Package, Calendar, User, Mail, Phone,
-  FileText, ChevronDown, ChevronUp, ArrowRight, History, Clock, Check,
+  Search,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Calendar,
+  User,
+  Package,
+  Clock,
+  FileText,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { getWorkflowSteps, type WorkflowStep } from '../../lib/workflow';
+import { showToast } from '../../components/Toast';
+import { useAuth } from '../../context/AuthContext';
+import EmptyState from '../../components/EmptyState';
 
 interface BorrowingItem {
   id: string;
-  borrowing_id: string;
   inventory_id: string | null;
   facility_id: string | null;
-  item_type: string;
-  item_name: string;
+  item_type: string | null;
+  item_name: string | null;
   quantity: number;
   status: string;
   current_status_label: string | null;
@@ -36,27 +29,24 @@ interface BorrowingItem {
   current_step: number | null;
   assigned_approver_name: string | null;
   assigned_approver_role: string | null;
-  created_at: string;
-  updated_at: string | null;
 }
 
 interface Borrowing {
   id: string;
   inventory_id: string | null;
-  borrower_name: string;
-  borrower_class: string;
+  borrower_name: string | null;
+  borrower_class: string | null;
+  borrower_email: string | null;
+  borrower_phone: string | null;
   borrowed_units: number | null;
-  borrow_date: string;
-  return_date: string;
+  borrow_date: string | null;
+  return_date: string | null;
   actual_return_date: string | null;
   status: string;
   notes: string | null;
-  created_at: string;
-  borrower_email: string;
-  borrower_phone: string | null;
-  item_type: string;
+  item_type: string | null;
   facility_id: string | null;
-  purpose: string;
+  purpose: string | null;
   admin_notes: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -71,709 +61,370 @@ interface Borrowing {
   borrowing_items: BorrowingItem[];
 }
 
-interface ApprovalHistoryEntry {
-  id: string;
-  borrowing_id: string;
-  step_order: number;
-  step_label: string;
-  approver_name: string;
-  approver_role: string;
-  status: string;
-  notes: string | null;
-  acted_at: string;
-  borrowing_item_id: string | null;
-}
-
-const statusConfig: Record<string, { label: string; color: string }> = {
-  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  approved: { label: 'Disetujui', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  returned: { label: 'Dikembalikan', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  completed: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  cancelled: { label: 'Dibatalkan', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
+const statusStyles: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  returned: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300',
+  borrowed: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
 };
 
+function statusLabel(s: string) {
+  switch (s) {
+    case 'pending': return 'Menunggu';
+    case 'approved': return 'Disetujui';
+    case 'rejected': return 'Ditolak';
+    case 'returned': return 'Dikembalikan';
+    case 'borrowed': return 'Dipinjam';
+    case 'completed': return 'Selesai';
+    default: return s;
+  }
+}
+
 export default function BorrowingsAdminPage() {
-  const { user, adminProfile, roles, hasPermission } = useAuth();
+  const { hasPermission, adminProfile } = useAuth();
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
-  const [filteredBorrowings, setFilteredBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
-  const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
+  const [userRoleIds, setUserRoleIds] = useState<string[]>([]);
+  const [stepCache, setStepCache] = useState<Record<string, WorkflowStep[]>>({});
 
-  const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
-  const roleCacheRef = useRef<Record<string, Role>>({});
-  const adminUser: AdminUser | null = adminProfile;
+  useEffect(() => {
+    (async () => {
+      if (adminProfile?.id) {
+        const { data } = await supabase
+          .from('admin_user_roles')
+          .select('role_id')
+          .eq('admin_user_id', adminProfile.id);
+        setUserRoleIds((data ?? []).map((r: any) => r.role_id as string));
+      }
+    })();
+  }, [adminProfile?.id]);
 
-  const canApprove = hasPermission('borrowings', 'approve');
-  const canReject = hasPermission('borrowings', 'reject');
-  const canManage = hasPermission('borrowings', 'manage');
-  const canReturn = canManage;
-
-  const userRoleIds = new Set(roles.map(r => r.role_id));
-  const userRoleNames = new Set(roles.map(r => r.role_name));
-  if (adminProfile?.role) userRoleNames.add(adminProfile.role);
-
-  const fetchBorrowings = useCallback(async () => {
+  async function fetchBorrowings() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('borrowings')
-      .select('*, borrowing_items(*)')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat data peminjaman', 'error');
+    try {
+      const { data, error } = await supabase
+        .from('borrowings')
+        .select('*, borrowing_items(*)')
+        .order('created_at', { ascending: false });
+      if (error) {
+        showToast('Gagal memuat data peminjaman', 'error');
+        return;
+      }
+      const list = (data as unknown as Borrowing[]) ?? [];
+      setBorrowings(list);
+      // Cache workflow steps per template
+      const templateIds = [...new Set(list.map((b) => b.workflow_template_id).filter(Boolean))] as string[];
+      const cache: Record<string, WorkflowStep[]> = {};
+      await Promise.all(
+        templateIds.map(async (tid) => {
+          cache[tid] = await getWorkflowSteps(tid);
+        }),
+      );
+      setStepCache(cache);
+    } finally {
       setLoading(false);
-      return;
     }
-    const all = (data as unknown as Borrowing[]) || [];
-    setBorrowings(all);
-    const filtered = await filterBorrowingsForAdmin(all, adminUser);
-    setFilteredBorrowings(filtered);
-
-    const templateIds = [...new Set(all.map(b => b.workflow_template_id).filter(Boolean) as string[])];
-    for (const tid of templateIds) {
-      if (!workflowCacheRef.current[tid]) {
-        const tmpl = await fetchWorkflowTemplate(tid);
-        if (tmpl) workflowCacheRef.current[tid] = tmpl;
-      }
-    }
-
-    const roleIdsToFetch = new Set<string>();
-    for (const tmpl of Object.values(workflowCacheRef.current)) {
-      for (const step of tmpl.steps) {
-        if (!roleCacheRef.current[step.role_id]) roleIdsToFetch.add(step.role_id);
-      }
-    }
-    for (const rid of roleIdsToFetch) {
-      const role = await fetchRoleById(rid);
-      if (role) roleCacheRef.current[rid] = role;
-    }
-
-    setLoading(false);
-  }, [adminUser]);
-
-  const fetchHistory = useCallback(async (borrowingId: string) => {
-    const { data } = await supabase
-      .from('approval_history')
-      .select('*')
-      .eq('borrowing_id', borrowingId)
-      .order('acted_at', { ascending: true });
-    setHistoryByBorrowing(prev => ({ ...prev, [borrowingId]: (data as unknown as ApprovalHistoryEntry[]) || [] }));
-  }, []);
+  }
 
   useEffect(() => {
     fetchBorrowings();
-  }, [fetchBorrowings]);
+  }, []);
 
-  const isUserActiveApprover = useCallback(
-    (item: BorrowingItem): { isActive: boolean; stepLabel: string; roleName: string | null } => {
-      if (item.status !== 'pending') {
-        return { isActive: false, stepLabel: '', roleName: null };
+  const filtered = useMemo(() => {
+    return borrowings.filter((b) => {
+      if (statusFilter !== 'all' && b.status !== statusFilter) return false;
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const match =
+          (b.borrower_name ?? '').toLowerCase().includes(q) ||
+          (b.borrower_class ?? '').toLowerCase().includes(q) ||
+          (b.purpose ?? '').toLowerCase().includes(q) ||
+          (b.item_type ?? '').toLowerCase().includes(q);
+        if (!match) return false;
       }
-      const templateId = item.workflow_template_id;
-      if (!templateId) return { isActive: false, stepLabel: '', roleName: null };
-      const template = workflowCacheRef.current[templateId];
-      if (!template) return { isActive: false, stepLabel: '', roleName: null };
-      const currentStepNum = item.current_step ?? 1;
-      const currentStep = getCurrentStep(template.steps, currentStepNum);
-      if (!currentStep) return { isActive: false, stepLabel: '', roleName: null };
-      const stepRole = roleCacheRef.current[currentStep.role_id];
-      const stepRoleName = stepRole?.name || null;
-      const roleMatches =
-        userRoleIds.has(currentStep.role_id) ||
-        (stepRoleName !== null && userRoleNames.has(stepRoleName));
-      if (!roleMatches) {
-        return { isActive: false, stepLabel: currentStep.step_label, roleName: stepRoleName };
-      }
-      return { isActive: true, stepLabel: currentStep.step_label, roleName: stepRoleName };
-    },
-    [userRoleIds, userRoleNames],
-  );
+      return true;
+    });
+  }, [borrowings, search, statusFilter]);
 
-  const hasUserAlreadyActed = useCallback(
-    (borrowingId: string, item: BorrowingItem): boolean => {
-      const history = historyByBorrowing[borrowingId] || [];
-      const currentStepNum = item.current_step ?? 1;
-      const userApproverName = adminProfile?.name || user?.email || '';
-      return history.some(
-        h =>
-          h.borrowing_item_id === item.id &&
-          h.step_order === currentStepNum &&
-          h.approver_name === userApproverName,
-      );
-    },
-    [historyByBorrowing, adminProfile, user],
-  );
-
-  const displayList = (adminUser?.role === 'superadmin' || adminUser?.role === 'Super Admin' ? borrowings : filteredBorrowings).filter(b => {
-    if (statusFilter !== 'all' && b.status !== statusFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        b.borrower_name?.toLowerCase().includes(q) ||
-        b.borrower_email?.toLowerCase().includes(q) ||
-        b.borrower_class?.toLowerCase().includes(q) ||
-        b.purpose?.toLowerCase().includes(q)
-      );
+  function getApprovalState(b: Borrowing) {
+    const steps = b.workflow_template_id ? stepCache[b.workflow_template_id] ?? [] : [];
+    if (steps.length === 0) {
+      return { canApprove: b.status === 'pending', currentStep: null, hasActed: false, steps: [] };
     }
-    return true;
-  });
+    const currentStep = steps.find((s) => s.step_order === b.current_step) ?? null;
+    const canApprove =
+      !!currentStep &&
+      currentStep.role_id !== null &&
+      userRoleIds.includes(currentStep.role_id) &&
+      b.status === 'pending';
+    // Check if user already acted on current step via borrowing_items
+    const hasActed = (b.borrowing_items ?? []).some(
+      (it) =>
+        it.current_step === b.current_step &&
+        it.status !== 'pending' &&
+        it.assigned_approver_role === (adminProfile?.role ?? null),
+    );
+    return { canApprove, currentStep, hasActed, steps };
+  }
 
-  const handleApproveItem = async (borrowing: Borrowing, item: BorrowingItem) => {
-    if (!user) return;
-    if (!canApprove) {
-      showToast('Anda tidak memiliki izin untuk menyetujui peminjaman', 'error');
-      return;
-    }
-    setActionLoading(item.id);
+  async function handleApprove(b: Borrowing) {
+    setActionLoading(b.id);
     try {
-      const templateId = item.workflow_template_id || borrowing.workflow_template_id;
-      if (!templateId) {
-        showToast('Template workflow tidak ditemukan', 'error');
-        setActionLoading(null);
-        return;
-      }
-      const template = workflowCacheRef.current[templateId] || (await fetchWorkflowTemplate(templateId));
-      if (!template) {
-        showToast('Template workflow tidak ditemukan', 'error');
-        setActionLoading(null);
-        return;
-      }
-      workflowCacheRef.current[templateId] = template;
+      const steps = b.workflow_template_id ? stepCache[b.workflow_template_id] ?? [] : [];
+      const currentOrder = b.current_step ?? 0;
+      const nextStep = steps.find((s) => s.step_order > currentOrder);
+      const newStatus = nextStep ? 'pending' : 'approved';
+      const newStep = nextStep ? nextStep.step_order : currentOrder;
+      const newLabel = nextStep ? (nextStep.step_label ?? null) : 'Disetujui';
 
-      const currentStepNum = item.current_step ?? 1;
-      const currentStep = getCurrentStep(template.steps, currentStepNum);
-      const notes = notesByItem[item.id] || '';
-
-      const approverName = adminUser?.name || user.email || 'Admin';
-      const stepRole = currentStep ? roleCacheRef.current[currentStep.role_id] : null;
-      const approverRole = stepRole?.name || adminUser?.role || 'Admin';
-
-      const nextStep = getNextActionableStep(template.steps, currentStepNum);
-      const isLast = isLastActionableStep(template.steps, currentStepNum);
-
-      let newStatus = 'approved';
-      let newStep = currentStepNum;
-      let newStatusLabel = 'Disetujui';
-
-      if (isLast) {
-        newStatus = 'approved';
-        newStatusLabel = 'Disetujui - Selesai';
-      } else if (nextStep) {
-        newStep = nextStep.step_order;
-        newStatus = 'pending';
-        newStatusLabel = nextStep.step_label;
-      }
-
-      const { error: itemError } = await supabase
-        .from('borrowing_items')
+      const { error } = await supabase
+        .from('borrowings')
         .update({
           status: newStatus,
           current_step: newStep,
-          current_status_label: newStatusLabel,
-          updated_at: new Date().toISOString(),
+          current_status_label: newLabel,
+          approved_by: adminProfile?.id ?? null,
+          approver_position: adminProfile?.role ?? null,
+          approved_at: new Date().toISOString(),
         })
-        .eq('id', item.id);
-      if (itemError) {
-        showToast('Gagal menyetujui item', 'error');
-        setActionLoading(null);
+        .eq('id', b.id);
+
+      if (error) {
+        showToast('Gagal menyetujui peminjaman', 'error');
         return;
       }
 
-      await supabase.from('approval_history').insert({
-        borrowing_id: borrowing.id,
-        borrowing_item_id: item.id,
-        step_order: currentStepNum,
-        step_label: currentStep?.step_label || `Step ${currentStepNum}`,
-        approver_name: approverName,
-        approver_role: approverRole,
-        status: 'approved',
-        notes,
-        acted_at: new Date().toISOString(),
-      });
-
-      if (!isLast && nextStep) {
-        const { role, approver } = await fetchNextApprover(template.steps, currentStepNum);
-        const itemApprover = await resolveItemApprover(item);
-        const notifyEmail = itemApprover.approverEmail || approver?.approver_email;
-        const notifyName = itemApprover.approverName || approver?.approver_name;
-        const notifyRole = itemApprover.roleName || role?.name;
-
-        if (notifyEmail && notifyName) {
-          await notifyNextApprover({
-            type: 'next_approver',
-            borrowing_id: borrowing.id,
-            borrower_name: borrowing.borrower_name,
-            borrower_email: borrowing.borrower_email,
-            next_approver_email: notifyEmail,
-            next_approver_name: notifyName,
-            next_step_label: nextStep.step_label,
-            next_role_name: notifyRole || '',
-          });
-          showToast(`Notifikasi dikirim ke ${notifyName} (${notifyRole || 'approver'})`, 'success');
-        } else {
-          showToast('Disetujui. Email approver berikutnya belum dikonfigurasi.', 'warning');
-        }
-      } else {
-        showToast('Pengajuan disetujui sepenuhnya', 'success');
+      // Update borrowing_items for current step
+      if ((b.borrowing_items ?? []).length > 0) {
+        await supabase
+          .from('borrowing_items')
+          .update({ status: 'approved', current_status_label: 'Disetujui' })
+          .eq('borrowing_id', b.id)
+          .eq('current_step', currentOrder);
       }
 
-      const allItems = borrowing.borrowing_items.map(bi =>
-        bi.id === item.id ? { ...bi, status: newStatus, current_step: newStep, current_status_label: newStatusLabel } : bi
-      );
-      const allApproved = allItems.every(bi => bi.status === 'approved' || (bi.id === item.id && newStatus === 'approved'));
-      const anyRejected = allItems.some(bi => bi.status === 'rejected');
-
-      let parentStatus = borrowing.status;
-      let parentStep = borrowing.current_step;
-      let parentLabel = borrowing.current_status_label;
-
-      if (anyRejected) {
-        parentStatus = 'rejected';
-      } else if (allApproved) {
-        parentStatus = 'approved';
-        parentLabel = 'Disetujui - Selesai';
-      } else {
-        parentStatus = 'pending';
-        parentStep = newStep;
-        parentLabel = newStatusLabel;
-      }
-
-      await supabase
-        .from('borrowings')
-        .update({
-          status: parentStatus,
-          current_step: parentStep,
-          current_status_label: parentLabel,
-          approved_by: allApproved ? approverName : borrowing.approved_by,
-          approver_position: allApproved ? approverRole : borrowing.approver_position,
-          approved_at: allApproved ? new Date().toISOString() : borrowing.approved_at,
-        })
-        .eq('id', borrowing.id);
-
-      setNotesByItem(prev => ({ ...prev, [item.id]: '' }));
-      await fetchBorrowings();
-      await fetchHistory(borrowing.id);
-    } catch (e) {
-      console.error(e);
-      showToast('Terjadi kesalahan saat menyetujui', 'error');
+      showToast(newStatus === 'approved' ? 'Peminjaman disetujui' : 'Lanjut ke tahap berikutnya', 'success');
+      fetchBorrowings();
     } finally {
       setActionLoading(null);
     }
-  };
+  }
 
-  const handleRejectItem = async (borrowing: Borrowing, item: BorrowingItem) => {
-    if (!user) return;
-    if (!canReject) {
-      showToast('Anda tidak memiliki izin untuk menolak peminjaman', 'error');
-      return;
-    }
-    setActionLoading(`reject-${item.id}`);
+  async function handleReject(b: Borrowing) {
+    setActionLoading(b.id);
     try {
-      const templateId = item.workflow_template_id || borrowing.workflow_template_id;
-      const template = templateId ? (workflowCacheRef.current[templateId] || (await fetchWorkflowTemplate(templateId))) : null;
-      const currentStepNum = item.current_step ?? 1;
-      const currentStep = template ? getCurrentStep(template.steps, currentStepNum) : null;
-      const notes = notesByItem[item.id] || '';
-
-      const approverName = adminUser?.name || user.email || 'Admin';
-      const stepRole = currentStep ? roleCacheRef.current[currentStep.role_id] : null;
-      const approverRole = stepRole?.name || adminUser?.role || 'Admin';
-
-      const { error: itemError } = await supabase
-        .from('borrowing_items')
+      const { error } = await supabase
+        .from('borrowings')
         .update({
           status: 'rejected',
           current_status_label: 'Ditolak',
-          updated_at: new Date().toISOString(),
+          approved_by: adminProfile?.id ?? null,
+          approver_position: adminProfile?.role ?? null,
+          approved_at: new Date().toISOString(),
         })
-        .eq('id', item.id);
-      if (itemError) {
-        showToast('Gagal menolak item', 'error');
-        setActionLoading(null);
+        .eq('id', b.id);
+
+      if (error) {
+        showToast('Gagal menolak peminjaman', 'error');
         return;
       }
 
-      await supabase.from('approval_history').insert({
-        borrowing_id: borrowing.id,
-        borrowing_item_id: item.id,
-        step_order: currentStepNum,
-        step_label: currentStep?.step_label || `Step ${currentStepNum}`,
-        approver_name: approverName,
-        approver_role: approverRole,
-        status: 'rejected',
-        notes,
-        acted_at: new Date().toISOString(),
-      });
-
-      await notifyNextApprover({
-        type: 'rejected',
-        borrowing_id: borrowing.id,
-        borrower_name: borrowing.borrower_name,
-        borrower_email: borrowing.borrower_email,
-        next_approver_email: borrowing.borrower_email,
-        next_approver_name: borrowing.borrower_name,
-        next_step_label: 'Ditolak',
-        next_role_name: approverRole,
-      });
-
-      await supabase
-        .from('borrowings')
-        .update({ status: 'rejected', current_status_label: 'Ditolak' })
-        .eq('id', borrowing.id);
-
-      setNotesByItem(prev => ({ ...prev, [item.id]: '' }));
-      showToast('Pengajuan ditolak', 'info');
-      await fetchBorrowings();
-      await fetchHistory(borrowing.id);
-    } catch (e) {
-      console.error(e);
-      showToast('Terjadi kesalahan saat menolak', 'error');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleMarkReturned = async (borrowing: Borrowing, item: BorrowingItem) => {
-    if (!canReturn) {
-      showToast('Anda tidak memiliki izin untuk menandai pengembalian', 'error');
-      return;
-    }
-    setActionLoading(`return-${item.id}`);
-    try {
-      await supabase
-        .from('borrowing_items')
-        .update({ status: 'returned', current_status_label: 'Dikembalikan', updated_at: new Date().toISOString() })
-        .eq('id', item.id);
-
-      const allReturned = borrowing.borrowing_items.every(bi => bi.id === item.id || bi.status === 'returned');
-      if (allReturned) {
+      if ((b.borrowing_items ?? []).length > 0) {
         await supabase
-          .from('borrowings')
-          .update({ status: 'returned', actual_return_date: new Date().toISOString().slice(0, 10), current_status_label: 'Dikembalikan' })
-          .eq('id', borrowing.id);
+          .from('borrowing_items')
+          .update({ status: 'rejected', current_status_label: 'Ditolak' })
+          .eq('borrowing_id', b.id);
       }
-      showToast('Item ditandai sudah dikembalikan', 'success');
-      await fetchBorrowings();
-    } catch (e) {
-      showToast('Gagal menandai pengembalian', 'error');
+
+      showToast('Peminjaman ditolak', 'info');
+      fetchBorrowings();
     } finally {
       setActionLoading(null);
     }
-  };
-
-  const renderWorkflowProgress = (borrowing: Borrowing, item: BorrowingItem) => {
-    const templateId = item.workflow_template_id || borrowing.workflow_template_id;
-    if (!templateId) return null;
-    const template = workflowCacheRef.current[templateId];
-    if (!template) return null;
-
-    return (
-      <div className="flex items-center gap-1 flex-wrap mt-3">
-        {template.steps.map((step, idx) => {
-          const isCurrent = step.step_order === item.current_step;
-          const isPast = (item.current_step ?? 1) > step.step_order;
-          const isRejected = item.status === 'rejected';
-          const stepRole = roleCacheRef.current[step.role_id];
-          const stepRoleName = stepRole?.name || '—';
-          return (
-            <div key={step.id} className="flex items-center">
-              <div
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium ${
-                  isRejected && isCurrent
-                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                    : isCurrent
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 ring-2 ring-blue-400'
-                    : isPast
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                    : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
-                }`}
-                title={`${step.step_label} (${stepRoleName})`}
-              >
-                {step.step_label}
-              </div>
-              {idx < template.steps.length - 1 && <ArrowRight className="w-3 h-3 text-slate-300 mx-0.5" />}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Peminjaman</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Kelola pengajuan peminjaman dengan workflow approval otomatis
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Peminjaman</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Kelola dan setujui permohonan peminjaman barang dan fasilitas.
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <input
-          type="text"
-          placeholder="Cari nama, email, kelas, atau keperluan..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        />
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        >
-          <option value="all">Semua Status</option>
-          <option value="pending">Menunggu</option>
-          <option value="approved">Disetujui</option>
-          <option value="returned">Dikembalikan</option>
-          <option value="rejected">Ditolak</option>
-          <option value="completed">Selesai</option>
-          <option value="cancelled">Dibatalkan</option>
-        </select>
+      {/* Filters */}
+      <div className="card">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              className="input pl-9"
+              placeholder="Cari nama, kelas, tujuan..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <select
+            className="input sm:w-48"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">Semua Status</option>
+            <option value="pending">Menunggu</option>
+            <option value="approved">Disetujui</option>
+            <option value="rejected">Ditolak</option>
+            <option value="borrowed">Dipinjam</option>
+            <option value="returned">Dikembalikan</option>
+          </select>
+        </div>
       </div>
 
-      {displayList.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada pengajuan</p>
-          <p className="text-sm text-slate-400 mt-1">
-            {(adminUser?.role === 'superadmin' || adminUser?.role === 'Super Admin')
-              ? 'Belum ada pengajuan peminjaman'
-              : 'Tidak ada pengajuan yang menjadi tanggung jawab Anda saat ini'}
-          </p>
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="card">
+          <EmptyState title="Tidak ada peminjaman" description="Belum ada data peminjaman yang cocok." />
         </div>
       ) : (
         <div className="space-y-4">
-          {displayList.map(borrowing => {
-            const isExpanded = expandedId === borrowing.id;
-            const sc = statusConfig[borrowing.status] || statusConfig.pending;
-            const history = historyByBorrowing[borrowing.id] || [];
+          {filtered.map((b) => {
+            const { canApprove, hasActed, currentStep, steps } = getApprovalState(b);
+            const showApprove = canApprove && !hasActed && hasPermission('borrowings', 'approve');
+            const showReject = canApprove && !hasActed && hasPermission('borrowings', 'reject');
             return (
-              <div key={borrowing.id} className="card overflow-hidden">
-                <div
-                  className="p-5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
-                  onClick={() => {
-                    setExpandedId(isExpanded ? null : borrowing.id);
-                    if (!isExpanded) fetchHistory(borrowing.id);
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold text-slate-900 dark:text-white">{borrowing.borrower_name}</h3>
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${sc.color}`}>{sc.label}</span>
-                      </div>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        {borrowing.borrower_class} · {borrowing.borrower_email}
-                      </p>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                        {borrowing.borrow_date} → {borrowing.return_date}
-                        {borrowing.start_time && borrowing.end_time ? ` (${borrowing.start_time}-${borrowing.end_time})` : ''}
-                      </p>
-                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-2 line-clamp-2">{borrowing.purpose}</p>
-                    </div>
-                    <div className="flex-shrink-0">
-                      {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-                    </div>
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="border-t border-slate-200 dark:border-slate-700 p-5 space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-2 text-sm">
-                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                          <User className="w-4 h-4 text-slate-400" /> {borrowing.borrower_name}
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                          <Mail className="w-4 h-4 text-slate-400" /> {borrowing.borrower_email}
-                        </div>
-                        {borrowing.borrower_phone && (
-                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                            <Phone className="w-4 h-4 text-slate-400" /> {borrowing.borrower_phone}
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                          <Calendar className="w-4 h-4 text-slate-400" /> {borrowing.borrow_date} s/d {borrowing.return_date}
-                        </div>
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex items-start gap-2 text-slate-600 dark:text-slate-300">
-                          <FileText className="w-4 h-4 text-slate-400 mt-0.5" />
-                          <span>{borrowing.purpose}</span>
-                        </div>
-                        {borrowing.notes && (
-                          <div className="text-slate-500 dark:text-slate-400">
-                            <span className="font-medium">Catatan:</span> {borrowing.notes}
-                          </div>
-                        )}
-                        {borrowing.document_url && (
-                          <a href={borrowing.document_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline text-sm">
-                            Lihat dokumen pendukung
-                          </a>
-                        )}
-                      </div>
+              <div key={b.id} className="card">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                        {b.purpose ?? b.borrower_name ?? 'Peminjaman'}
+                      </h3>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[b.status] ?? statusStyles.pending}`}>
+                        {statusLabel(b.status)}
+                      </span>
+                      {b.current_status_label && (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {b.current_status_label}
+                        </span>
+                      )}
                     </div>
 
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Item Dipinjam</h4>
-                      <div className="space-y-3">
-                        {borrowing.borrowing_items.map(item => {
-                          const itemSc = statusConfig[item.status] || statusConfig.pending;
-                          const approverInfo = isUserActiveApprover(item);
-                          const alreadyActed = hasUserAlreadyActed(borrowing.id, item);
-                          const canApproveThis =
-                            canApprove &&
-                            approverInfo.isActive &&
-                            !alreadyActed &&
-                            item.status === 'pending';
-                          const canRejectThis =
-                            canReject &&
-                            approverInfo.isActive &&
-                            !alreadyActed &&
-                            item.status === 'pending';
-                          const canReturnThis = item.status === 'approved' && canReturn;
-                          const showActionArea = canApproveThis || canRejectThis || canReturnThis;
-
-                          let statusBanner: string | null = null;
-                          if (item.status === 'pending' && !approverInfo.isActive) {
-                            statusBanner = approverInfo.roleName
-                              ? `Menunggu persetujuan ${approverInfo.roleName} (${approverInfo.stepLabel})`
-                              : `Menunggu persetujuan (${approverInfo.stepLabel})`;
-                          } else if (item.status === 'pending' && approverInfo.isActive && alreadyActed) {
-                            statusBanner = 'Anda sudah memberikan aksi pada step ini';
-                          } else if (item.status === 'approved') {
-                            statusBanner = 'Pengajuan disetujui';
-                          } else if (item.status === 'rejected') {
-                            statusBanner = 'Pengajuan ditolak';
-                          } else if (item.status === 'returned') {
-                            statusBanner = 'Item telah dikembalikan';
-                          }
-
-                          return (
-                            <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-                              <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-medium text-slate-900 dark:text-white">{item.item_name}</span>
-                                    <span className="text-sm text-slate-500">×{item.quantity}</span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${itemSc.color}`}>{itemSc.label}</span>
-                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                                      {item.item_type === 'barang' ? 'Barang' : 'Fasilitas'}
-                                    </span>
-                                  </div>
-                                  {item.current_status_label && (
-                                    <p className="text-xs text-slate-500 mt-1">Status: {item.current_status_label}</p>
-                                  )}
-                                  {renderWorkflowProgress(borrowing, item)}
-
-                                  {statusBanner && (
-                                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/30 rounded-lg px-3 py-2">
-                                      <Clock className="w-3.5 h-3.5" />
-                                      {statusBanner}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {showActionArea && (
-                                <div className="mt-3 space-y-3">
-                                  {(canApproveThis || canRejectThis) && (
-                                    <div>
-                                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
-                                        Catatan (opsional)
-                                      </label>
-                                      <textarea
-                                        value={notesByItem[item.id] || ''}
-                                        onChange={e => setNotesByItem(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                        rows={2}
-                                        placeholder="Catatan untuk approval ini..."
-                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                                      />
-                                    </div>
-                                  )}
-                                  <div className="flex gap-2">
-                                    {canApproveThis && (
-                                      <button
-                                        onClick={() => handleApproveItem(borrowing, item)}
-                                        disabled={actionLoading === item.id}
-                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
-                                      >
-                                        {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                                        Setujui
-                                      </button>
-                                    )}
-                                    {canRejectThis && (
-                                      <button
-                                        onClick={() => handleRejectItem(borrowing, item)}
-                                        disabled={actionLoading === `reject-${item.id}`}
-                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
-                                      >
-                                        {actionLoading === `reject-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                                        Tolak
-                                      </button>
-                                    )}
-                                    {canReturnThis && (
-                                      <button
-                                        onClick={() => handleMarkReturned(borrowing, item)}
-                                        disabled={actionLoading === `return-${item.id}`}
-                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                                      >
-                                        {actionLoading === `return-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                                        Tandai Dikembalikan
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                    <div className="grid grid-cols-1 gap-2 text-sm text-slate-600 dark:text-slate-400 sm:grid-cols-2">
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-slate-400" />
+                        <span>{b.borrower_name ?? '-'}{b.borrower_class ? ` (${b.borrower_class})` : ''}</span>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <Package className="h-4 w-4 text-slate-400" />
+                        <span>{b.item_type ?? 'Barang'} • {b.borrowed_units ?? 0} unit</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-slate-400" />
+                        <span>{b.borrow_date ?? '-'} → {b.return_date ?? '-'}</span>
+                      </div>
+                      {b.start_time && (
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-slate-400" />
+                          <span>{b.start_time}{b.end_time ? ` - ${b.end_time}` : ''}</span>
+                        </div>
+                      )}
                     </div>
 
-                    {history.length > 0 && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
-                          <History className="w-4 h-4" /> Riwayat Approval
-                        </h4>
-                        <div className="space-y-2">
-                          {history.map(h => (
-                            <div key={h.id} className="flex items-start gap-3 text-sm rounded-lg bg-slate-50 dark:bg-slate-700/30 p-3">
-                              <div className={`w-2 h-2 rounded-full mt-1.5 ${h.status === 'approved' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                              <div className="flex-1">
-                                <p className="text-slate-700 dark:text-slate-300">
-                                  <span className="font-medium">{h.approver_name}</span> ({h.approver_role}) —{' '}
-                                  <span className={h.status === 'approved' ? 'text-emerald-600' : 'text-red-600'}>
-                                    {h.status === 'approved' ? 'Menyetujui' : 'Menolak'}
-                                  </span>
-                                </p>
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                  {h.step_label} · {new Date(h.acted_at).toLocaleString('id-ID')}
-                                </p>
-                                {h.notes && <p className="text-xs text-slate-500 mt-0.5">"{h.notes}"</p>}
-                              </div>
-                            </div>
+                    {b.notes && (
+                      <div className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-400">
+                        <FileText className="mt-0.5 h-4 w-4 text-slate-400" />
+                        <span>{b.notes}</span>
+                      </div>
+                    )}
+
+                    {/* Items */}
+                    {(b.borrowing_items ?? []).length > 0 && (
+                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                        <p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Item:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {b.borrowing_items.map((it) => (
+                            <span
+                              key={it.id}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            >
+                              {it.item_name ?? it.item_type ?? 'Item'} ×{it.quantity}
+                              <span className={`rounded px-1.5 py-0.5 ${statusStyles[it.status] ?? statusStyles.pending}`}>
+                                {statusLabel(it.status)}
+                              </span>
+                            </span>
                           ))}
                         </div>
                       </div>
                     )}
+
+                    {/* Workflow progress */}
+                    {steps.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {steps.map((s, idx) => {
+                          const done = (b.current_step ?? 0) > s.step_order;
+                          const active = (b.current_step ?? 0) === s.step_order && b.status === 'pending';
+                          return (
+                            <div key={s.id} className="flex items-center gap-1.5">
+                              <div
+                                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${
+                                  done
+                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                    : active
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                }`}
+                              >
+                                {done && <CheckCircle2 className="h-3 w-3" />}
+                                {s.step_label ?? `Tahap ${s.step_order}`}
+                              </div>
+                              {idx < steps.length - 1 && <div className="h-px w-4 bg-slate-300 dark:bg-slate-700" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {currentStep && canApprove && !hasActed && (
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                        Menunggu persetujuan Anda ({currentStep.step_label})
+                      </p>
+                    )}
                   </div>
-                )}
+
+                  {/* Actions */}
+                  {(showApprove || showReject) && (
+                    <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+                      {showApprove && (
+                        <button
+                          onClick={() => handleApprove(b)}
+                          disabled={actionLoading === b.id}
+                          className="btn-primary px-4 py-2 text-xs"
+                        >
+                          {actionLoading === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          Setujui
+                        </button>
+                      )}
+                      {showReject && (
+                        <button
+                          onClick={() => handleReject(b)}
+                          disabled={actionLoading === b.id}
+                          className="btn-danger px-4 py-2 text-xs"
+                        >
+                          {actionLoading === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                          Tolak
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}

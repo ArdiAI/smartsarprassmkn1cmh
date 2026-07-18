@@ -1,10 +1,9 @@
-export const brandConfig = {
-  system: {
-    name: 'SMART SARPRAS',
-    fullName: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
-    tagline: 'Sistem Manajemen Sarana dan Prasarana Terpadu',
-    shortName: 'SMART SARPRAS',
-  },
-  school: { name: 'SMART SARPRAS', address: 'Indonesia', phone: '', email: '', website: '' },
-  colors: { primary: '#2563eb', secondary: '#06b6d4', accent: '#3b82f6' },
+export const brand = {
+  name: 'SMART SARPRAS',
+  tagline: 'Sistem Manajemen Sarana dan Prasarana Sekolah',
+  description:
+    'Platform terpadu untuk pengelolaan sarana dan prasarana sekolah: peminjaman barang, pemesanan fasilitas, pelaporan kerusakan, agenda kegiatan, dan timeline kegiatan.',
+  primary: '#2563eb',
+  accent: '#06b6d4',
+  school: 'SMK Negeri 1 Contoh',
 };

@@ -1,90 +1,132 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { Menu, X, Moon, Sun, LogOut, User, LayoutDashboard, Calendar } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import {
+  Home,
+  Package,
+  Building2,
+  ClipboardList,
+  CalendarDays,
+  History,
+  Phone,
+  Info,
+  LogIn,
+  Menu,
+  X,
+  Moon,
+  Sun,
+} from 'lucide-react';
+import { brand } from '../brand/config';
 import { useTheme } from '../context/ThemeContext';
-import { brandConfig } from '../brand/config';
+import { cn } from '../utils/cn';
+
+const navItems = [
+  { to: '/', label: 'Beranda', icon: Home },
+  { to: '/fasilitas', label: 'Fasilitas', icon: Building2 },
+  { to: '/inventaris', label: 'Inventaris', icon: Package },
+  { to: '/pinjam', label: 'Pengajuan', icon: ClipboardList },
+  { to: '/agenda', label: 'Agenda', icon: CalendarDays },
+  { to: '/timeline', label: 'Timeline', icon: CalendarDays },
+  { to: '/history', label: 'Riwayat', icon: History },
+  { to: '/laporan', label: 'Laporan', icon: Phone },
+  { to: '/tentang', label: 'Tentang', icon: Info },
+];
 
 export default function Navbar() {
-  const [isOpen, setIsOpen] = useState(false);
-  const { user, isAdmin, signOut } = useAuth();
-  const { theme, toggle } = useTheme();
+  const location = useLocation();
   const navigate = useNavigate();
-
-  const handleSignOut = async () => {
-    await signOut();
-    navigate('/auth');
-  };
-
-  const navLinks = [
-    { to: '/', label: 'Beranda' },
-    { to: '/fasilitas', label: 'Fasilitas' },
-    { to: '/inventaris', label: 'Inventaris' },
-    { to: '/pinjam', label: 'Pinjam' },
-    { to: '/agenda', label: 'Agenda' },
-    { to: '/timeline', label: 'Timeline' },
-    { to: '/laporan', label: 'Laporan' },
-    { to: '/riwayat', label: 'Riwayat' },
-    { to: '/tentang', label: 'Tentang' },
-  ];
+  const { theme, toggleTheme } = useTheme();
+  const [open, setOpen] = useState(false);
 
   return (
-    <nav className="sticky top-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <span className="text-white font-bold">S</span>
-            </div>
-            <span className="font-bold text-slate-900 dark:text-white text-lg">{brandConfig.system.name}</span>
-          </Link>
-          <div className="hidden md:flex items-center gap-1">
-            {navLinks.map(link => (
-              <Link key={link.to} to={link.to} className="px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors">
-                {link.label}
-              </Link>
-            ))}
+    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
+      <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+        <Link to="/" className="flex items-center gap-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white">
+            <Building2 className="h-5 w-5" />
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
-              {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-            </button>
-            {user ? (
-              <div className="flex items-center gap-2">
-                {isAdmin && (
-                  <Link to="/admin" className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
-                    <LayoutDashboard className="w-4 h-4" /> Admin
-                  </Link>
+          <span className="text-lg font-bold text-slate-900 dark:text-white">{brand.name}</span>
+        </Link>
+
+        <div className="hidden items-center gap-1 lg:flex">
+          {navItems.map((item) => {
+            const active = location.pathname === item.to;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition',
+                  active
+                    ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
                 )}
-                <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                  <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Keluar</span>
-                </button>
-              </div>
-            ) : (
-              <Link to="/auth" className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600">
-                <User className="w-4 h-4" /> Masuk
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
               </Link>
-            )}
-            <button onClick={() => setIsOpen(!isOpen)} className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400">
-              {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleTheme}
+            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </button>
+          <button
+            onClick={() => navigate('/auth')}
+            className="hidden items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-brand-700 sm:flex"
+          >
+            <LogIn className="h-4 w-4" />
+            Masuk
+          </button>
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
+          >
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
+      </nav>
+
+      {open && (
+        <div className="border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950 lg:hidden">
+          <div className="flex flex-col gap-1">
+            {navItems.map((item) => {
+              const active = location.pathname === item.to;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium',
+                    active
+                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
+            <button
+              onClick={() => {
+                setOpen(false);
+                navigate('/auth');
+              }}
+              className="flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2.5 text-sm font-semibold text-white"
+            >
+              <LogIn className="h-4 w-4" />
+              Masuk
             </button>
           </div>
         </div>
-        {isOpen && (
-          <div className="md:hidden py-3 border-t border-slate-200 dark:border-slate-700">
-            {navLinks.map(link => (
-              <Link key={link.to} to={link.to} onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
-                {link.label}
-              </Link>
-            ))}
-            {isAdmin && (
-              <Link to="/admin" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
-                Dashboard Admin
-              </Link>
-            )}
-          </div>
-        )}
-      </div>
-    </nav>
+      )}
+    </header>
   );
 }

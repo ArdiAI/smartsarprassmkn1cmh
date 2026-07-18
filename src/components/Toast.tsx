@@ -1,55 +1,87 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, AlertCircle, Info, X } from 'lucide-react';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 
-export interface ToastData {
-  id: string;
+type ToastType = 'success' | 'error' | 'info' | 'warning';
+
+interface ToastItem {
+  id: number;
   message: string;
-  type: 'success' | 'error' | 'warning' | 'info';
+  type: ToastType;
 }
 
-let toastCallback: ((toast: ToastData) => void) | null = null;
-
-export function showToast(message: string, type: ToastData['type'] = 'info') {
-  if (toastCallback) toastCallback({ id: Math.random().toString(36), message, type });
+interface ToastContextValue {
+  toasts: ToastItem[];
+  showToast: (message: string, type?: ToastType) => void;
+  removeToast: (id: number) => void;
 }
 
-export default function Toast() {
-  const [toasts, setToasts] = useState<ToastData[]>([]);
+const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
-  useEffect(() => {
-    toastCallback = (toast: ToastData) => {
-      setToasts(prev => [...prev, toast]);
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== toast.id));
-      }, 5000);
-    };
-    return () => {
-      toastCallback = null;
-    };
+let toastId = 0;
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const removeToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const icons = { success: CheckCircle, error: XCircle, warning: AlertCircle, info: Info };
-  const colors = {
-    success: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800',
-    error: 'text-red-500 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
-    warning: 'text-amber-500 bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
-    info: 'text-blue-500 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',
-  };
+  const showToast = useCallback(
+    (message: string, type: ToastType = 'success') => {
+      const id = ++toastId;
+      setToasts((prev) => [...prev, { id, message, type }]);
+      setTimeout(() => removeToast(id), 4000);
+    },
+    [removeToast],
+  );
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { message: string; type: ToastType };
+      showToast(detail.message, detail.type);
+    };
+    window.addEventListener('show-toast', handler);
+    return () => window.removeEventListener('show-toast', handler);
+  }, [showToast]);
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 space-y-2">
-      {toasts.map(t => {
-        const Icon = icons[t.type];
-        return (
-          <div key={t.id} className={`flex items-start gap-3 p-4 rounded-xl border shadow-lg animate-slide-in max-w-sm ${colors[t.type]}`}>
-            <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <p className="text-sm flex-1">{t.message}</p>
-            <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        );
-      })}
+    <ToastContext.Provider value={{ toasts, showToast, removeToast }}>
+      {children}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+    </ToastContext.Provider>
+  );
+}
+
+function ToastContainer({ toasts, removeToast }: { toasts: ToastItem[]; removeToast: (id: number) => void }) {
+  const colors: Record<ToastType, string> = {
+    success: 'bg-emerald-600',
+    error: 'bg-red-600',
+    info: 'bg-brand-600',
+    warning: 'bg-amber-600',
+  };
+  return (
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className={`${colors[t.type]} rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg`}
+          onClick={() => removeToast(t.id)}
+        >
+          {t.message}
+        </div>
+      ))}
     </div>
   );
 }
+
+export function showToast(message: string, type: ToastType = 'success') {
+  const event = new CustomEvent('show-toast', { detail: { message, type } });
+  window.dispatchEvent(event);
+}
+
+export function useToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast must be used within ToastProvider');
+  return ctx;
+}
+
+export default ToastProvider;

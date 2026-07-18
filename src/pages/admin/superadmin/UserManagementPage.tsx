@@ -1,511 +1,479 @@
 import { useEffect, useState, useCallback } from 'react';
+import { UserPlus, Trash2, Search, ShieldCheck, Mail, KeyRound } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
-import { useAuth } from '../../../context/AuthContext';
-import { showToast } from '../../../components/Toast';
 import { cn } from '../../../utils/cn';
-import {
-  UserCog, Plus, Trash2, X, Loader2, Search, Shield, Mail, Power, Crown,
-} from 'lucide-react';
+import { showToast } from '../../../components/Toast';
+import { useAuth } from '../../../context/AuthContext';
 
 interface AdminUser {
   id: string;
   user_id: string | null;
-  email: string | null;
-  name: string | null;
-  role: string | null;
-  is_active: boolean | null;
+  email: string;
+  name: string;
+  role: string;
+  is_active: boolean;
   created_at: string;
 }
 
 interface Role {
   id: string;
   name: string;
-  level: number | null;
-  is_active: boolean | null;
+  level: number;
+  is_active: boolean;
+}
+
+interface AdminUserRoleRow {
+  admin_user_id: string;
+  role_id: string;
 }
 
 export default function UserManagementPage() {
   const { hasPermission, refreshAdminProfile } = useAuth();
-  const [admins, setAdmins] = useState<AdminUser[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [roleLinks, setRoleLinks] = useState<AdminUserRoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ email: '', name: '', user_id: '', role_id: '' });
-  const [adding, setAdding] = useState(false);
-  const [roleModalAdmin, setRoleModalAdmin] = useState<AdminUser | null>(null);
-  const [roleForm, setRoleForm] = useState('');
-  const [savingRole, setSavingRole] = useState(false);
-  const [deleteAdmin, setDeleteAdmin] = useState<AdminUser | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [addEmail, setAddEmail] = useState('');
+  const [addName, setAddName] = useState('');
+  const [addUserId, setAddUserId] = useState('');
+  const [addRoleId, setAddRoleId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [editRoleId, setEditRoleId] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   const canCreate = hasPermission('users', 'create');
   const canUpdate = hasPermission('users', 'update');
   const canDelete = hasPermission('users', 'delete');
 
-  const fetchAdmins = useCallback(async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('admin_users')
-      .select('id, user_id, email, name, role, is_active, created_at')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat admin user', 'error');
-    } else {
-      setAdmins((data as unknown as AdminUser[]) || []);
-    }
-    setLoading(false);
-  }, []);
-
-  const fetchRoles = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('roles')
-      .select('id, name, level, is_active')
-      .eq('is_active', true)
-      .order('level', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat roles', 'error');
-    } else {
-      setRoles((data as unknown as Role[]) || []);
+    try {
+      const [usersRes, rolesRes, linksRes] = await Promise.all([
+        supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
+        supabase.from('roles').select('id, name, level, is_active').eq('is_active', true).order('level', { ascending: false }),
+        supabase.from('admin_user_roles').select('admin_user_id, role_id'),
+      ]);
+      if (usersRes.error) throw usersRes.error;
+      if (rolesRes.error) throw rolesRes.error;
+      if (linksRes.error) throw linksRes.error;
+      setUsers((usersRes.data ?? []) as unknown as AdminUser[]);
+      setRoles((rolesRes.data ?? []) as unknown as Role[]);
+      setRoleLinks((linksRes.data ?? []) as unknown as AdminUserRoleRow[]);
+    } catch (err) {
+      showToast('Gagal memuat data user: ' + (err as Error).message, 'error');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchAdmins();
-    fetchRoles();
-  }, [fetchAdmins, fetchRoles]);
+    loadData();
+  }, [loadData]);
 
-  const handleAdd = async () => {
-    if (!addForm.email.trim()) {
-      showToast('Email wajib diisi', 'error');
-      return;
-    }
-    setAdding(true);
-
-    let userId: string | null = addForm.user_id.trim() ? addForm.user_id.trim() : null;
-    const roleName = roles.find(r => r.id === addForm.role_id)?.name ?? null;
-
-    // If no user_id provided, try to reuse existing admin_users row by email
-    if (!userId) {
-      const { data: existing } = await supabase
-        .from('admin_users')
-        .select('user_id')
-        .eq('email', addForm.email.trim())
-        .limit(1);
-      const existingRow = (existing as unknown as { user_id: string | null }[] | null)?.[0];
-      if (existingRow?.user_id) {
-        userId = existingRow.user_id;
-      }
-    }
-
-    const payload: Record<string, unknown> = {
-      email: addForm.email.trim(),
-      name: addForm.name.trim() || null,
-      role: roleName,
-      is_active: true,
-    };
-    if (userId) payload.user_id = userId;
-
-    const { data: inserted, error } = await supabase
-      .from('admin_users')
-      .insert(payload)
-      .select('id')
-      .single();
-    const insertedRow = inserted as unknown as { id: string } | null;
-
-    if (error) {
-      showToast('Gagal menambah admin: ' + error.message, 'error');
-      setAdding(false);
-      return;
-    }
-
-    // Upsert role assignment into admin_user_roles
-    if (insertedRow?.id && addForm.role_id) {
-      await supabase
-        .from('admin_user_roles')
-        .upsert(
-          { admin_user_id: insertedRow.id, role_id: addForm.role_id },
-          { onConflict: 'admin_user_id,role_id' }
-        );
-    }
-
-    if (!userId) {
-      showToast('Admin ditambahkan (user_id kosong — user akan aktif setelah login pertama)', 'info');
-    } else {
-      showToast('Admin ditambahkan', 'success');
-    }
-    setAddOpen(false);
-    setAddForm({ email: '', name: '', user_id: '', role_id: '' });
-    setAdding(false);
-    await fetchAdmins();
-    await refreshAdminProfile();
+  const roleIdForUser = (adminId: string): string | null => {
+    const link = roleLinks.find((l) => l.admin_user_id === adminId);
+    return link ? link.role_id : null;
   };
 
-  const openRoleModal = (a: AdminUser) => {
-    const matched = roles.find(r => r.name === a.role);
-    setRoleForm(matched?.id ?? '');
-    setRoleModalAdmin(a);
-  };
-
-  const handleSaveRole = async () => {
-    if (!roleModalAdmin) return;
-    if (!roleForm) {
-      showToast('Pilih role', 'error');
-      return;
-    }
-    setSavingRole(true);
-    const role = roles.find(r => r.id === roleForm);
-    const roleName = role?.name ?? null;
-
-    // 1. Update admin_users.role text column
-    const { error: updErr } = await supabase
-      .from('admin_users')
-      .update({ role: roleName })
-      .eq('id', roleModalAdmin.id);
-
-    if (updErr) {
-      showToast('Gagal memperbarui role', 'error');
-      setSavingRole(false);
-      return;
-    }
-
-    // 2. Delete existing role assignments, then insert new
-    await supabase
-      .from('admin_user_roles')
-      .delete()
-      .eq('admin_user_id', roleModalAdmin.id);
-    await supabase
-      .from('admin_user_roles')
-      .upsert(
-        { admin_user_id: roleModalAdmin.id, role_id: roleForm },
-        { onConflict: 'admin_user_id,role_id' }
-      );
-
-    showToast('Role diperbarui', 'success');
-    setRoleModalAdmin(null);
-    setSavingRole(false);
-    await fetchAdmins();
-    await refreshAdminProfile();
-  };
-
-  const handleToggleActive = async (a: AdminUser) => {
-    setTogglingId(a.id);
-    const newVal = !(a.is_active ?? false);
-    const { error } = await supabase
-      .from('admin_users')
-      .update({ is_active: newVal })
-      .eq('id', a.id);
-    if (error) {
-      showToast('Gagal mengubah status', 'error');
-    } else {
-      showToast(newVal ? 'Admin diaktifkan' : 'Admin dinonaktifkan', 'success');
-      await fetchAdmins();
-      await refreshAdminProfile();
-    }
-    setTogglingId(null);
-  };
-
-  const handleDelete = async () => {
-    if (!deleteAdmin) return;
-    setDeleting(true);
-    // Remove role assignments first
-    await supabase
-      .from('admin_user_roles')
-      .delete()
-      .eq('admin_user_id', deleteAdmin.id);
-    const { error } = await supabase
-      .from('admin_users')
-      .delete()
-      .eq('id', deleteAdmin.id);
-    if (error) {
-      showToast('Gagal menghapus admin', 'error');
-    } else {
-      showToast('Admin dihapus', 'success');
-      setDeleteAdmin(null);
-      await fetchAdmins();
-      await refreshAdminProfile();
-    }
-    setDeleting(false);
-  };
-
-  const filtered = admins.filter(a => {
-    if (!search) return true;
-    const q = search.toLowerCase();
+  const filtered = users.filter((u) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
     return (
-      a.email?.toLowerCase().includes(q) ||
-      a.name?.toLowerCase().includes(q) ||
-      a.role?.toLowerCase().includes(q)
+      (u.email ?? '').toLowerCase().includes(q) ||
+      (u.name ?? '').toLowerCase().includes(q) ||
+      (u.role ?? '').toLowerCase().includes(q)
     );
   });
 
+  const handleAdd = async () => {
+    const email = addEmail.trim();
+    if (!email) {
+      showToast('Email wajib diisi', 'warning');
+      return;
+    }
+    setSaving(true);
+    try {
+      let userIdToUse: string | null = addUserId.trim() || null;
+
+      if (!userIdToUse) {
+        const { data: existing } = await supabase
+          .from('admin_users')
+          .select('id, user_id')
+          .eq('email', email)
+          .maybeSingle();
+        const existingRow = existing as unknown as { id: string; user_id: string | null } | null;
+        if (existingRow && existingRow.user_id) {
+          userIdToUse = existingRow.user_id;
+        }
+      }
+
+      const insertPayload: { email: string; name: string; role: string; user_id: string | null; is_active: boolean } = {
+        email,
+        name: addName.trim() || email.split('@')[0],
+        role: roles.find((r) => r.id === addRoleId)?.name ?? '',
+        user_id: userIdToUse,
+        is_active: true,
+      };
+
+      const { data: inserted, error: insErr } = await supabase
+        .from('admin_users')
+        .insert(insertPayload)
+        .select('id')
+        .single();
+      if (insErr) throw insErr;
+      const newAdmin = inserted as unknown as { id: string };
+
+      if (addRoleId) {
+        const { error: linkErr } = await supabase
+          .from('admin_user_roles')
+          .upsert(
+            { admin_user_id: newAdmin.id, role_id: addRoleId },
+            { onConflict: 'admin_user_id,role_id' },
+          );
+        if (linkErr) throw linkErr;
+      }
+
+      if (!userIdToUse) {
+        showToast('Admin ditambahkan. user_id kosong — minta user login sekali lalu hubungkan akun.', 'info');
+      } else {
+        showToast('Admin berhasil ditambahkan', 'success');
+      }
+
+      setShowAdd(false);
+      setAddEmail('');
+      setAddName('');
+      setAddUserId('');
+      setAddRoleId('');
+      await loadData();
+      await refreshAdminProfile();
+    } catch (err) {
+      showToast('Gagal menambah admin: ' + (err as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (u: AdminUser) => {
+    setEditUser(u);
+    const currentRoleId = roleIdForUser(u.id);
+    setEditRoleId(currentRoleId ?? '');
+  };
+
+  const handleSaveRole = async () => {
+    if (!editUser) return;
+    setEditSaving(true);
+    try {
+      const roleName = roles.find((r) => r.id === editRoleId)?.name ?? '';
+
+      // 1. Update admin_users.role text column (backwards-compatible display)
+      const { error: updErr } = await supabase
+        .from('admin_users')
+        .update({ role: roleName })
+        .eq('id', editUser.id);
+      if (updErr) throw updErr;
+
+      // 2. Remove existing role links, then upsert new one
+      const { error: delErr } = await supabase
+        .from('admin_user_roles')
+        .delete()
+        .eq('admin_user_id', editUser.id);
+      if (delErr) throw delErr;
+
+      if (editRoleId) {
+        const { error: linkErr } = await supabase
+          .from('admin_user_roles')
+          .upsert(
+            { admin_user_id: editUser.id, role_id: editRoleId },
+            { onConflict: 'admin_user_id,role_id' },
+          );
+        if (linkErr) throw linkErr;
+      }
+
+      showToast('Role admin berhasil diperbarui', 'success');
+      setEditUser(null);
+      setEditRoleId('');
+      await loadData();
+      await refreshAdminProfile();
+    } catch (err) {
+      showToast('Gagal memperbarui role: ' + (err as Error).message, 'error');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleToggleActive = async (u: AdminUser) => {
+    try {
+      const { error } = await supabase
+        .from('admin_users')
+        .update({ is_active: !u.is_active })
+        .eq('id', u.id);
+      if (error) throw error;
+      showToast(`Admin ${!u.is_active ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+      await loadData();
+    } catch (err) {
+      showToast('Gagal mengubah status: ' + (err as Error).message, 'error');
+    }
+  };
+
+  const handleRemove = async (u: AdminUser) => {
+    if (!confirm(`Hapus admin "${u.name ?? u.email}"? Ini juga menghapus assignment role.`)) return;
+    try {
+      // 1. Delete role links first
+      const { error: linkErr } = await supabase
+        .from('admin_user_roles')
+        .delete()
+        .eq('admin_user_id', u.id);
+      if (linkErr) throw linkErr;
+
+      // 2. Delete admin_users row
+      const { error } = await supabase.from('admin_users').delete().eq('id', u.id);
+      if (error) throw error;
+
+      showToast('Admin berhasil dihapus', 'success');
+      await loadData();
+      await refreshAdminProfile();
+    } catch (err) {
+      showToast('Gagal menghapus admin: ' + (err as Error).message, 'error');
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Manajemen User</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Kelola admin, role, dan status aktif
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Manajemen User Admin</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Kelola admin, role, dan status akun</p>
         </div>
         {canCreate && (
           <button
-            onClick={() => setAddOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+            onClick={() => setShowAdd(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
           >
-            <Plus className="w-4 h-4" /> Tambah Admin
+            <UserPlus className="h-4 w-4" />
+            Tambah Admin
           </button>
         )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+      {/* Search */}
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
-          type="text"
-          placeholder="Cari nama, email, atau role..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari nama, email, atau role..."
+          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
         />
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <UserCog className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada admin user</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(a => {
-            const roleMatch = roles.find(r => r.name === a.role);
-            return (
-              <div key={a.id} className="card p-5 space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                      <span className="text-white font-bold text-sm">
-                        {(a.name || a.email || 'A').charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">
-                        {a.name || '(tanpa nama)'}
-                      </h3>
-                      <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                        <Mail className="w-3 h-3" />
-                        <span className="truncate">{a.email ?? '-'}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <span
-                    className={cn(
-                      'px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
-                      a.is_active
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
-                    )}
-                  >
-                    {a.is_active ? 'Aktif' : 'Nonaktif'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  {a.role ? (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-medium">
-                      {roleMatch?.level != null && <Crown className="w-3 h-3" />}
-                      {a.role}
-                    </span>
-                  ) : (
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-500 text-xs">
-                      Tanpa role
-                    </span>
-                  )}
-                  {roleMatch?.level != null && (
-                    <span className="text-xs text-slate-400">Level {roleMatch.level}</span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/50">
-                  {canUpdate && (
-                    <>
-                      <button
-                        onClick={() => openRoleModal(a)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
-                      >
-                        <Shield className="w-3.5 h-3.5" /> Ubah Role
-                      </button>
-                      <button
-                        onClick={() => handleToggleActive(a)}
-                        disabled={togglingId === a.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                      >
-                        {togglingId === a.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      {/* Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        {loading ? (
+          <div className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">Memuat...</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">Tidak ada admin ditemukan.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Admin</th>
+                  <th className="px-4 py-3 font-semibold">Role</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Dibuat</th>
+                  <th className="px-4 py-3 text-right font-semibold">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filtered.map((u) => {
+                  const roleId = roleIdForUser(u.id);
+                  const roleName = roleId ? roles.find((r) => r.id === roleId)?.name ?? u.role : u.role;
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                            {(u.name ?? u.email ?? '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900 dark:text-white">{u.name ?? '-'}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{u.email ?? '-'}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {roleName ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
+                            <ShieldCheck className="h-3 w-3" />
+                            {roleName}
+                          </span>
                         ) : (
-                          <Power className="w-3.5 h-3.5" />
+                          <span className="text-xs text-slate-400">Belum ada role</span>
                         )}
-                        {a.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                      </button>
-                    </>
-                  )}
-                  {canDelete && (
-                    <button
-                      onClick={() => setDeleteAdmin(a)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ml-auto"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Hapus
-                    </button>
-                  )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => canUpdate && handleToggleActive(u)}
+                          disabled={!canUpdate}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
+                            u.is_active
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+                            canUpdate && 'cursor-pointer hover:opacity-80',
+                            !canUpdate && 'cursor-not-allowed opacity-70',
+                          )}
+                        >
+                          <span className={cn('h-1.5 w-1.5 rounded-full', u.is_active ? 'bg-emerald-500' : 'bg-slate-400')} />
+                          {u.is_active ? 'Aktif' : 'Nonaktif'}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                        {u.created_at ? new Date(u.created_at).toLocaleDateString('id-ID') : '-'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          {canUpdate && (
+                            <button
+                              onClick={() => openEdit(u)}
+                              className="rounded-lg p-1.5 text-brand-600 hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-900/30"
+                            >
+                              <KeyRound className="h-4 w-4" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => handleRemove(u)}
+                              className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                          {!canUpdate && !canDelete && (
+                            <span className="text-xs text-slate-400">-</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Add Modal */}
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+            <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Tambah Admin Baru</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Email <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="email"
+                    value={addEmail}
+                    onChange={(e) => setAddEmail(e.target.value)}
+                    placeholder="admin@example.com"
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Add modal */}
-      {addOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setAddOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tambah Admin</h2>
-              <button onClick={() => setAddOpen(false)} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
               <div>
-                <label className="label">Email <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Nama</label>
                 <input
-                  type="email"
-                  value={addForm.email}
-                  onChange={e => setAddForm({ ...addForm, email: e.target.value })}
-                  className="input"
-                  placeholder="admin@sekolah.id"
+                  value={addName}
+                  onChange={(e) => setAddName(e.target.value)}
+                  placeholder="Nama lengkap (opsional)"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
               </div>
               <div>
-                <label className="label">Nama</label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">User ID (UUID) opsional</label>
                 <input
-                  type="text"
-                  value={addForm.name}
-                  onChange={e => setAddForm({ ...addForm, name: e.target.value })}
-                  className="input"
-                  placeholder="Nama lengkap"
-                />
-              </div>
-              <div>
-                <label className="label">User ID (UUID, opsional)</label>
-                <input
-                  type="text"
-                  value={addForm.user_id}
-                  onChange={e => setAddForm({ ...addForm, user_id: e.target.value })}
-                  className="input"
+                  value={addUserId}
+                  onChange={(e) => setAddUserId(e.target.value)}
                   placeholder="Kosongkan untuk lookup otomatis"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
-                <p className="text-xs text-slate-400 mt-1">
-                  Jika dikosongkan, sistem akan mencari user_id berdasarkan email. Jika tidak ditemukan, user_id akan disimpan null.
-                </p>
+                <p className="mt-1 text-xs text-slate-400">Jika kosong, sistem akan mencari user_id berdasarkan email.</p>
               </div>
               <div>
-                <label className="label">Role</label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Role</label>
                 <select
-                  value={addForm.role_id}
-                  onChange={e => setAddForm({ ...addForm, role_id: e.target.value })}
-                  className="input"
+                  value={addRoleId}
+                  onChange={(e) => setAddRoleId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 >
-                  <option value="">— Pilih Role —</option>
-                  {roles.map(r => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}{r.level != null ? ` (Level ${r.level})` : ''}
-                    </option>
+                  <option value="">Pilih role...</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name} (Lv. {r.level})</option>
                   ))}
                 </select>
               </div>
             </div>
-            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setAddOpen(false)} className="btn-secondary">Batal</button>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowAdd(false); setAddEmail(''); setAddName(''); setAddUserId(''); setAddRoleId(''); }}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
               <button
                 onClick={handleAdd}
-                disabled={adding}
-                className="flex items-center gap-2 btn-primary"
+                disabled={saving}
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
               >
-                {adding && <Loader2 className="w-4 h-4 animate-spin" />}
-                Simpan
+                {saving ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Role modal */}
-      {roleModalAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setRoleModalAdmin(null)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Ubah Role</h2>
-              <button onClick={() => setRoleModalAdmin(null)} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                User: <span className="font-medium text-slate-900 dark:text-white">{roleModalAdmin.name || roleModalAdmin.email}</span>
+      {/* Edit Role Modal */}
+      {editUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">Ubah Role Admin</h2>
+            <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">{editUser.name ?? editUser.email}</p>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Role</label>
+              <select
+                value={editRoleId}
+                onChange={(e) => setEditRoleId(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                <option value="">Tanpa role</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name} (Lv. {r.level})</option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs text-slate-400">
+                Perubahan role akan langsung aktif saat user login kembali.
               </p>
-              <div>
-                <label className="label">Role</label>
-                <select
-                  value={roleForm}
-                  onChange={e => setRoleForm(e.target.value)}
-                  className="input"
-                >
-                  <option value="">— Pilih Role —</option>
-                  {roles.map(r => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}{r.level != null ? ` (Level ${r.level})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
-            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setRoleModalAdmin(null)} className="btn-secondary">Batal</button>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => { setEditUser(null); setEditRoleId(''); }}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
               <button
                 onClick={handleSaveRole}
-                disabled={savingRole}
-                className="flex items-center gap-2 btn-primary"
+                disabled={editSaving}
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
               >
-                {savingRole && <Loader2 className="w-4 h-4 animate-spin" />}
-                Simpan
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete modal */}
-      {deleteAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setDeleteAdmin(null)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Hapus Admin?</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              {deleteAdmin.name || deleteAdmin.email} akan dihapus beserta assignment rolenya. Tindakan ini tidak dapat dibatalkan.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDeleteAdmin(null)} className="btn-secondary">Batal</button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
-              >
-                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-                Hapus
+                {editSaving ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>
           </div>

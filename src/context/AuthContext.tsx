@@ -1,83 +1,133 @@
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode, useMemo } from 'react';
-import { Session, User } from '@supabase/supabase-js';
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import {
-  fetchUserPermissions,
-  hasPermission as hasPerm,
-  hasAnyPermission,
-  type AdminProfile,
-  type AdminRoleAssignment,
-  type PermissionKey,
-} from '../lib/permissions';
 
-interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  loading: boolean;
-  adminProfile: AdminProfile | null;
-  adminRole: string | null;
-  roles: AdminRoleAssignment[];
-  permissions: Set<PermissionKey>;
-  isAdmin: boolean;
-  hasPermission: (module: string, action: string) => boolean;
-  hasAnyPermission: (checks: Array<{ module: string; action: string }>) => boolean;
-  refreshAdminProfile: () => Promise<void>;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation: boolean }>;
-  signOut: () => Promise<void>;
+export interface AdminProfile {
+  id: string;
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+  is_active: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export interface Permission {
+  module: string;
+  action: string;
+}
+
+interface AuthContextValue {
+  session: Session | null;
+  user: User | null;
+  adminProfile: AdminProfile | null;
+  permissions: Set<string>;
+  loading: boolean;
+  hasPermission: (module: string, action: string) => boolean;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
+  refreshAdminProfile: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
-  const [roles, setRoles] = useState<AdminRoleAssignment[]>([]);
-  const [permissions, setPermissions] = useState<Set<PermissionKey>>(new Set());
+  const [permissions, setPermissions] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
 
-  const loadProfile = useCallback(async (uid: string) => {
-    const { permissions: perms, roles: roleList, primaryRole, adminProfile: profile } = await fetchUserPermissions(uid);
-    setPermissions(perms);
-    setRoles(roleList);
-    if (profile) {
-      setAdminProfile({ ...profile, role: primaryRole ?? profile.role });
-    } else {
-      setAdminProfile(null);
+  const fetchUserPermissions = useCallback(async (adminUserId: string) => {
+    try {
+      const { data: roleLinks } = await supabase
+        .from('admin_user_roles')
+        .select('role_id')
+        .eq('admin_user_id', adminUserId);
+      const roleIds = (roleLinks ?? []).map((r: any) => r.role_id);
+      if (roleIds.length === 0) {
+        setPermissions(new Set());
+        return;
+      }
+      const { data: permLinks } = await supabase
+        .from('role_permissions')
+        .select('permissions(module, action)')
+        .in('role_id', roleIds);
+      const perms = new Set<string>();
+      (permLinks ?? []).forEach((p: any) => {
+        if (p?.permissions) perms.add(`${p.permissions.module}:${p.permissions.action}`);
+      });
+      setPermissions(perms);
+    } catch {
+      setPermissions(new Set());
     }
   }, []);
 
   const refreshAdminProfile = useCallback(async () => {
-    if (user) await loadProfile(user.id);
-  }, [user, loadProfile]);
+    if (!user) return;
+    try {
+      const { data } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (data) {
+        const profile = data as unknown as AdminProfile;
+        setAdminProfile(profile);
+        await fetchUserPermissions(profile.id);
+      }
+    } catch {
+      /* noop */
+    }
+  }, [user, fetchUserPermissions]);
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getSession().then(async ({ data }) => {
+    supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setSession(data.session);
       setUser(data.session?.user ?? null);
-      if (data.session?.user) await loadProfile(data.session.user.id);
       setLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) await loadProfile(session.user.id);
-      else {
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+      if (!newSession) {
         setAdminProfile(null);
-        setRoles([]);
         setPermissions(new Set());
       }
-      setLoading(false);
     });
+
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      sub.subscription.unsubscribe();
     };
-  }, [loadProfile]);
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setAdminProfile(null);
+      setPermissions(new Set());
+      return;
+    }
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('admin_users')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (data) {
+          const profile = data as unknown as AdminProfile;
+          setAdminProfile(profile);
+          await fetchUserPermissions(profile.id);
+        }
+      } catch {
+        /* noop */
+      }
+    })();
+  }, [user, fetchUserPermissions]);
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -85,30 +135,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUp = async (email: string, password: string, name: string) => {
-    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
-    if (error) return { error: error.message, needsConfirmation: false };
-    return { error: null, needsConfirmation: !data.session };
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    });
+    return { error: error?.message ?? null };
   };
 
   const signOut = async () => {
     await supabase.auth.signOut();
     setAdminProfile(null);
-    setRoles([]);
     setPermissions(new Set());
   };
 
-  const isAdmin = permissions.size > 0;
+  const hasPermission = (module: string, action: string) =>
+    permissions.has(`${module}:${action}`);
 
-  const value = useMemo<AuthContextType>(() => ({
-    user, session, loading, adminProfile,
-    adminRole: adminProfile?.role ?? null,
-    roles, permissions, isAdmin,
-    hasPermission: (module: string, action: string) => hasPerm(permissions, module, action),
-    hasAnyPermission: (checks: Array<{ module: string; action: string }>) => hasAnyPermission(permissions, checks),
-    refreshAdminProfile, signIn, signUp, signOut,
-  }), [user, session, loading, adminProfile, roles, permissions, isAdmin, refreshAdminProfile]);
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        session,
+        user,
+        adminProfile,
+        permissions,
+        loading,
+        hasPermission,
+        signIn,
+        signUp,
+        signOut,
+        refreshAdminProfile,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

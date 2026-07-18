@@ -1,416 +1,402 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../context/AuthContext';
-import { showToast } from '../../components/Toast';
+import { useEffect, useState, useMemo, type FormEvent } from 'react';
 import {
-  Package, Plus, Pencil, Trash2, X, Loader2, Search, MapPin, User,
+  Search,
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  X,
+  Package,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { showToast } from '../../components/Toast';
+import { useAuth } from '../../context/AuthContext';
+import EmptyState from '../../components/EmptyState';
 
 interface Category {
   id: string;
   name: string;
-  description: string | null;
 }
 
-interface AdminUserOption {
+interface AdminUser {
   id: string;
   name: string;
   email: string;
   role: string;
 }
 
-interface InventoryItem {
+interface Inventory {
   id: string;
   code: string | null;
   name: string;
   category_id: string | null;
-  quantity: number | null;
-  condition: string | null;
+  quantity: number;
+  condition: string;
   location: string | null;
   image_url: string | null;
   purchase_date: string | null;
   price: number | null;
   description: string | null;
   created_at: string;
-  available_quantity: number | null;
+  available_quantity: number;
   manager_name: string | null;
   manager_role: string | null;
   manager_id: string | null;
-  category?: { name: string } | null;
-  admin_users?: { name: string; email: string } | null;
+  categories: { name: string } | null;
 }
 
-const emptyForm = {
+interface InventoryForm {
+  name: string;
+  code: string;
+  description: string;
+  category_id: string;
+  quantity: string;
+  available_quantity: string;
+  condition: string;
+  location: string;
+  manager_id: string;
+}
+
+const emptyForm: InventoryForm = {
   name: '',
   code: '',
   description: '',
   category_id: '',
-  quantity: 0,
-  available_quantity: 0,
+  quantity: '',
+  available_quantity: '',
   condition: 'good',
   location: '',
   manager_id: '',
 };
 
-const conditionConfig: Record<string, { label: string; color: string }> = {
-  good: { label: 'Baik', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  fair: { label: 'Cukup', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  poor: { label: 'Rusak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+const conditionStyles: Record<string, string> = {
+  good: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  fair: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  poor: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+};
+
+const conditionLabel: Record<string, string> = {
+  good: 'Baik',
+  fair: 'Layak',
+  poor: 'Rusak',
 };
 
 export default function InventoryAdminPage() {
   const { hasPermission } = useAuth();
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<Inventory[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [adminUsers, setAdminUsers] = useState<AdminUserOption[]>([]);
+  const [managers, setManagers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<Inventory | null>(null);
+  const [form, setForm] = useState<InventoryForm>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const canCreate = hasPermission('inventory', 'create');
   const canUpdate = hasPermission('inventory', 'update');
   const canDelete = hasPermission('inventory', 'delete');
 
-  const fetchCategories = useCallback(async () => {
-    const { data } = await supabase.from('categories').select('*').order('name');
-    setCategories((data as unknown as Category[]) || []);
-  }, []);
-
-  const fetchAdminUsers = useCallback(async () => {
-    const { data } = await supabase
-      .from('admin_users')
-      .select('id, name, email, role')
-      .eq('is_active', true)
-      .order('name');
-    setAdminUsers((data as unknown as AdminUserOption[]) || []);
-  }, []);
-
-  const fetchItems = useCallback(async () => {
+  async function fetchData() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('inventory')
-      .select('*, category:categories(name), admin_users!manager_id(name, email)')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat inventaris', 'error');
-    } else {
-      setItems((data as unknown as InventoryItem[]) || []);
+    try {
+      const [invRes, catRes, mgrRes] = await Promise.all([
+        supabase.from('inventory').select('*, categories!category_id(name)').order('created_at', { ascending: false }),
+        supabase.from('categories').select('id, name').order('name'),
+        supabase.from('admin_users').select('id, name, email, role').eq('is_active', true).order('name'),
+      ]);
+      if (invRes.error) {
+        showToast('Gagal memuat inventaris', 'error');
+        return;
+      }
+      setItems((invRes.data as unknown as Inventory[]) ?? []);
+      setCategories((catRes.data as unknown as Category[]) ?? []);
+      setManagers((mgrRes.data as unknown as AdminUser[]) ?? []);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
+  }
 
   useEffect(() => {
-    fetchCategories();
-    fetchAdminUsers();
-    fetchItems();
-  }, [fetchCategories, fetchAdminUsers, fetchItems]);
+    fetchData();
+  }, []);
 
-  const openCreate = () => {
-    setForm(emptyForm);
-    setEditingId(null);
-    setModalOpen(true);
-  };
-
-  const openEdit = (item: InventoryItem) => {
-    setForm({
-      name: item.name || '',
-      code: item.code || '',
-      description: item.description || '',
-      category_id: item.category_id || '',
-      quantity: item.quantity ?? 0,
-      available_quantity: item.available_quantity ?? 0,
-      condition: item.condition || 'good',
-      location: item.location || '',
-      manager_id: item.manager_id || '',
-    });
-    setEditingId(item.id);
-    setModalOpen(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.name) {
-      showToast('Nama barang wajib diisi', 'error');
-      return;
-    }
-    setSaving(true);
-    const payload = {
-      name: form.name,
-      code: form.code || null,
-      description: form.description || null,
-      category_id: form.category_id || null,
-      quantity: Number(form.quantity) || 0,
-      available_quantity: Number(form.available_quantity) || 0,
-      condition: form.condition,
-      location: form.location || null,
-      manager_id: form.manager_id || null,
-    };
-
-    if (editingId) {
-      const { error } = await supabase.from('inventory').update(payload).eq('id', editingId);
-      if (error) {
-        showToast('Gagal memperbarui barang', 'error');
-      } else {
-        showToast('Barang diperbarui', 'success');
-        setModalOpen(false);
-        await fetchItems();
-      }
-    } else {
-      const { error } = await supabase.from('inventory').insert(payload);
-      if (error) {
-        showToast('Gagal menambah barang', 'error');
-      } else {
-        showToast('Barang ditambahkan', 'success');
-        setModalOpen(false);
-        await fetchItems();
-      }
-    }
-    setSaving(false);
-  };
-
-  const handleDelete = async () => {
-    if (!deleteId) return;
-    const { error } = await supabase.from('inventory').delete().eq('id', deleteId);
-    if (error) {
-      showToast('Gagal menghapus barang', 'error');
-    } else {
-      showToast('Barang dihapus', 'success');
-      setDeleteId(null);
-      await fetchItems();
-    }
-  };
-
-  const filtered = items.filter(item => {
-    if (categoryFilter !== 'all' && item.category_id !== categoryFilter) return false;
-    if (search) {
+  const filtered = useMemo(() => {
+    return items.filter((it) => {
+      if (!search.trim()) return true;
       const q = search.toLowerCase();
       return (
-        item.name?.toLowerCase().includes(q) ||
-        item.code?.toLowerCase().includes(q) ||
-        item.location?.toLowerCase().includes(q)
+        it.name.toLowerCase().includes(q) ||
+        (it.code ?? '').toLowerCase().includes(q) ||
+        (it.location ?? '').toLowerCase().includes(q)
       );
+    });
+  }, [items, search]);
+
+  const managerMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    managers.forEach((mgr) => {
+      m[mgr.id] = mgr.name;
+    });
+    return m;
+  }, [managers]);
+
+  function openCreate() {
+    setEditing(null);
+    setForm(emptyForm);
+    setModalOpen(true);
+  }
+
+  function openEdit(it: Inventory) {
+    setEditing(it);
+    setForm({
+      name: it.name ?? '',
+      code: it.code ?? '',
+      description: it.description ?? '',
+      category_id: it.category_id ?? '',
+      quantity: String(it.quantity ?? 0),
+      available_quantity: String(it.available_quantity ?? 0),
+      condition: it.condition ?? 'good',
+      location: it.location ?? '',
+      manager_id: it.manager_id ?? '',
+    });
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    setEditing(null);
+    setForm(emptyForm);
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) return showToast('Nama barang wajib diisi', 'warning');
+    if (!form.quantity || parseInt(form.quantity, 10) < 0) return showToast('Jumlah tidak valid', 'warning');
+    setSaving(true);
+    try {
+      const payload = {
+        name: form.name.trim(),
+        code: form.code.trim() || null,
+        description: form.description.trim() || null,
+        category_id: form.category_id || null,
+        quantity: parseInt(form.quantity, 10),
+        available_quantity: parseInt(form.available_quantity, 10) || parseInt(form.quantity, 10),
+        condition: form.condition,
+        location: form.location.trim() || null,
+        manager_id: form.manager_id || null,
+      };
+      if (editing) {
+        const { error } = await supabase.from('inventory').update(payload).eq('id', editing.id);
+        if (error) {
+          showToast('Gagal memperbarui barang', 'error');
+          return;
+        }
+        showToast('Barang diperbarui', 'success');
+      } else {
+        const { error } = await supabase.from('inventory').insert(payload);
+        if (error) {
+          showToast('Gagal menambah barang', 'error');
+          return;
+        }
+        showToast('Barang ditambahkan', 'success');
+      }
+      closeModal();
+      fetchData();
+    } finally {
+      setSaving(false);
     }
-    return true;
-  });
+  }
+
+  async function handleDelete(it: Inventory) {
+    if (!confirm(`Hapus "${it.name}"?`)) return;
+    setDeleting(it.id);
+    try {
+      const { error } = await supabase.from('inventory').delete().eq('id', it.id);
+      if (error) {
+        showToast('Gagal menghapus barang', 'error');
+        return;
+      }
+      showToast('Barang dihapus', 'success');
+      fetchData();
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola daftar barang dan penanggung jawabnya</p>
+          <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Inventaris</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Kelola data barang inventaris sekolah.</p>
         </div>
         {canCreate && (
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Tambah Barang
+          <button onClick={openCreate} className="btn-primary">
+            <Plus className="h-4 w-4" />
+            Tambah Barang
           </button>
         )}
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+      <div className="card">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
-            type="text"
-            placeholder="Cari nama, kode, atau lokasi..."
+            className="input pl-9"
+            placeholder="Cari nama, kode, lokasi..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select
-          value={categoryFilter}
-          onChange={e => setCategoryFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        >
-          <option value="all">Semua Kategori</option>
-          {categories.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada barang</p>
+        <div className="card">
+          <EmptyState title="Tidak ada inventaris" description="Belum ada data barang inventaris." icon={<Package className="h-8 w-8 text-slate-400" />} />
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-700/30 text-left text-slate-500 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Kode</th>
-                  <th className="px-4 py-3 font-medium">Nama</th>
-                  <th className="px-4 py-3 font-medium">Kategori</th>
-                  <th className="px-4 py-3 font-medium">Jumlah</th>
-                  <th className="px-4 py-3 font-medium">Tersedia</th>
-                  <th className="px-4 py-3 font-medium">Kondisi</th>
-                  <th className="px-4 py-3 font-medium">Lokasi</th>
-                  <th className="px-4 py-3 font-medium">PJ Barang</th>
-                  <th className="px-4 py-3 font-medium text-right">Aksi</th>
+        <div className="card overflow-x-auto p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                <th className="px-4 py-3 font-semibold">Kode</th>
+                <th className="px-4 py-3 font-semibold">Nama</th>
+                <th className="px-4 py-3 font-semibold">Kategori</th>
+                <th className="px-4 py-3 font-semibold">Jumlah</th>
+                <th className="px-4 py-3 font-semibold">Tersedia</th>
+                <th className="px-4 py-3 font-semibold">Kondisi</th>
+                <th className="px-4 py-3 font-semibold">Lokasi</th>
+                <th className="px-4 py-3 font-semibold">PJ Barang</th>
+                <th className="px-4 py-3 font-semibold text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((it) => (
+                <tr key={it.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800/50">
+                  <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-400">{it.code ?? '-'}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-200">{it.name}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{it.categories?.name ?? '-'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{it.quantity}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{it.available_quantity}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${conditionStyles[it.condition] ?? conditionStyles.good}`}>
+                      {conditionLabel[it.condition] ?? it.condition}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{it.location ?? '-'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                    {it.manager_id ? (managerMap[it.manager_id] ?? it.manager_name ?? '-') : (it.manager_name ?? '-')}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {canUpdate && (
+                        <button onClick={() => openEdit(it)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800">
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDelete(it)}
+                          disabled={deleting === it.id}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                        >
+                          {deleting === it.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {filtered.map(item => {
-                  const cond = conditionConfig[item.condition || 'good'] || conditionConfig.good;
-                  const pjName = item.admin_users?.name || item.manager_name;
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.code || '-'}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.category?.name || '-'}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.quantity ?? 0}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.available_quantity ?? 0}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${cond.color}`}>{cond.label}</span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                        {item.location ? (
-                          <span className="flex items-center gap-1">
-                            <MapPin className="w-3.5 h-3.5 text-slate-400" /> {item.location}
-                          </span>
-                        ) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                        {pjName ? (
-                          <span className="flex items-center gap-1">
-                            <User className="w-3.5 h-3.5 text-slate-400" /> {pjName}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-1">
-                          {canUpdate && (
-                            <button
-                              onClick={() => openEdit(item)}
-                              className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              onClick={() => setDeleteId(item.id)}
-                              className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
+      {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {editingId ? 'Edit Barang' : 'Tambah Barang'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={closeModal}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+                {editing ? 'Edit Barang' : 'Tambah Barang'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
-                <X className="w-5 h-5" />
+              <button onClick={closeModal} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+                <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="label">Nama Barang</label>
-                <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="input" placeholder="Contoh: Proyektor Epson" />
+                <label className="label">Nama <span className="text-red-500">*</span></label>
+                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Kode</label>
-                  <input type="text" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} className="input" placeholder="Contoh: INV-001" />
+                  <input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
                 </div>
                 <div>
                   <label className="label">Kategori</label>
-                  <select value={form.category_id} onChange={e => setForm({ ...form, category_id: e.target.value })} className="input">
-                    <option value="">Pilih Kategori</option>
-                    {categories.map(c => (
+                  <select className="input" value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                    <option value="">Pilih kategori</option>
+                    {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="label">Deskripsi</label>
+                <textarea rows={2} className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Jumlah</label>
-                  <input type="number" min={0} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} className="input" />
+                  <label className="label">Jumlah <span className="text-red-500">*</span></label>
+                  <input type="number" min={0} className="input" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
                 </div>
                 <div>
                   <label className="label">Tersedia</label>
-                  <input type="number" min={0} value={form.available_quantity} onChange={e => setForm({ ...form, available_quantity: Number(e.target.value) })} className="input" />
+                  <input type="number" min={0} className="input" value={form.available_quantity} onChange={(e) => setForm({ ...form, available_quantity: e.target.value })} />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Kondisi</label>
-                  <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })} className="input">
+                  <select className="input" value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })}>
                     <option value="good">Baik</option>
-                    <option value="fair">Cukup</option>
+                    <option value="fair">Layak</option>
                     <option value="poor">Rusak</option>
                   </select>
                 </div>
-              </div>
-              <div>
-                <label className="label">Lokasi</label>
-                <input type="text" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className="input" placeholder="Contoh: Gudang A" />
+                <div>
+                  <label className="label">Lokasi</label>
+                  <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+                </div>
               </div>
               <div>
                 <label className="label">Penanggung Jawab Barang</label>
-                <select value={form.manager_id} onChange={e => setForm({ ...form, manager_id: e.target.value })} className="input">
+                <select className="input" value={form.manager_id} onChange={(e) => setForm({ ...form, manager_id: e.target.value })}>
                   <option value="">Pilih PJ Barang</option>
-                  {adminUsers.map(u => (
-                    <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                  {managers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.role})
+                    </option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="label">Deskripsi</label>
-                <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} className="input" placeholder="Deskripsi barang..." />
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={closeModal} className="btn-secondary">Batal</button>
+                <button type="submit" disabled={saving} className="btn-primary">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {editing ? 'Simpan' : 'Tambah'}
+                </button>
               </div>
-            </div>
-            <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Simpan
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setDeleteId(null)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Hapus Barang?</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Barang yang dihapus tidak dapat dikembalikan.</p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">Batal</button>
-              <button onClick={handleDelete} className="px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors">Hapus</button>
-            </div>
+            </form>
           </div>
         </div>
       )}
