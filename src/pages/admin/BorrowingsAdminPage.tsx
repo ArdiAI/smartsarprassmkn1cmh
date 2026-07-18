@@ -1,26 +1,29 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Search,
-  Loader2,
   CheckCircle2,
   XCircle,
+  Loader2,
+  ClipboardList,
   Calendar,
   User,
-  Package,
-  Clock,
+  Mail,
+  Phone,
   FileText,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { getWorkflowSteps, type WorkflowStep } from '../../lib/workflow';
-import { showToast } from '../../components/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { showToast } from '../../components/Toast';
+import { cn } from '../../utils/cn';
 import EmptyState from '../../components/EmptyState';
+import type { WorkflowStep } from '../../lib/workflow';
 
 interface BorrowingItem {
   id: string;
+  borrowing_id: string;
   inventory_id: string | null;
   facility_id: string | null;
-  item_type: string | null;
+  item_type: string;
   item_name: string | null;
   quantity: number;
   status: string;
@@ -29,23 +32,25 @@ interface BorrowingItem {
   current_step: number | null;
   assigned_approver_name: string | null;
   assigned_approver_role: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 interface Borrowing {
   id: string;
   inventory_id: string | null;
-  borrower_name: string | null;
+  facility_id: string | null;
+  borrower_name: string;
   borrower_class: string | null;
   borrower_email: string | null;
   borrower_phone: string | null;
   borrowed_units: number | null;
-  borrow_date: string | null;
-  return_date: string | null;
+  borrow_date: string;
+  return_date: string;
   actual_return_date: string | null;
   status: string;
   notes: string | null;
-  item_type: string | null;
-  facility_id: string | null;
+  item_type: string;
   purpose: string | null;
   admin_notes: string | null;
   start_time: string | null;
@@ -61,26 +66,7 @@ interface Borrowing {
   borrowing_items: BorrowingItem[];
 }
 
-const statusStyles: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-  returned: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300',
-  borrowed: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-};
-
-function statusLabel(s: string) {
-  switch (s) {
-    case 'pending': return 'Menunggu';
-    case 'approved': return 'Disetujui';
-    case 'rejected': return 'Ditolak';
-    case 'returned': return 'Dikembalikan';
-    case 'borrowed': return 'Dipinjam';
-    case 'completed': return 'Selesai';
-    default: return s;
-  }
-}
+const STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected', 'returned', 'borrowed'];
 
 export default function BorrowingsAdminPage() {
   const { hasPermission, adminProfile } = useAuth();
@@ -90,126 +76,117 @@ export default function BorrowingsAdminPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [userRoleIds, setUserRoleIds] = useState<string[]>([]);
-  const [stepCache, setStepCache] = useState<Record<string, WorkflowStep[]>>({});
+  const [workflowStepsCache, setWorkflowStepsCache] = useState<Record<string, WorkflowStep[]>>({});
 
-  useEffect(() => {
-    (async () => {
-      if (adminProfile?.id) {
-        const { data } = await supabase
-          .from('admin_user_roles')
-          .select('role_id')
-          .eq('admin_user_id', adminProfile.id);
-        setUserRoleIds((data ?? []).map((r: any) => r.role_id as string));
-      }
-    })();
+  const fetchUserRoleIds = useCallback(async () => {
+    if (!adminProfile?.id) return;
+    const { data } = await supabase
+      .from('admin_user_roles')
+      .select('role_id')
+      .eq('admin_user_id', adminProfile.id);
+    setUserRoleIds((data ?? []).map((r: any) => r.role_id));
   }, [adminProfile?.id]);
 
-  async function fetchBorrowings() {
+  const fetchBorrowings = useCallback(async () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('borrowings')
-        .select('*, borrowing_items(*)')
-        .order('created_at', { ascending: false });
-      if (error) {
-        showToast('Gagal memuat data peminjaman', 'error');
-        return;
-      }
-      const list = (data as unknown as Borrowing[]) ?? [];
-      setBorrowings(list);
-      // Cache workflow steps per template
-      const templateIds = [...new Set(list.map((b) => b.workflow_template_id).filter(Boolean))] as string[];
-      const cache: Record<string, WorkflowStep[]> = {};
-      await Promise.all(
-        templateIds.map(async (tid) => {
-          cache[tid] = await getWorkflowSteps(tid);
-        }),
-      );
-      setStepCache(cache);
-    } finally {
+    const { data, error } = await supabase
+      .from('borrowings')
+      .select('*, borrowing_items(*)')
+      .order('created_at', { ascending: false });
+    if (error) {
+      showToast('Gagal memuat data peminjaman', 'error');
       setLoading(false);
+      return;
     }
-  }
+    setBorrowings((data as unknown as Borrowing[]) ?? []);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     fetchBorrowings();
-  }, []);
+    fetchUserRoleIds();
+  }, [fetchBorrowings, fetchUserRoleIds]);
 
-  const filtered = useMemo(() => {
-    return borrowings.filter((b) => {
-      if (statusFilter !== 'all' && b.status !== statusFilter) return false;
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const match =
-          (b.borrower_name ?? '').toLowerCase().includes(q) ||
-          (b.borrower_class ?? '').toLowerCase().includes(q) ||
-          (b.purpose ?? '').toLowerCase().includes(q) ||
-          (b.item_type ?? '').toLowerCase().includes(q);
-        if (!match) return false;
+  // Fetch workflow steps for all unique workflow_template_ids
+  useEffect(() => {
+    (async () => {
+      const templateIds = Array.from(
+        new Set(borrowings.map((b) => b.workflow_template_id).filter(Boolean) as string[])
+      );
+      const cache: Record<string, WorkflowStep[]> = { ...workflowStepsCache };
+      for (const tid of templateIds) {
+        if (cache[tid]) continue;
+        const { data } = await supabase
+          .from('workflow_steps')
+          .select('*')
+          .eq('workflow_template_id', tid)
+          .order('step_order', { ascending: true });
+        cache[tid] = (data as unknown as WorkflowStep[]) ?? [];
       }
-      return true;
-    });
-  }, [borrowings, search, statusFilter]);
+      setWorkflowStepsCache(cache);
+    })();
+  }, [borrowings]);
 
-  function getApprovalState(b: Borrowing) {
-    const steps = b.workflow_template_id ? stepCache[b.workflow_template_id] ?? [] : [];
-    if (steps.length === 0) {
-      return { canApprove: b.status === 'pending', currentStep: null, hasActed: false, steps: [] };
-    }
-    const currentStep = steps.find((s) => s.step_order === b.current_step) ?? null;
-    const canApprove =
-      !!currentStep &&
-      currentStep.role_id !== null &&
-      userRoleIds.includes(currentStep.role_id) &&
-      b.status === 'pending';
-    // Check if user already acted on current step via borrowing_items
-    const hasActed = (b.borrowing_items ?? []).some(
-      (it) =>
-        it.current_step === b.current_step &&
-        it.status !== 'pending' &&
-        it.assigned_approver_role === (adminProfile?.role ?? null),
+  function canApprove(b: Borrowing): boolean {
+    if (!b.workflow_template_id || b.current_step == null) return false;
+    if (b.status !== 'pending') return false;
+    const steps = workflowStepsCache[b.workflow_template_id];
+    if (!steps) return false;
+    const currentStep = steps.find((s) => s.step_order === b.current_step);
+    if (!currentStep?.role_id) return false;
+    if (!userRoleIds.includes(currentStep.role_id)) return false;
+    // Check if user already acted on current step
+    const itemsAtCurrentStep = b.borrowing_items.filter(
+      (it) => it.current_step === b.current_step
     );
-    return { canApprove, currentStep, hasActed, steps };
+    if (itemsAtCurrentStep.length > 0 && itemsAtCurrentStep.every((it) => it.status !== 'pending')) {
+      return false;
+    }
+    return true;
   }
 
   async function handleApprove(b: Borrowing) {
+    if (!adminProfile) return;
     setActionLoading(b.id);
     try {
-      const steps = b.workflow_template_id ? stepCache[b.workflow_template_id] ?? [] : [];
-      const currentOrder = b.current_step ?? 0;
-      const nextStep = steps.find((s) => s.step_order > currentOrder);
-      const newStatus = nextStep ? 'pending' : 'approved';
-      const newStep = nextStep ? nextStep.step_order : currentOrder;
-      const newLabel = nextStep ? (nextStep.step_label ?? null) : 'Disetujui';
+      const steps = b.workflow_template_id ? workflowStepsCache[b.workflow_template_id] : [];
+      const currentStepIndex = steps.findIndex((s) => s.step_order === b.current_step);
+      const isLastStep = currentStepIndex === steps.length - 1;
+      const nextStep = !isLastStep && currentStepIndex >= 0 ? steps[currentStepIndex + 1] : null;
 
-      const { error } = await supabase
+      const newStatus = isLastStep ? 'approved' : 'pending';
+      const newStep = nextStep?.step_order ?? b.current_step;
+      const newLabel = nextStep?.step_label ?? 'Disetujui';
+
+      const { error: borrowErr } = await supabase
         .from('borrowings')
         .update({
           status: newStatus,
           current_step: newStep,
           current_status_label: newLabel,
-          approved_by: adminProfile?.id ?? null,
-          approver_position: adminProfile?.role ?? null,
+          approved_by: adminProfile.id,
+          approver_position: adminProfile.role,
           approved_at: new Date().toISOString(),
         })
         .eq('id', b.id);
 
-      if (error) {
-        showToast('Gagal menyetujui peminjaman', 'error');
-        return;
-      }
+      if (borrowErr) throw borrowErr;
 
-      // Update borrowing_items for current step
-      if ((b.borrowing_items ?? []).length > 0) {
-        await supabase
-          .from('borrowing_items')
-          .update({ status: 'approved', current_status_label: 'Disetujui' })
-          .eq('borrowing_id', b.id)
-          .eq('current_step', currentOrder);
-      }
+      // Update borrowing_items
+      await supabase
+        .from('borrowing_items')
+        .update({
+          status: newStatus,
+          current_status_label: newLabel,
+          current_step: newStep,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('borrowing_id', b.id);
 
-      showToast(newStatus === 'approved' ? 'Peminjaman disetujui' : 'Lanjut ke tahap berikutnya', 'success');
-      fetchBorrowings();
+      showToast('Peminjaman disetujui', 'success');
+      await fetchBorrowings();
+    } catch {
+      showToast('Gagal menyetujui peminjaman', 'error');
     } finally {
       setActionLoading(null);
     }
@@ -218,213 +195,244 @@ export default function BorrowingsAdminPage() {
   async function handleReject(b: Borrowing) {
     setActionLoading(b.id);
     try {
-      const { error } = await supabase
+      const { error: borrowErr } = await supabase
         .from('borrowings')
         .update({
           status: 'rejected',
           current_status_label: 'Ditolak',
-          approved_by: adminProfile?.id ?? null,
-          approver_position: adminProfile?.role ?? null,
-          approved_at: new Date().toISOString(),
         })
         .eq('id', b.id);
 
-      if (error) {
-        showToast('Gagal menolak peminjaman', 'error');
-        return;
-      }
+      if (borrowErr) throw borrowErr;
 
-      if ((b.borrowing_items ?? []).length > 0) {
-        await supabase
-          .from('borrowing_items')
-          .update({ status: 'rejected', current_status_label: 'Ditolak' })
-          .eq('borrowing_id', b.id);
-      }
+      await supabase
+        .from('borrowing_items')
+        .update({
+          status: 'rejected',
+          current_status_label: 'Ditolak',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('borrowing_id', b.id);
 
-      showToast('Peminjaman ditolak', 'info');
-      fetchBorrowings();
+      showToast('Peminjaman ditolak', 'warning');
+      await fetchBorrowings();
+    } catch {
+      showToast('Gagal menolak peminjaman', 'error');
     } finally {
       setActionLoading(null);
     }
   }
 
+  const filtered = useMemo(() => {
+    return borrowings.filter((b) => {
+      if (statusFilter !== 'all' && b.status !== statusFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return (
+          b.borrower_name?.toLowerCase().includes(q) ||
+          b.borrower_email?.toLowerCase().includes(q) ||
+          b.purpose?.toLowerCase().includes(q) ||
+          b.item_type?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [borrowings, search, statusFilter]);
+
+  function statusBadge(status: string) {
+    const map: Record<string, string> = {
+      pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+      approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+      rejected: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+      returned: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300',
+      borrowed: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+    };
+    return map[status] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300';
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Peminjaman</h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Kelola dan setujui permohonan peminjaman barang dan fasilitas.
+          Kelola dan setujui permintaan peminjaman barang dan fasilitas.
         </p>
       </div>
 
       {/* Filters */}
-      <div className="card">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              className="input pl-9"
-              placeholder="Cari nama, kelas, tujuan..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <select
-            className="input sm:w-48"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">Semua Status</option>
-            <option value="pending">Menunggu</option>
-            <option value="approved">Disetujui</option>
-            <option value="rejected">Ditolak</option>
-            <option value="borrowed">Dipinjam</option>
-            <option value="returned">Dikembalikan</option>
-          </select>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            className="input pl-10"
+            placeholder="Cari nama, email, tujuan..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
+        <select
+          className="input sm:w-48"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          {STATUS_FILTERS.map((s) => (
+            <option key={s} value={s}>
+              {s === 'all' ? 'Semua Status' : s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {/* List */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="card">
-          <EmptyState title="Tidak ada peminjaman" description="Belum ada data peminjaman yang cocok." />
-        </div>
+        <EmptyState
+          icon={<ClipboardList className="h-8 w-8 text-slate-400" />}
+          title="Tidak ada peminjaman"
+          description="Belum ada data peminjaman yang cocok dengan filter."
+        />
       ) : (
         <div className="space-y-4">
           {filtered.map((b) => {
-            const { canApprove, hasActed, currentStep, steps } = getApprovalState(b);
-            const showApprove = canApprove && !hasActed && hasPermission('borrowings', 'approve');
-            const showReject = canApprove && !hasActed && hasPermission('borrowings', 'reject');
+            const showApprove = hasPermission('borrowings', 'approve') && canApprove(b);
+            const showReject = hasPermission('borrowings', 'reject') && canApprove(b);
             return (
               <div key={b.id} className="card">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="flex-1 space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
+                {/* Header */}
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
                       <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
-                        {b.purpose ?? b.borrower_name ?? 'Peminjaman'}
+                        {b.borrower_name}
                       </h3>
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[b.status] ?? statusStyles.pending}`}>
-                        {statusLabel(b.status)}
+                      <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', statusBadge(b.status))}>
+                        {b.status}
                       </span>
-                      {b.current_status_label && (
-                        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                          {b.current_status_label}
-                        </span>
-                      )}
                     </div>
-
-                    <div className="grid grid-cols-1 gap-2 text-sm text-slate-600 dark:text-slate-400 sm:grid-cols-2">
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-slate-400" />
-                        <span>{b.borrower_name ?? '-'}{b.borrower_class ? ` (${b.borrower_class})` : ''}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Package className="h-4 w-4 text-slate-400" />
-                        <span>{b.item_type ?? 'Barang'} • {b.borrowed_units ?? 0} unit</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-slate-400" />
-                        <span>{b.borrow_date ?? '-'} → {b.return_date ?? '-'}</span>
-                      </div>
-                      {b.start_time && (
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-slate-400" />
-                          <span>{b.start_time}{b.end_time ? ` - ${b.end_time}` : ''}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {b.notes && (
-                      <div className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-400">
-                        <FileText className="mt-0.5 h-4 w-4 text-slate-400" />
-                        <span>{b.notes}</span>
-                      </div>
-                    )}
-
-                    {/* Items */}
-                    {(b.borrowing_items ?? []).length > 0 && (
-                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-                        <p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Item:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {b.borrowing_items.map((it) => (
-                            <span
-                              key={it.id}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                            >
-                              {it.item_name ?? it.item_type ?? 'Item'} ×{it.quantity}
-                              <span className={`rounded px-1.5 py-0.5 ${statusStyles[it.status] ?? statusStyles.pending}`}>
-                                {statusLabel(it.status)}
-                              </span>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Workflow progress */}
-                    {steps.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {steps.map((s, idx) => {
-                          const done = (b.current_step ?? 0) > s.step_order;
-                          const active = (b.current_step ?? 0) === s.step_order && b.status === 'pending';
-                          return (
-                            <div key={s.id} className="flex items-center gap-1.5">
-                              <div
-                                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${
-                                  done
-                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                                    : active
-                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-                                }`}
-                              >
-                                {done && <CheckCircle2 className="h-3 w-3" />}
-                                {s.step_label ?? `Tahap ${s.step_order}`}
-                              </div>
-                              {idx < steps.length - 1 && <div className="h-px w-4 bg-slate-300 dark:bg-slate-700" />}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {currentStep && canApprove && !hasActed && (
-                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-                        Menunggu persetujuan Anda ({currentStep.step_label})
-                      </p>
-                    )}
+                    <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                      {b.purpose ?? b.item_type ?? 'Peminjaman'}
+                    </p>
                   </div>
-
-                  {/* Actions */}
-                  {(showApprove || showReject) && (
-                    <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
-                      {showApprove && (
-                        <button
-                          onClick={() => handleApprove(b)}
-                          disabled={actionLoading === b.id}
-                          className="btn-primary px-4 py-2 text-xs"
-                        >
-                          {actionLoading === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                          Setujui
-                        </button>
-                      )}
-                      {showReject && (
-                        <button
-                          onClick={() => handleReject(b)}
-                          disabled={actionLoading === b.id}
-                          className="btn-danger px-4 py-2 text-xs"
-                        >
-                          {actionLoading === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-                          Tolak
-                        </button>
-                      )}
+                  {b.current_status_label && (
+                    <div className="text-right">
+                      <p className="text-xs text-slate-400">Langkah Saat Ini</p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{b.current_status_label}</p>
                     </div>
                   )}
                 </div>
+
+                {/* Info grid */}
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                    <Calendar className="h-4 w-4 text-slate-400" />
+                    <span>{b.borrow_date} → {b.return_date}</span>
+                  </div>
+                  {b.borrower_email && (
+                    <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                      <Mail className="h-4 w-4 text-slate-400" />
+                      <span className="truncate">{b.borrower_email}</span>
+                    </div>
+                  )}
+                  {b.borrower_phone && (
+                    <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                      <Phone className="h-4 w-4 text-slate-400" />
+                      <span>{b.borrower_phone}</span>
+                    </div>
+                  )}
+                  {b.borrower_class && (
+                    <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                      <User className="h-4 w-4 text-slate-400" />
+                      <span>{b.borrower_class}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Items */}
+                {b.borrowing_items.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">Item:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {b.borrowing_items.map((it) => (
+                        <span
+                          key={it.id}
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        >
+                          {it.item_name ?? it.item_type}
+                          <span className="text-slate-400">×{it.quantity}</span>
+                          <span className={cn('rounded px-1.5 py-0.5', statusBadge(it.status))}>
+                            {it.status}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                {b.notes && (
+                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                    <span className="font-medium">Catatan: </span>{b.notes}
+                  </div>
+                )}
+
+                {/* Document */}
+                {b.document_url && (
+                  <div className="mt-3">
+                    <a
+                      href={b.document_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:text-brand-700"
+                    >
+                      <FileText className="h-4 w-4" />
+                      {b.document_name ?? 'Lampiran'}
+                    </a>
+                  </div>
+                )}
+
+                {/* Approver info */}
+                {b.approved_by && b.approved_at && (
+                  <div className="mt-3 text-xs text-slate-400">
+                    Disetujui pada {new Date(b.approved_at).toLocaleDateString('id-ID')}
+                    {b.approver_position ? ` oleh ${b.approver_position}` : ''}
+                  </div>
+                )}
+
+                {/* Actions */}
+                {(showApprove || showReject) && (
+                  <div className="mt-4 flex gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                    {showApprove && (
+                      <button
+                        onClick={() => handleApprove(b)}
+                        disabled={actionLoading === b.id}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {actionLoading === b.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        Setujui
+                      </button>
+                    )}
+                    {showReject && (
+                      <button
+                        onClick={() => handleReject(b)}
+                        disabled={actionLoading === b.id}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {actionLoading === b.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <XCircle className="h-4 w-4" />
+                        )}
+                        Tolak
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

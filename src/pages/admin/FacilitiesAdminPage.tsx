@@ -1,17 +1,18 @@
-import { useEffect, useState, useMemo, type FormEvent } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Plus,
   Pencil,
   Trash2,
-  Loader2,
-  X,
   Search,
+  X,
+  Loader2,
+  Building2,
   MapPin,
   Users,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { showToast } from '../../components/Toast';
 import EmptyState from '../../components/EmptyState';
 
 interface Facility {
@@ -21,16 +22,14 @@ interface Facility {
   location: string | null;
   capacity: number | null;
   image_url: string | null;
-  created_at: string;
   facility_type: string | null;
   category: string | null;
   department: string | null;
   status: string | null;
-  manager_name: string | null;
-  manager_role: string | null;
+  created_at: string;
 }
 
-interface FacilityForm {
+interface FormState {
   name: string;
   description: string;
   location: string;
@@ -41,7 +40,7 @@ interface FacilityForm {
   department: string;
 }
 
-const emptyForm: FacilityForm = {
+const emptyForm: FormState = {
   name: '',
   description: '',
   location: '',
@@ -52,61 +51,51 @@ const emptyForm: FacilityForm = {
   department: '',
 };
 
-const statusStyles: Record<string, string> = {
-  active: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  inactive: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300',
-  maintenance: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-};
-
 export default function FacilitiesAdminPage() {
   const { hasPermission } = useAuth();
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Facility | null>(null);
-  const [form, setForm] = useState<FacilityForm>(emptyForm);
-  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const canCreate = hasPermission('facilities', 'create');
-  const canUpdate = hasPermission('facilities', 'update');
-  const canDelete = hasPermission('facilities', 'delete');
-
-  async function fetchData() {
+  const fetchFacilities = useCallback(async () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase.from('facilities').select('*').order('created_at', { ascending: false });
-      if (error) {
-        showToast('Gagal memuat fasilitas', 'error');
-        return;
-      }
+    const { data, error } = await supabase
+      .from('facilities')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) {
+      showToast('Gagal memuat fasilitas', 'error');
+    } else {
       setFacilities((data as unknown as Facility[]) ?? []);
-    } finally {
-      setLoading(false);
     }
-  }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchFacilities();
+  }, [fetchFacilities]);
 
   const filtered = useMemo(() => {
     return facilities.filter((f) => {
-      if (!search.trim()) return true;
+      if (!search) return true;
       const q = search.toLowerCase();
       return (
-        f.name.toLowerCase().includes(q) ||
-        (f.location ?? '').toLowerCase().includes(q) ||
-        (f.category ?? '').toLowerCase().includes(q)
+        f.name?.toLowerCase().includes(q) ||
+        f.location?.toLowerCase().includes(q) ||
+        f.category?.toLowerCase().includes(q)
       );
     });
   }, [facilities, search]);
 
-  function openCreate() {
+  function openAdd() {
     setEditing(null);
     setForm(emptyForm);
-    setModalOpen(true);
+    setShowModal(true);
   }
 
   function openEdit(f: Facility) {
@@ -115,150 +104,165 @@ export default function FacilitiesAdminPage() {
       name: f.name ?? '',
       description: f.description ?? '',
       location: f.location ?? '',
-      capacity: f.capacity != null ? String(f.capacity) : '',
+      capacity: String(f.capacity ?? ''),
       image_url: f.image_url ?? '',
       facility_type: f.facility_type ?? '',
       category: f.category ?? '',
       department: f.department ?? '',
     });
-    setModalOpen(true);
+    setShowModal(true);
   }
 
   function closeModal() {
-    setModalOpen(false);
+    setShowModal(false);
     setEditing(null);
     setForm(emptyForm);
   }
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim()) return showToast('Nama fasilitas wajib diisi', 'warning');
-    setSaving(true);
-    try {
-      const payload = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        location: form.location.trim() || null,
-        capacity: form.capacity ? parseInt(form.capacity, 10) : null,
-        image_url: form.image_url.trim() || null,
-        facility_type: form.facility_type.trim() || null,
-        category: form.category.trim() || null,
-        department: form.department.trim() || null,
-      };
-      if (editing) {
-        const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
-        if (error) {
-          showToast('Gagal memperbarui fasilitas', 'error');
-          return;
-        }
-        showToast('Fasilitas diperbarui', 'success');
-      } else {
-        const { error } = await supabase.from('facilities').insert({ ...payload, status: 'active' });
-        if (error) {
-          showToast('Gagal menambah fasilitas', 'error');
-          return;
-        }
-        showToast('Fasilitas ditambahkan', 'success');
-      }
-      closeModal();
-      fetchData();
-    } finally {
-      setSaving(false);
+    if (!form.name.trim()) {
+      showToast('Nama fasilitas wajib diisi', 'error');
+      return;
     }
+    setSubmitting(true);
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      location: form.location.trim() || null,
+      capacity: parseInt(form.capacity, 10) || null,
+      image_url: form.image_url.trim() || null,
+      facility_type: form.facility_type.trim() || null,
+      category: form.category.trim() || null,
+      department: form.department.trim() || null,
+    };
+    if (editing) {
+      const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
+      if (error) {
+        showToast('Gagal memperbarui: ' + error.message, 'error');
+        setSubmitting(false);
+        return;
+      }
+      showToast('Fasilitas diperbarui', 'success');
+    } else {
+      const { error } = await supabase.from('facilities').insert(payload);
+      if (error) {
+        showToast('Gagal menambah: ' + error.message, 'error');
+        setSubmitting(false);
+        return;
+      }
+      showToast('Fasilitas ditambahkan', 'success');
+    }
+    setSubmitting(false);
+    closeModal();
+    fetchFacilities();
   }
 
   async function handleDelete(f: Facility) {
-    if (!confirm(`Hapus "${f.name}"?`)) return;
+    if (!confirm(`Hapus fasilitas "${f.name}"?`)) return;
     setDeleting(f.id);
-    try {
-      const { error } = await supabase.from('facilities').delete().eq('id', f.id);
-      if (error) {
-        showToast('Gagal menghapus fasilitas', 'error');
-        return;
-      }
-      showToast('Fasilitas dihapus', 'success');
-      fetchData();
-    } finally {
-      setDeleting(null);
+    const { error } = await supabase.from('facilities').delete().eq('id', f.id);
+    setDeleting(null);
+    if (error) {
+      showToast('Gagal menghapus: ' + error.message, 'error');
+      return;
     }
+    showToast('Fasilitas dihapus', 'success');
+    fetchFacilities();
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Fasilitas</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Kelola data fasilitas sekolah.</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Kelola data fasilitas sekolah.
+          </p>
         </div>
-        {canCreate && (
-          <button onClick={openCreate} className="btn-primary">
+        {hasPermission('facilities', 'create') && (
+          <button onClick={openAdd} className="btn-primary">
             <Plus className="h-4 w-4" />
             Tambah Fasilitas
           </button>
         )}
       </div>
 
-      <div className="card">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="input pl-9" placeholder="Cari fasilitas..." value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
+      <div className="mb-4 relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          className="input pl-10"
+          placeholder="Cari nama, lokasi, kategori..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="card">
-          <EmptyState title="Tidak ada fasilitas" description="Belum ada data fasilitas." />
-        </div>
+        <EmptyState
+          icon={<Building2 className="h-8 w-8 text-slate-400" />}
+          title="Tidak ada fasilitas"
+          description="Belum ada fasilitas yang terdaftar."
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((f) => (
             <div key={f.id} className="card flex flex-col">
               {f.image_url ? (
-                <img src={f.image_url} alt={f.name} className="mb-3 h-40 w-full rounded-xl object-cover" />
+                <img
+                  src={f.image_url}
+                  alt={f.name}
+                  className="mb-3 h-32 w-full rounded-xl object-cover"
+                />
               ) : (
-                <div className="mb-3 flex h-40 w-full items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
-                  <MapPin className="h-10 w-10 text-slate-400" />
+                <div className="mb-3 flex h-32 w-full items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
+                  <Building2 className="h-10 w-10 text-slate-400" />
                 </div>
               )}
-              <div className="flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">{f.name}</h3>
-                  {f.status && (
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[f.status] ?? statusStyles.active}`}>
-                      {f.status}
-                    </span>
-                  )}
-                </div>
-                {f.description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{f.description}</p>}
-                <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                  {f.location && (
-                    <p className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> {f.location}</p>
-                  )}
-                  {f.capacity != null && (
-                    <p className="flex items-center gap-1.5"><Users className="h-3.5 w-3.5" /> Kapasitas: {f.capacity}</p>
-                  )}
-                  {f.category && <p className="text-slate-400">Kategori: {f.category}</p>}
-                  {f.department && <p className="text-slate-400">Departemen: {f.department}</p>}
-                </div>
+              <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">{f.name}</h3>
+              {f.description && (
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{f.description}</p>
+              )}
+              <div className="mt-3 space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                {f.location && (
+                  <div className="flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" />
+                    {f.location}
+                  </div>
+                )}
+                {f.capacity != null && (
+                  <div className="flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" />
+                    Kapasitas: {f.capacity}
+                  </div>
+                )}
+                {f.category && (
+                  <div className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 dark:bg-slate-800">
+                    {f.category}
+                  </div>
+                )}
               </div>
-              <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-                {canUpdate && (
-                  <button onClick={() => openEdit(f)} className="btn-secondary flex-1 px-3 py-2 text-xs">
-                    <Pencil className="h-3.5 w-3.5" />
+              <div className="mt-4 flex gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                {hasPermission('facilities', 'update') && (
+                  <button
+                    onClick={() => openEdit(f)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    <Pencil className="h-4 w-4" />
                     Edit
                   </button>
                 )}
-                {canDelete && (
+                {hasPermission('facilities', 'delete') && (
                   <button
                     onClick={() => handleDelete(f)}
                     disabled={deleting === f.id}
-                    className="btn-danger px-3 py-2 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
                   >
-                    {deleting === f.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    {deleting === f.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     Hapus
                   </button>
                 )}
@@ -269,17 +273,18 @@ export default function FacilitiesAdminPage() {
       )}
 
       {/* Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={closeModal}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
                 {editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
               </h2>
-              <button onClick={closeModal} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <button onClick={closeModal} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
                 <X className="h-5 w-5" />
               </button>
             </div>
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="label">Nama <span className="text-red-500">*</span></label>
@@ -287,21 +292,19 @@ export default function FacilitiesAdminPage() {
               </div>
               <div>
                 <label className="label">Deskripsi</label>
-                <textarea rows={2} className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                <textarea className="input min-h-[80px]" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Lokasi</label>
-                  <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-                </div>
-                <div>
-                  <label className="label">Kapasitas</label>
-                  <input type="number" min={0} className="input" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
-                </div>
+              <div>
+                <label className="label">Lokasi</label>
+                <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">Kapasitas</label>
+                <input type="number" min={0} className="input" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
               </div>
               <div>
                 <label className="label">URL Gambar</label>
-                <input className="input" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." />
+                <input className="input" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -317,10 +320,11 @@ export default function FacilitiesAdminPage() {
                 <label className="label">Departemen</label>
                 <input className="input" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+
+              <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={closeModal} className="btn-secondary">Batal</button>
-                <button type="submit" disabled={saving} className="btn-primary">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                <button type="submit" disabled={submitting} className="btn-primary">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {editing ? 'Simpan' : 'Tambah'}
                 </button>
               </div>

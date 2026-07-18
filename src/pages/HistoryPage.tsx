@@ -1,8 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, History, Loader2, Calendar, User, Mail, Phone, Package, Clock, FileText } from 'lucide-react';
+import { History, Search, Loader2, Calendar, Clock, User, Mail, Phone, Package } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import EmptyState from '../components/EmptyState';
-import { showToast } from '../components/Toast';
 import { cn } from '../utils/cn';
 
 interface BorrowingItem {
@@ -10,42 +9,52 @@ interface BorrowingItem {
   borrowing_id: string;
   inventory_id: string | null;
   facility_id: string | null;
-  item_type: string;
-  item_name: string;
-  quantity: number;
-  status: string;
+  item_type: string | null;
+  item_name: string | null;
+  quantity: number | null;
+  status: string | null;
   current_status_label: string | null;
 }
 
 interface Borrowing {
   id: string;
-  borrower_name: string;
+  borrower_name: string | null;
   borrower_class: string | null;
   borrower_email: string | null;
   borrower_phone: string | null;
-  borrow_date: string;
-  return_date: string;
+  borrow_date: string | null;
+  return_date: string | null;
+  actual_return_date: string | null;
   start_time: string | null;
   end_time: string | null;
   purpose: string | null;
   notes: string | null;
   status: string;
-  item_type: string | null;
   current_status_label: string | null;
+  item_type: string | null;
   created_at: string;
   borrowing_items: BorrowingItem[];
 }
 
-const statusStyles: Record<string, { badge: string; label: string }> = {
-  pending: { badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300', label: 'Menunggu' },
-  approved: { badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', label: 'Disetujui' },
-  returned: { badge: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300', label: 'Dikembalikan' },
-  rejected: { badge: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300', label: 'Ditolak' },
-  completed: { badge: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300', label: 'Selesai' },
-  cancelled: { badge: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400', label: 'Dibatalkan' },
+const statusStyles: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  returned: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  completed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  cancelled: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
 };
 
-const STATUS_OPTIONS = [
+const statusLabels: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  returned: 'Dikembalikan',
+  rejected: 'Ditolak',
+  completed: 'Selesai',
+  cancelled: 'Dibatalkan',
+};
+
+const STATUS_FILTERS = [
   { value: 'all', label: 'Semua Status' },
   { value: 'pending', label: 'Menunggu' },
   { value: 'approved', label: 'Disetujui' },
@@ -71,8 +80,8 @@ export default function HistoryPage() {
           .order('created_at', { ascending: false });
         if (error) throw error;
         setBorrowings((data as unknown as Borrowing[]) ?? []);
-      } catch (err: any) {
-        showToast('Gagal memuat riwayat peminjaman', 'error');
+      } catch {
+        setBorrowings([]);
       } finally {
         setLoading(false);
       }
@@ -80,38 +89,39 @@ export default function HistoryPage() {
   }, []);
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return borrowings.filter((b) => {
-      if (statusFilter !== 'all' && b.status !== statusFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (
-          !b.borrower_name.toLowerCase().includes(q) &&
-          !(b.borrower_class ?? '').toLowerCase().includes(q) &&
-          !(b.borrower_email ?? '').toLowerCase().includes(q) &&
-          !(b.purpose ?? '').toLowerCase().includes(q)
-        ) return false;
-      }
-      return true;
+      const matchSearch =
+        !q ||
+        (b.borrower_name ?? '').toLowerCase().includes(q) ||
+        (b.borrower_class ?? '').toLowerCase().includes(q) ||
+        (b.purpose ?? '').toLowerCase().includes(q) ||
+        (b.borrowing_items ?? []).some((it) => (it.item_name ?? '').toLowerCase().includes(q));
+      const matchStatus = statusFilter === 'all' || b.status === statusFilter;
+      return matchSearch && matchStatus;
     });
   }, [borrowings, search, statusFilter]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Riwayat Peminjaman</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Daftar semua pengajuan peminjaman beserta status terkini.
+        <div className="mb-2 flex items-center gap-2">
+          <History className="h-6 w-6 text-brand-600" />
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Riwayat Peminjaman</h1>
+        </div>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Daftar semua pengajuan peminjaman barang dan fasilitas.
         </p>
       </div>
 
-      {/* Search & Filter */}
+      {/* Filters */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             className="input pl-10"
-            placeholder="Cari nama, kelas, atau keperluan..."
+            placeholder="Cari nama, kelas, keperluan, atau item..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -121,105 +131,146 @@ export default function HistoryPage() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          {STATUS_FILTERS.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
           ))}
         </select>
       </div>
 
-      {/* List */}
       {loading ? (
         <div className="space-y-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="card animate-pulse">
               <div className="mb-3 h-5 w-1/3 rounded bg-slate-200 dark:bg-slate-800" />
-              <div className="mb-2 h-4 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
-              <div className="h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-800" />
+              <div className="mb-2 h-4 w-full rounded bg-slate-200 dark:bg-slate-800" />
+              <div className="h-4 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
             </div>
           ))}
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
           title="Tidak ada riwayat"
-          description="Belum ada pengajuan peminjaman yang cocok."
+          description="Belum ada peminjaman yang sesuai dengan filter."
           icon={<History className="h-8 w-8 text-slate-400" />}
         />
       ) : (
         <div className="space-y-4">
-          {filtered.map((b) => {
-            const st = statusStyles[b.status] ?? statusStyles.pending;
-            return (
-              <div key={b.id} className="card">
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="font-semibold text-slate-900 dark:text-white">{b.borrower_name}</h3>
-                    {b.borrower_class && (
-                      <p className="text-sm text-slate-500 dark:text-slate-400">{b.borrower_class}</p>
-                    )}
-                  </div>
-                  <span className={cn('rounded-full px-3 py-1 text-xs font-medium', st.badge)}>
-                    {b.current_status_label ?? st.label}
-                  </span>
+          {filtered.map((b) => (
+            <div key={b.id} className="card">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {b.borrower_name ?? 'Peminjam'}
+                  </h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {b.borrower_class ?? '-'}
+                  </p>
                 </div>
+                <span
+                  className={cn(
+                    'rounded-full px-3 py-1 text-xs font-semibold',
+                    statusStyles[b.status] ?? statusStyles.pending,
+                  )}
+                >
+                  {b.current_status_label ?? statusLabels[b.status] ?? b.status}
+                </span>
+              </div>
 
-                <div className="grid gap-2 text-sm text-slate-500 dark:text-slate-400 sm:grid-cols-2">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    {b.borrow_date} → {b.return_date}
-                  </div>
-                  {(b.start_time || b.end_time) && (
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
-                      {b.start_time ?? '--:--'} - {b.end_time ?? '--:--'}
-                    </div>
-                  )}
-                  {b.borrower_email && (
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4" />
-                      {b.borrower_email}
-                    </div>
-                  )}
-                  {b.borrower_phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4" />
-                      {b.borrower_phone}
-                    </div>
-                  )}
-                </div>
-
-                {b.purpose && (
-                  <div className="mt-3 flex items-start gap-2 rounded-lg bg-slate-50 p-2 text-sm dark:bg-slate-800/50">
-                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                    <span className="text-slate-600 dark:text-slate-300">{b.purpose}</span>
+              <div className="grid gap-3 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+                {b.borrow_date && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-4 w-4 text-slate-400" />
+                    <span className="text-slate-500 dark:text-slate-400">Pinjam:</span>
+                    <span className="font-medium">{b.borrow_date}</span>
+                    {b.start_time && <span className="text-slate-400">({b.start_time})</span>}
                   </div>
                 )}
-
-                {/* Items */}
-                {b.borrowing_items && b.borrowing_items.length > 0 && (
-                  <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
-                    <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                      <Package className="h-3.5 w-3.5" />
-                      Item Dipinjam
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {b.borrowing_items.map((it) => (
-                        <span
-                          key={it.id}
-                          className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                        >
-                          {it.item_name} × {it.quantity}
-                        </span>
-                      ))}
-                    </div>
+                {b.return_date && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-4 w-4 text-slate-400" />
+                    <span className="text-slate-500 dark:text-slate-400">Kembali:</span>
+                    <span className="font-medium">{b.return_date}</span>
+                    {b.end_time && <span className="text-slate-400">({b.end_time})</span>}
                   </div>
                 )}
-
-                {b.notes && (
-                  <p className="mt-2 text-xs text-slate-400">Catatan: {b.notes}</p>
+                {b.actual_return_date && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-4 w-4 text-emerald-500" />
+                    <span className="text-slate-500 dark:text-slate-400">Dikembalikan:</span>
+                    <span className="font-medium text-emerald-600 dark:text-emerald-400">{b.actual_return_date}</span>
+                  </div>
+                )}
+                {b.borrower_email && (
+                  <div className="flex items-center gap-1.5">
+                    <Mail className="h-4 w-4 text-slate-400" />
+                    <span className="truncate">{b.borrower_email}</span>
+                  </div>
+                )}
+                {b.borrower_phone && (
+                  <div className="flex items-center gap-1.5">
+                    <Phone className="h-4 w-4 text-slate-400" />
+                    <span>{b.borrower_phone}</span>
+                  </div>
                 )}
               </div>
-            );
-          })}
+
+              {b.purpose && (
+                <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-800/50 dark:text-slate-300">
+                  <span className="font-medium">Keperluan: </span>{b.purpose}
+                </div>
+              )}
+
+              {/* Items */}
+              {b.borrowing_items && b.borrowing_items.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase text-slate-400">
+                    <Package className="h-3.5 w-3.5" />
+                    Item Dipinjam
+                  </p>
+                  <ul className="space-y-1.5">
+                    {b.borrowing_items.map((it) => (
+                      <li
+                        key={it.id}
+                        className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm dark:border-slate-800"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-xs font-medium',
+                              it.item_type === 'fasilitas'
+                                ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300'
+                                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+                            )}
+                          >
+                            {it.item_type === 'fasilitas' ? 'Fasilitas' : 'Barang'}
+                          </span>
+                          <span className="font-medium text-slate-800 dark:text-slate-200">
+                            {it.item_name ?? 'Item'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            x{it.quantity ?? 1}
+                          </span>
+                          {it.current_status_label && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              {it.current_status_label}
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {b.notes && (
+                <p className="mt-3 text-xs text-slate-400">
+                  <span className="font-medium">Catatan: </span>{b.notes}
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

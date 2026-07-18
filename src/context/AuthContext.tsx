@@ -11,11 +11,6 @@ export interface AdminProfile {
   is_active: boolean;
 }
 
-export interface Permission {
-  module: string;
-  action: string;
-}
-
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
@@ -155,16 +150,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider
       value={{
-        session,
-        user,
-        adminProfile,
-        permissions,
-        loading,
-        hasPermission,
-        signIn,
-        signUp,
-        signOut,
-        refreshAdminProfile,
+        session, user, adminProfile, permissions, loading,
+        hasPermission, signIn, signUp, signOut, refreshAdminProfile,
       }}
     >
       {children}

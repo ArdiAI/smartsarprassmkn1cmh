@@ -1,33 +1,36 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Home,
   Package,
   Building2,
   ClipboardList,
   CalendarDays,
+  CalendarRange,
   History,
-  Phone,
   Info,
   LogIn,
   Menu,
   X,
   Moon,
   Sun,
+  ChevronDown,
 } from 'lucide-react';
 import { brand } from '../brand/config';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 
-const navItems = [
+const mainNav = [
   { to: '/', label: 'Beranda', icon: Home },
   { to: '/fasilitas', label: 'Fasilitas', icon: Building2 },
   { to: '/inventaris', label: 'Inventaris', icon: Package },
   { to: '/pinjam', label: 'Pengajuan', icon: ClipboardList },
   { to: '/agenda', label: 'Agenda', icon: CalendarDays },
-  { to: '/timeline', label: 'Timeline', icon: CalendarDays },
+];
+
+const otherNav = [
+  { to: '/timeline', label: 'Timeline', icon: CalendarRange },
   { to: '/history', label: 'Riwayat', icon: History },
-  { to: '/laporan', label: 'Laporan', icon: Phone },
   { to: '/tentang', label: 'Tentang', icon: Info },
 ];
 
@@ -36,6 +39,21 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const otherRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (otherRef.current && !otherRef.current.contains(e.target as Node)) {
+        setOtherOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const isActive = (to: string) =>
+    to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
@@ -48,8 +66,8 @@ export default function Navbar() {
         </Link>
 
         <div className="hidden items-center gap-1 lg:flex">
-          {navItems.map((item) => {
-            const active = location.pathname === item.to;
+          {mainNav.map((item) => {
+            const active = isActive(item.to);
             return (
               <Link
                 key={item.to}
@@ -66,6 +84,46 @@ export default function Navbar() {
               </Link>
             );
           })}
+
+          {/* Lainnya dropdown */}
+          <div className="relative" ref={otherRef}>
+            <button
+              onClick={() => setOtherOpen((o) => !o)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition',
+                otherNav.some((n) => isActive(n.to))
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+              )}
+            >
+              <CalendarDays className="h-4 w-4" />
+              Lainnya
+              <ChevronDown className={cn('h-3.5 w-3.5 transition', otherOpen && 'rotate-180')} />
+            </button>
+            {otherOpen && (
+              <div className="absolute right-0 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                {otherNav.map((item) => {
+                  const active = isActive(item.to);
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      onClick={() => setOtherOpen(false)}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2 text-sm font-medium transition',
+                        active
+                          ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+                          : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -95,8 +153,29 @@ export default function Navbar() {
       {open && (
         <div className="border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950 lg:hidden">
           <div className="flex flex-col gap-1">
-            {navItems.map((item) => {
-              const active = location.pathname === item.to;
+            {mainNav.map((item) => {
+              const active = isActive(item.to);
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium',
+                    active
+                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
+            <div className="my-1 border-t border-slate-200 dark:border-slate-800" />
+            <p className="px-3 py-1 text-xs font-semibold uppercase text-slate-400">Lainnya</p>
+            {otherNav.map((item) => {
+              const active = isActive(item.to);
               return (
                 <Link
                   key={item.to}
@@ -119,7 +198,7 @@ export default function Navbar() {
                 setOpen(false);
                 navigate('/auth');
               }}
-              className="flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2.5 text-sm font-semibold text-white"
+              className="mt-2 flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2.5 text-sm font-semibold text-white"
             >
               <LogIn className="h-4 w-4" />
               Masuk

@@ -1,5 +1,16 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Search, CalendarDays, Clock, MapPin, User, RotateCcw, X } from 'lucide-react';
+import {
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Loader2,
+  Clock,
+  MapPin,
+  User,
+  Tag,
+  RotateCcw,
+} from 'lucide-react';
 import {
   fetchTimelineEvents,
   colorCategoryStyles,
@@ -7,7 +18,6 @@ import {
   type EventColorCategory,
 } from '../lib/timeline';
 import EmptyState from '../components/EmptyState';
-import { showToast } from '../components/Toast';
 import { cn } from '../utils/cn';
 
 const MONTH_NAMES = [
@@ -16,7 +26,7 @@ const MONTH_NAMES = [
 ];
 const DAY_NAMES = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 
-const JENIS_OPTIONS = [
+const JENIS_FILTERS = [
   { value: 'all', label: 'Semua' },
   { value: 'Agenda', label: 'Agenda' },
   { value: 'Peminjaman', label: 'Peminjaman' },
@@ -24,20 +34,20 @@ const JENIS_OPTIONS = [
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'Semua Status' },
-  { value: 'scheduled', label: 'Terjadwal' },
+  { value: 'scheduled', label: 'Scheduled' },
   { value: 'pending', label: 'Menunggu' },
   { value: 'approved', label: 'Disetujui' },
   { value: 'rejected', label: 'Ditolak' },
+  { value: 'borrowed', label: 'Dipinjam' },
   { value: 'returned', label: 'Dikembalikan' },
   { value: 'completed', label: 'Selesai' },
-  { value: 'borrowed', label: 'Dipinjam' },
 ];
 
-function pad(n: number) {
+function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
-function dateStr(y: number, m: number, d: number) {
+function dateKey(y: number, m: number, d: number): string {
   return `${y}-${pad(m + 1)}-${pad(d)}`;
 }
 
@@ -51,7 +61,7 @@ export default function TimelinePage() {
   const [search, setSearch] = useState('');
   const [jenisFilter, setJenisFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [orgFilter, setOrgFilter] = useState('all');
+  const [orgFilter, setOrgFilter] = useState('');
 
   const loadEvents = useCallback(async () => {
     setLoading(true);
@@ -59,7 +69,7 @@ export default function TimelinePage() {
       const data = await fetchTimelineEvents(year, month);
       setEvents(data);
     } catch {
-      showToast('Gagal memuat timeline', 'error');
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -69,33 +79,21 @@ export default function TimelinePage() {
     loadEvents();
   }, [loadEvents]);
 
-  const organisations = useMemo(() => {
-    const set = new Set<string>();
-    events.forEach((e) => { if (e.organisasi) set.add(e.organisasi); });
-    return Array.from(set).sort();
-  }, [events]);
-
   const filteredEvents = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return events.filter((e) => {
-      if (search) {
-        const q = search.toLowerCase();
-        if (
-          !e.title.toLowerCase().includes(q) &&
-          !(e.description ?? '').toLowerCase().includes(q) &&
-          !(e.location ?? '').toLowerCase().includes(q) &&
-          !(e.penanggungJawab ?? '').toLowerCase().includes(q)
-        ) return false;
-      }
-      if (jenisFilter !== 'all' && e.jenis !== jenisFilter) return false;
-      if (statusFilter !== 'all' && e.status !== statusFilter) return false;
-      if (orgFilter !== 'all' && e.organisasi !== orgFilter) return false;
-      return true;
+      const matchSearch = !q || (e.title?.toLowerCase().includes(q) ?? false) || (e.description?.toLowerCase().includes(q) ?? false) || (e.location?.toLowerCase().includes(q) ?? false);
+      const matchJenis = jenisFilter === 'all' || e.jenis === jenisFilter;
+      const matchStatus = statusFilter === 'all' || e.status === statusFilter;
+      const matchOrg = !orgFilter.trim() || (e.organisasi?.toLowerCase().includes(orgFilter.trim().toLowerCase()) ?? false);
+      return matchSearch && matchJenis && matchStatus && matchOrg;
     });
   }, [events, search, jenisFilter, statusFilter, orgFilter]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, TimelineEvent[]>();
     filteredEvents.forEach((e) => {
+      if (!e.date) return;
       const arr = map.get(e.date) ?? [];
       arr.push(e);
       map.set(e.date, arr);
@@ -103,91 +101,109 @@ export default function TimelinePage() {
     return map;
   }, [filteredEvents]);
 
-  const calendarDays = useMemo(() => {
-    const firstDay = new Date(year, month, 1).getDay();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const cells: (string | null)[] = [];
-    for (let i = 0; i < firstDay; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) cells.push(dateStr(year, month, d));
-    return cells;
-  }, [year, month]);
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
 
-  function prevMonth() {
-    if (month === 0) { setMonth(11); setYear((y) => y - 1); }
-    else setMonth((m) => m - 1);
-    setSelectedDate(null);
-  }
+  const prevMonth = () => {
+    if (month === 0) {
+      setMonth(11);
+      setYear((y) => y - 1);
+    } else {
+      setMonth((m) => m - 1);
+    }
+  };
+  const nextMonth = () => {
+    if (month === 11) {
+      setMonth(0);
+      setYear((y) => y + 1);
+    } else {
+      setMonth((m) => m + 1);
+    }
+  };
 
-  function nextMonth() {
-    if (month === 11) { setMonth(0); setYear((y) => y + 1); }
-    else setMonth((m) => m + 1);
-    setSelectedDate(null);
-  }
+  const todayKey = dateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) ?? []) : [];
 
-  function resetFilters() {
+  const resetFilters = () => {
     setSearch('');
     setJenisFilter('all');
     setStatusFilter('all');
-    setOrgFilter('all');
-  }
-
-  const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) ?? []) : [];
-  const todayString = dateStr(now.getFullYear(), now.getMonth(), now.getDate());
+    setOrgFilter('');
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Timeline Kegiatan</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Kalender kegiatan sekolah — agenda dan peminjaman dalam satu tampilan.
+        <div className="mb-2 flex items-center gap-2">
+          <CalendarRange className="h-6 w-6 text-brand-600" />
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Timeline Kegiatan</h1>
+        </div>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Kalender kegiatan sekolah: agenda dan peminjaman.
         </p>
       </div>
 
-      {/* Color Legend */}
-      <div className="mb-4 flex flex-wrap gap-3">
-        {(Object.keys(colorCategoryStyles) as EventColorCategory[]).map((cat) => (
-          <div key={cat} className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 dark:bg-slate-800">
-            <span className={cn('h-2.5 w-2.5 rounded-full', colorCategoryStyles[cat].dot)} />
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-              {colorCategoryStyles[cat].label}
+      {/* Legend */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        {(Object.keys(colorCategoryStyles) as EventColorCategory[]).map((key) => {
+          const s = colorCategoryStyles[key];
+          return (
+            <span
+              key={key}
+              className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium', s.bg, s.text)}
+            >
+              <span className={cn('h-2 w-2 rounded-full', s.dot)} />
+              {s.label}
             </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="relative flex-1">
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             className="input pl-10"
-            placeholder="Cari kegiatan, lokasi, atau penanggung jawab..."
+            placeholder="Cari kegiatan..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select className="input lg:w-40" value={jenisFilter} onChange={(e) => setJenisFilter(e.target.value)}>
-          {JENIS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select className="input" value={jenisFilter} onChange={(e) => setJenisFilter(e.target.value)}>
+          {JENIS_FILTERS.map((j) => (
+            <option key={j.value} value={j.value}>{j.label}</option>
+          ))}
         </select>
-        <select className="input lg:w-44" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
         </select>
-        <select className="input lg:w-44" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
-          <option value="all">Semua Organisasi</option>
-          {organisations.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-        <button onClick={resetFilters} className="btn-secondary shrink-0">
-          <RotateCcw className="h-4 w-4" />
-          Reset
-        </button>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className="input flex-1"
+            placeholder="Organisasi..."
+            value={orgFilter}
+            onChange={(e) => setOrgFilter(e.target.value)}
+          />
+          <button onClick={resetFilters} className="btn-secondary" title="Reset filter">
+            <RotateCcw className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Calendar */}
         <div className="lg:col-span-2">
           <div className="card">
-            {/* Month Navigation */}
+            {/* Month nav */}
             <div className="mb-4 flex items-center justify-between">
               <button onClick={prevMonth} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
                 <ChevronLeft className="h-5 w-5" />
@@ -200,67 +216,66 @@ export default function TimelinePage() {
               </button>
             </div>
 
-            {/* Day Headers */}
+            {/* Day headers */}
             <div className="mb-2 grid grid-cols-7 gap-1">
               {DAY_NAMES.map((d) => (
-                <div key={d} className="text-center text-xs font-semibold text-slate-400">
+                <div key={d} className="py-1 text-center text-xs font-semibold text-slate-500 dark:text-slate-400">
                   {d}
                 </div>
               ))}
             </div>
 
-            {/* Calendar Grid */}
+            {/* Cells */}
             {loading ? (
-              <div className="grid grid-cols-7 gap-1">
-                {Array.from({ length: 35 }).map((_, i) => (
-                  <div key={i} className="h-24 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
-                ))}
+              <div className="flex items-center justify-center py-16 text-slate-400">
+                <Loader2 className="h-6 w-6 animate-spin" />
               </div>
             ) : (
               <div className="grid grid-cols-7 gap-1">
-                {calendarDays.map((dateStr_, idx) => {
-                  if (!dateStr_) return <div key={idx} className="h-24" />;
-                  const dayEvents = eventsByDate.get(dateStr_) ?? [];
-                  const dayNum = parseInt(dateStr_.slice(-2));
-                  const isToday = dateStr_ === todayString;
-                  const isSelected = dateStr_ === selectedDate;
+                {cells.map((day, idx) => {
+                  if (day === null) return <div key={idx} className="aspect-square" />;
+                  const key = dateKey(year, month, day);
+                  const dayEvents = eventsByDate.get(key) ?? [];
+                  const isToday = key === todayKey;
+                  const isSelected = key === selectedDate;
                   return (
-                    <div
+                    <button
                       key={idx}
-                      onClick={() => setSelectedDate(dateStr_)}
+                      onClick={() => setSelectedDate(key)}
                       className={cn(
-                        'h-24 cursor-pointer rounded-lg border p-1 transition',
+                        'flex aspect-square flex-col items-center gap-0.5 rounded-lg border p-1 text-left transition',
                         isSelected
-                          ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/30'
-                          : isToday
-                            ? 'border-brand-300 bg-brand-50/50 dark:border-brand-700 dark:bg-brand-900/20'
-                            : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600',
+                          ? 'border-brand-500 bg-brand-50 dark:border-brand-400 dark:bg-brand-900/30'
+                          : 'border-slate-100 hover:border-brand-300 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50',
+                        isToday && !isSelected && 'border-brand-400 dark:border-brand-600',
                       )}
                     >
-                      <span className={cn(
-                        'text-xs font-medium',
-                        isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400',
-                      )}>
-                        {dayNum}
+                      <span
+                        className={cn(
+                          'text-xs font-semibold',
+                          isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-700 dark:text-slate-300',
+                        )}
+                      >
+                        {day}
                       </span>
-                      <div className="mt-1 space-y-0.5">
+                      <div className="flex w-full flex-col gap-0.5 overflow-hidden">
                         {dayEvents.slice(0, 3).map((ev) => {
-                          const style = colorCategoryStyles[ev.colorCategory];
+                          const s = colorCategoryStyles[ev.colorCategory];
                           return (
-                            <div
+                            <span
                               key={ev.id}
-                              className={cn('truncate rounded px-1 py-0.5 text-[10px] font-medium', style.bg, style.text)}
+                              className={cn('truncate rounded px-1 py-0.5 text-[10px] font-medium', s.bg, s.text)}
                               title={ev.title}
                             >
                               {ev.title}
-                            </div>
+                            </span>
                           );
                         })}
                         {dayEvents.length > 3 && (
-                          <p className="text-[10px] text-slate-400">+{dayEvents.length - 3} lainnya</p>
+                          <span className="text-[10px] text-slate-400">+{dayEvents.length - 3} lainnya</span>
                         )}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -268,78 +283,77 @@ export default function TimelinePage() {
           </div>
         </div>
 
-        {/* Right Panel: Selected Date Events */}
-        <div>
+        {/* Right panel: selected date events */}
+        <div className="lg:col-span-1">
           <div className="card sticky top-20">
+            <h3 className="mb-4 text-base font-bold text-slate-900 dark:text-white">
+              {selectedDate
+                ? new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+                : 'Pilih Tanggal'}
+            </h3>
             {!selectedDate ? (
-              <EmptyState
-                title="Pilih Tanggal"
-                description="Klik tanggal pada kalender untuk melihat detail kegiatan."
-                icon={<CalendarDays className="h-8 w-8 text-slate-400" />}
-              />
+              <p className="py-6 text-center text-sm text-slate-400">
+                Klik tanggal pada kalender untuk melihat detail kegiatan.
+              </p>
             ) : selectedEvents.length === 0 ? (
               <EmptyState
-                title="Tidak Ada Kegiatan"
-                description={`Tidak ada kegiatan pada ${selectedDate}.`}
-                icon={<CalendarDays className="h-8 w-8 text-slate-400" />}
+                title="Tidak ada kegiatan"
+                description="Tidak ada kegiatan pada tanggal ini."
+                icon={<CalendarRange className="h-8 w-8 text-slate-400" />}
               />
             ) : (
-              <div>
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900 dark:text-white">
-                    {new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  </h3>
-                  <button onClick={() => setSelectedDate(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="max-h-[500px] space-y-3 overflow-y-auto">
-                  {selectedEvents.map((ev) => {
-                    const style = colorCategoryStyles[ev.colorCategory];
-                    return (
-                      <div key={ev.id} className={cn('rounded-xl border-l-4 p-3', style.bg)} style={{ borderLeftColor: undefined }}>
-                        <div className={cn('mb-2 flex items-center gap-2')}>
-                          <span className={cn('h-2.5 w-2.5 rounded-full', style.dot)} />
-                          <span className={cn('text-xs font-semibold', style.text)}>{ev.jenis}</span>
-                          <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-                            {ev.status}
-                          </span>
-                        </div>
-                        <h4 className="font-semibold text-slate-900 dark:text-white">{ev.title}</h4>
-                        <div className="mt-2 space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                          {(ev.startTime || ev.endTime) && (
-                            <p className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {ev.startTime ?? '--:--'} - {ev.endTime ?? '--:--'}
-                            </p>
-                          )}
-                          {ev.location && (
-                            <p className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              {ev.location}
-                            </p>
-                          )}
-                          {ev.organisasi && (
-                            <p className="flex items-center gap-1">
-                              <CalendarDays className="h-3 w-3" />
-                              {ev.organisasi}
-                            </p>
-                          )}
-                          {ev.penanggungJawab && (
-                            <p className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              {ev.penanggungJawab}
-                            </p>
-                          )}
-                        </div>
-                        {ev.description && (
-                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{ev.description}</p>
-                        )}
+              <ul className="space-y-3">
+                {selectedEvents.map((ev) => {
+                  const s = colorCategoryStyles[ev.colorCategory];
+                  return (
+                    <li
+                      key={ev.id}
+                      className={cn('rounded-xl border p-3', s.bg, 'border-transparent')}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">{ev.title}</h4>
+                        <span className={cn('inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium dark:bg-slate-900/50', s.text)}>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', s.dot)} />
+                          {ev.jenis}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      <div className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                        {(ev.startTime || ev.endTime) && (
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-slate-400" />
+                            {ev.startTime ?? '-'}{ev.endTime ? ` - ${ev.endTime}` : ''}
+                          </div>
+                        )}
+                        {ev.location && (
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                            {ev.location}
+                          </div>
+                        )}
+                        {ev.organisasi && (
+                          <div className="flex items-center gap-1.5">
+                            <Tag className="h-3.5 w-3.5 text-slate-400" />
+                            {ev.organisasi}
+                          </div>
+                        )}
+                        {ev.penanggungJawab && (
+                          <div className="flex items-center gap-1.5">
+                            <User className="h-3.5 w-3.5 text-slate-400" />
+                            {ev.penanggungJawab}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium">Status:</span>
+                          <span className="font-semibold">{ev.status}</span>
+                        </div>
+                      </div>
+                      {ev.description && (
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{ev.description}</p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
         </div>

@@ -1,84 +1,97 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, type FormEvent } from 'react';
 import {
+  ClipboardList,
   Search,
-  Package,
-  Building2,
+  Loader2,
   Plus,
   Minus,
-  Trash2,
-  ShoppingCart,
-  Loader2,
-  CheckCircle2,
-  Send,
   X,
+  Package,
+  Building2,
+  CheckCircle2,
+  Mail,
+  Phone,
+  Calendar,
+  Clock,
   MapPin,
+  FileText,
+  Send,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { getDefaultWorkflow } from '../lib/workflow';
+import { getDefaultWorkflow, type WorkflowTemplate } from '../lib/workflow';
 import { showToast } from '../components/Toast';
 import { cn } from '../utils/cn';
+
+type Tab = 'barang' | 'fasilitas';
 
 interface InventoryItem {
   id: string;
   code: string | null;
   name: string;
-  quantity: number;
-  condition: string;
-  location: string | null;
+  available_quantity: number | null;
+  condition: string | null;
   image_url: string | null;
-  available_quantity: number;
   categories: { name: string } | null;
 }
 
-interface Facility {
+interface FacilityItem {
   id: string;
   name: string;
-  description: string | null;
   location: string | null;
   capacity: number | null;
   image_url: string | null;
-  category: string | null;
-  status: string | null;
 }
 
 interface CartItem {
   key: string;
   inventory_id: string | null;
   facility_id: string | null;
-  item_type: 'barang' | 'fasilitas';
+  item_type: Tab;
   item_name: string;
   quantity: number;
-  maxQty?: number;
-  isCustom: boolean;
 }
 
-const pexelsFallback = (seed: string) =>
-  `https://picsum.photos/seed/${encodeURIComponent(seed)}/400/300`;
+const FALLBACK_INV = 'https://images.pexels.com/photos/2280571/pexels-photo-2280571.jpeg?auto=compress&cs=tinysrgb&w=400';
+const FALLBACK_FAC = 'https://images.pexels.com/photos/2074130/pexels-photo-2074130.jpeg?auto=compress&cs=tinysrgb&w=400';
+
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+}
+
+function plusDaysStr(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+}
 
 export default function BorrowPage() {
-  const [tab, setTab] = useState<'barang' | 'fasilitas'>('barang');
+  const [tab, setTab] = useState<Tab>('barang');
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [facilities, setFacilities] = useState<FacilityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customName, setCustomName] = useState('');
+  const [lainnyaOpen, setLainnyaOpen] = useState(false);
+  const [lainnyaName, setLainnyaName] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<any>(null);
+  const [success, setSuccess] = useState<{ id: string } | null>(null);
 
-  // Borrower form
-  const [borrowerName, setBorrowerName] = useState('');
-  const [borrowerClass, setBorrowerClass] = useState('');
-  const [borrowerEmail, setBorrowerEmail] = useState('');
-  const [borrowerPhone, setBorrowerPhone] = useState('');
-  const [borrowDate, setBorrowDate] = useState('');
-  const [returnDate, setReturnDate] = useState('');
-  const [startTime, setStartTime] = useState('08:00');
-  const [endTime, setEndTime] = useState('16:00');
-  const [purpose, setPurpose] = useState('');
-  const [notes, setNotes] = useState('');
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({
+    borrower_name: '',
+    borrower_class: '',
+    borrower_email: '',
+    borrower_phone: '',
+    borrow_date: todayStr(),
+    return_date: plusDaysStr(1),
+    start_time: '08:00',
+    end_time: '16:00',
+    purpose: '',
+    notes: '',
+  });
+
+  const update = (field: keyof typeof form, value: string) =>
+    setForm((f) => ({ ...f, [field]: value }));
 
   useEffect(() => {
     (async () => {
@@ -87,19 +100,19 @@ export default function BorrowPage() {
         const [invRes, facRes] = await Promise.all([
           supabase
             .from('inventory')
-            .select('*, categories!category_id(name)')
+            .select('id, code, name, available_quantity, condition, image_url, categories!category_id(name)')
             .gt('available_quantity', 0)
             .eq('condition', 'good')
             .order('name', { ascending: true }),
           supabase
             .from('facilities')
-            .select('id, name, description, location, capacity, image_url, category, status')
+            .select('id, name, location, capacity, image_url')
             .order('name', { ascending: true }),
         ]);
         setInventory((invRes.data as unknown as InventoryItem[]) ?? []);
-        setFacilities((facRes.data as unknown as Facility[]) ?? []);
+        setFacilities((facRes.data as unknown as FacilityItem[]) ?? []);
       } catch {
-        showToast('Gagal memuat data', 'error');
+        /* noop */
       } finally {
         setLoading(false);
       }
@@ -107,127 +120,124 @@ export default function BorrowPage() {
   }, []);
 
   const filteredInventory = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return inventory;
     return inventory.filter(
-      (item) =>
-        !search ||
-        item.name.toLowerCase().includes(search.toLowerCase()) ||
-        (item.code ?? '').toLowerCase().includes(search.toLowerCase()),
+      (it) =>
+        it.name.toLowerCase().includes(q) ||
+        (it.code ?? '').toLowerCase().includes(q) ||
+        (it.categories?.name ?? '').toLowerCase().includes(q),
     );
   }, [inventory, search]);
 
   const filteredFacilities = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return facilities;
     return facilities.filter(
       (f) =>
-        !search ||
-        f.name.toLowerCase().includes(search.toLowerCase()) ||
-        (f.location ?? '').toLowerCase().includes(search.toLowerCase()),
+        f.name.toLowerCase().includes(q) ||
+        (f.location ?? '').toLowerCase().includes(q),
     );
   }, [facilities, search]);
 
-  const addToCart = useCallback((item: CartItem) => {
+  const addToCart = (item: CartItem) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.key === item.key);
       if (existing) {
-        if (item.maxQty && existing.quantity >= item.maxQty) return prev;
         return prev.map((c) =>
           c.key === item.key ? { ...c, quantity: c.quantity + 1 } : c,
         );
       }
       return [...prev, item];
     });
-  }, []);
+  };
 
-  const removeFromCart = useCallback((key: string) => {
-    setCart((prev) => prev.filter((c) => c.key !== key));
-  }, []);
-
-  const updateQty = useCallback((key: string, delta: number) => {
+  const changeQty = (key: string, delta: number) => {
     setCart((prev) =>
-      prev.map((c) => {
-        if (c.key !== key) return c;
-        const newQty = c.quantity + delta;
-        if (newQty < 1) return c;
-        if (c.maxQty && newQty > c.maxQty) return c;
-        return { ...c, quantity: newQty };
-      }),
+      prev
+        .map((c) => (c.key === key ? { ...c, quantity: Math.max(0, c.quantity + delta) } : c))
+        .filter((c) => c.quantity > 0),
     );
-  }, []);
+  };
 
-  function addCustomItem() {
-    if (!customName.trim()) {
-      showToast('Nama barang/fasilitas tidak boleh kosong', 'error');
+  const removeFromCart = (key: string) =>
+    setCart((prev) => prev.filter((c) => c.key !== key));
+
+  const addLainnya = () => {
+    const name = lainnyaName.trim();
+    if (!name) {
+      showToast('Masukkan nama barang/fasilitas', 'error');
       return;
     }
-    const key = `custom-${tab}-${customName.trim()}`;
-    if (cart.some((c) => c.key === key)) {
-      showToast('Item sudah ada di keranjang', 'warning');
-      return;
-    }
+    const key = `lainnya-${tab}-${name}`;
     addToCart({
       key,
       inventory_id: null,
       facility_id: null,
       item_type: tab,
-      item_name: customName.trim(),
+      item_name: name,
       quantity: 1,
-      isCustom: true,
     });
-    setCustomName('');
-    setShowCustom(false);
-    showToast('Item custom ditambahkan', 'success');
-  }
+    setLainnyaName('');
+    setLainnyaOpen(false);
+    showToast(`${name} ditambahkan ke keranjang`, 'success');
+  };
 
-  function validate(): boolean {
-    const e: Record<string, string> = {};
-    if (cart.length === 0) e.cart = 'Keranjang masih kosong';
-    if (!borrowerName.trim()) e.borrowerName = 'Nama wajib diisi';
-    if (!borrowerClass.trim()) e.borrowerClass = 'Kelas/Unit wajib diisi';
-    if (!borrowerEmail.trim()) e.borrowerEmail = 'Email wajib diisi';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(borrowerEmail)) e.borrowerEmail = 'Format email tidak valid';
-    if (!borrowDate) e.borrowDate = 'Tanggal pinjam wajib diisi';
-    if (!returnDate) e.returnDate = 'Tanggal kembali wajib diisi';
-    if (borrowDate && returnDate && returnDate < borrowDate) e.returnDate = 'Tanggal kembali harus setelah tanggal pinjam';
-    if (startTime && endTime && endTime <= startTime) e.endTime = 'Waktu selesai harus setelah waktu mulai';
-    if (purpose.trim().length < 10) e.purpose = 'Keperluan minimal 10 karakter';
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!validate()) {
-      showToast('Mohon lengkapi semua field yang wajib diisi', 'error');
+    if (cart.length === 0) {
+      showToast('Keranjang masih kosong', 'error');
       return;
     }
+    if (!form.borrower_name || !form.borrower_class || !form.borrower_email || !form.borrow_date || !form.return_date || !form.start_time || !form.end_time || !form.purpose) {
+      showToast('Mohon lengkapi semua field wajib', 'error');
+      return;
+    }
+    if (form.return_date < form.borrow_date) {
+      showToast('Tanggal kembali harus setelah tanggal pinjam', 'error');
+      return;
+    }
+    if (form.purpose.trim().length < 10) {
+      showToast('Keperluan minimal 10 karakter', 'error');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const workflow = await getDefaultWorkflow();
-      const { data: borrowing, error: borError } = await supabase
+      const itemType: Tab = cart.some((c) => c.item_type === 'fasilitas') && !cart.some((c) => c.item_type === 'barang')
+        ? 'fasilitas'
+        : 'barang';
+
+      const borrowingPayload = {
+        borrower_name: form.borrower_name.trim(),
+        borrower_class: form.borrower_class.trim(),
+        borrower_email: form.borrower_email.trim(),
+        borrower_phone: form.borrower_phone.trim() || null,
+        borrow_date: form.borrow_date,
+        return_date: form.return_date,
+        start_time: form.start_time,
+        end_time: form.end_time,
+        purpose: form.purpose.trim(),
+        notes: form.notes.trim() || null,
+        status: 'pending',
+        current_step: 1,
+        current_status_label: 'Menunggu Persetujuan',
+        item_type: itemType,
+        workflow_template_id: workflow?.id ?? null,
+      };
+      const { data: brwData, error: brwError } = await supabase
         .from('borrowings')
-        .insert({
-          borrower_name: borrowerName.trim(),
-          borrower_class: borrowerClass.trim(),
-          borrower_email: borrowerEmail.trim(),
-          borrower_phone: borrowerPhone.trim() || null,
-          borrow_date: borrowDate,
-          return_date: returnDate,
-          start_time: startTime,
-          end_time: endTime,
-          purpose: purpose.trim(),
-          notes: notes.trim() || null,
-          status: 'pending',
-          current_step: 1,
-          current_status_label: 'Menunggu Persetujuan',
-          item_type: tab,
-          workflow_template_id: workflow?.id ?? null,
-        })
-        .select()
+        .insert(borrowingPayload)
+        .select('id')
         .single();
+      if (brwError || !brwData) {
+        showToast('Gagal menyimpan peminjaman: ' + (brwError?.message ?? ''), 'error');
+        return;
+      }
+      const borrowingId = (brwData as unknown as { id: string }).id;
 
-      if (borError) throw borError;
-      const borrowingId = (borrowing as any).id;
-
-      const itemInserts = cart.map((c) => ({
+      const itemsPayload = cart.map((c) => ({
         borrowing_id: borrowingId,
         inventory_id: c.inventory_id,
         facility_id: c.facility_id,
@@ -239,9 +249,11 @@ export default function BorrowPage() {
         current_status_label: 'Menunggu Persetujuan',
         workflow_template_id: workflow?.id ?? null,
       }));
-
-      const { error: itemsError } = await supabase.from('borrowing_items').insert(itemInserts);
-      if (itemsError) throw itemsError;
+      const { error: itemsError } = await supabase.from('borrowing_items').insert(itemsPayload);
+      if (itemsError) {
+        showToast('Gagal menyimpan item: ' + itemsError.message, 'error');
+        return;
+      }
 
       // Send email notification
       try {
@@ -251,79 +263,65 @@ export default function BorrowPage() {
           body: JSON.stringify({
             type: 'new_request',
             borrowing_id: borrowingId,
-            borrower_name: borrowerName.trim(),
-            borrower_email: borrowerEmail.trim(),
+            borrower_name: form.borrower_name.trim(),
+            borrower_email: form.borrower_email.trim(),
           }),
         });
       } catch {
-        /* email is best-effort */
+        /* email failure is non-blocking */
       }
 
       showToast('Pengajuan peminjaman berhasil dikirim', 'success');
-      setSuccess({
-        id: borrowingId,
-        borrower_name: borrowerName.trim(),
-        borrower_class: borrowerClass.trim(),
-        borrow_date: borrowDate,
-        return_date: returnDate,
-        items: cart,
-        purpose: purpose.trim(),
-      });
-
-      // Reset form
+      setSuccess({ id: borrowingId });
       setCart([]);
-      setBorrowerName('');
-      setBorrowerClass('');
-      setBorrowerEmail('');
-      setBorrowerPhone('');
-      setBorrowDate('');
-      setReturnDate('');
-      setPurpose('');
-      setNotes('');
-      setErrors({});
-    } catch (err: any) {
-      showToast(err?.message ?? 'Gagal mengirim pengajuan', 'error');
+      setForm({
+        borrower_name: '',
+        borrower_class: '',
+        borrower_email: '',
+        borrower_phone: '',
+        borrow_date: todayStr(),
+        return_date: plusDaysStr(1),
+        start_time: '08:00',
+        end_time: '16:00',
+        purpose: '',
+        notes: '',
+      });
+    } catch (err) {
+      showToast('Terjadi kesalahan saat mengirim pengajuan', 'error');
     } finally {
       setSubmitting(false);
     }
-  }
+  };
 
   if (success) {
     return (
-      <div className="mx-auto max-w-2xl px-4 py-12">
+      <div className="mx-auto max-w-2xl px-4 py-10">
         <div className="card text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
             <CheckCircle2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Pengajuan Terkirim!</h2>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Pengajuan peminjaman Anda telah berhasil dikirim dan sedang menunggu persetujuan.
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Pengajuan Berhasil Dikirim</h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Pengajuan peminjaman Anda telah berhasil dikirim dan menunggu persetujuan.
           </p>
-          <div className="mt-6 space-y-2 rounded-xl bg-slate-50 p-4 text-left dark:bg-slate-800/50">
+          <div className="mt-4 rounded-xl bg-slate-50 p-4 text-left text-sm dark:bg-slate-800/50">
             <div className="flex justify-between gap-4">
-              <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Peminjam</span>
-              <span className="text-sm font-semibold text-slate-900 dark:text-white">{success.borrower_name} ({success.borrower_class})</span>
+              <span className="text-slate-500 dark:text-slate-400">ID Pengajuan</span>
+              <span className="font-mono font-semibold text-slate-900 dark:text-white">{success.id.slice(0, 8)}...</span>
             </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Tanggal</span>
-              <span className="text-sm font-semibold text-slate-900 dark:text-white">{success.borrow_date} → {success.return_date}</span>
+            <div className="mt-2 flex justify-between gap-4">
+              <span className="text-slate-500 dark:text-slate-400">Nama</span>
+              <span className="font-semibold text-slate-900 dark:text-white">{form.borrower_name || '-'}</span>
             </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Keperluan</span>
-              <span className="text-sm font-semibold text-slate-900 dark:text-white text-right">{success.purpose}</span>
-            </div>
-            <div className="border-t border-slate-200 pt-2 dark:border-slate-700">
-              <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">Item Dipinjam:</p>
-              <ul className="space-y-1">
-                {success.items.map((it: CartItem, i: number) => (
-                  <li key={i} className="text-sm text-slate-700 dark:text-slate-300">
-                    • {it.item_name} ({it.item_type}) × {it.quantity}
-                  </li>
-                ))}
-              </ul>
+            <div className="mt-2 flex justify-between gap-4">
+              <span className="text-slate-500 dark:text-slate-400">Status</span>
+              <span className="font-semibold text-amber-600 dark:text-amber-400">Menunggu Persetujuan</span>
             </div>
           </div>
-          <button onClick={() => setSuccess(null)} className="btn-primary mt-6">
+          <button
+            onClick={() => setSuccess(null)}
+            className="btn-primary mt-6"
+          >
             <Plus className="h-4 w-4" />
             Buat Pengajuan Lain
           </button>
@@ -335,293 +333,304 @@ export default function BorrowPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Pengajuan Peminjaman</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Pilih barang atau fasilitas yang ingin dipinjam, lalu isi formulir pengajuan.
+        <div className="mb-2 flex items-center gap-2">
+          <ClipboardList className="h-6 w-6 text-brand-600" />
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Pengajuan Peminjaman</h1>
+        </div>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Pilih barang atau fasilitas, lalu isi formulir peminjam.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-5">
-        {/* Left: Item Selection */}
+        {/* Left: selection */}
         <div className="lg:col-span-3">
-          <div className="card">
-            {/* Tabs */}
-            <div className="mb-4 flex gap-2">
-              <button
-                onClick={() => setTab('barang')}
-                className={cn(
-                  'flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition',
-                  tab === 'barang'
-                    ? 'bg-brand-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
-                )}
-              >
-                <Package className="h-4 w-4" />
-                Barang
-              </button>
-              <button
-                onClick={() => setTab('fasilitas')}
-                className={cn(
-                  'flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition',
-                  tab === 'fasilitas'
-                    ? 'bg-brand-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
-                )}
-              >
-                <Building2 className="h-4 w-4" />
-                Fasilitas
-              </button>
-            </div>
-
-            {/* Search */}
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                className="input pl-10"
-                placeholder={`Cari ${tab === 'barang' ? 'barang' : 'fasilitas'}...`}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            {/* Lainnya... Card */}
+          {/* Tabs */}
+          <div className="mb-4 flex gap-2">
             <button
-              onClick={() => setShowCustom((s) => !s)}
-              className="mb-4 flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-brand-300 bg-brand-50/50 p-3 text-left transition hover:bg-brand-50 dark:border-brand-700 dark:bg-brand-900/20 dark:hover:bg-brand-900/30"
+              onClick={() => setTab('barang')}
+              className={cn(
+                'flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                tab === 'barang'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-white text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700',
+              )}
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-600 text-white">
-                <Plus className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="font-semibold text-brand-700 dark:text-brand-300">Lainnya...</p>
-                <p className="text-xs text-brand-600/70 dark:text-brand-400/70">
-                  Masukkan nama barang/fasilitas secara manual
-                </p>
-              </div>
+              <Package className="h-4 w-4" />
+              Barang
             </button>
+            <button
+              onClick={() => setTab('fasilitas')}
+              className={cn(
+                'flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                tab === 'fasilitas'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-white text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700',
+              )}
+            >
+              <Building2 className="h-4 w-4" />
+              Fasilitas
+            </button>
+          </div>
 
-            {/* Custom Item Form */}
-            {showCustom && (
-              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                <label className="label">Nama {tab === 'barang' ? 'Barang' : 'Fasilitas'}</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder={`Ketik nama ${tab === 'barang' ? 'barang' : 'fasilitas'}...`}
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomItem(); } }}
-                  />
-                  <button onClick={addCustomItem} className="btn-primary shrink-0">
-                    <Plus className="h-4 w-4" />
-                    Tambah
-                  </button>
-                  <button onClick={() => { setShowCustom(false); setCustomName(''); }} className="btn-secondary shrink-0">
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+          {/* Search */}
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              className="input pl-10"
+              placeholder={tab === 'barang' ? 'Cari barang...' : 'Cari fasilitas...'}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {/* Lainnya card */}
+          <button
+            onClick={() => setLainnyaOpen((o) => !o)}
+            className={cn(
+              'mb-4 flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/50 px-4 py-3 text-left transition hover:border-brand-500 hover:bg-brand-50 dark:border-brand-700 dark:bg-brand-900/20 dark:hover:bg-brand-900/30',
             )}
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white">
+              <Plus className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-brand-700 dark:text-brand-300">Lainnya...</p>
+              <p className="text-xs text-brand-600/70 dark:text-brand-400/70">
+                Pilih jika barang/fasilitas tidak ada di daftar
+              </p>
+            </div>
+          </button>
 
-            {/* Item Grid */}
-            {loading ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+          {lainnyaOpen && (
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+              <label className="label">Nama {tab === 'barang' ? 'Barang' : 'Fasilitas'}</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder={`Ketik nama ${tab === 'barang' ? 'barang' : 'fasilitas'}...`}
+                  value={lainnyaName}
+                  onChange={(e) => setLainnyaName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addLainnya();
+                    }
+                  }}
+                />
+                <button onClick={addLainnya} className="btn-primary">
+                  <Plus className="h-4 w-4" />
+                  Tambah
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Grid */}
+          {loading ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="card animate-pulse">
+                  <div className="mb-3 h-24 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="mb-2 h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-4 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
+                </div>
+              ))}
+            </div>
+          ) : tab === 'barang' ? (
+            filteredInventory.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-400">Tidak ada barang tersedia.</p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {filteredInventory.map((it) => (
+                  <div key={it.id} className="card flex items-center gap-3">
+                    <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+                      <img
+                        src={it.image_url || FALLBACK_INV}
+                        alt={it.name}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_INV; }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="truncate text-sm font-bold text-slate-900 dark:text-white">{it.name}</h3>
+                      {it.categories?.name && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{it.categories.name}</p>
+                      )}
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                        Tersedia: {it.available_quantity ?? 0}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() =>
+                        addToCart({
+                          key: `inv-${it.id}`,
+                          inventory_id: it.id,
+                          facility_id: null,
+                          item_type: 'barang',
+                          item_name: it.name,
+                          quantity: 1,
+                        })
+                      }
+                      className="rounded-lg bg-brand-600 p-2 text-white hover:bg-brand-700"
+                      aria-label="Tambah ke keranjang"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
-            ) : tab === 'barang' ? (
-              filteredInventory.length === 0 ? (
-                <p className="py-8 text-center text-sm text-slate-400">Tidak ada barang tersedia.</p>
-              ) : (
-                <div className="grid max-h-[500px] gap-3 overflow-y-auto sm:grid-cols-2">
-                  {filteredInventory.map((item) => {
-                    const key = `inv-${item.id}`;
-                    const inCart = cart.find((c) => c.key === key);
-                    return (
-                      <div key={item.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
-                          <img
-                            src={item.image_url || pexelsFallback(item.name)}
-                            alt={item.name}
-                            className="h-full w-full object-cover"
-                            onError={(e) => { (e.target as HTMLImageElement).src = pexelsFallback(item.name); }}
-                          />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-slate-900 dark:text-white">{item.name}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            Tersedia: {item.available_quantity}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => addToCart({
-                            key,
-                            inventory_id: item.id,
-                            facility_id: null,
-                            item_type: 'barang',
-                            item_name: item.name,
-                            quantity: 1,
-                            maxQty: item.available_quantity,
-                            isCustom: false,
-                          })}
-                          className="btn-primary shrink-0 px-3 py-1.5 text-xs"
-                        >
-                          {inCart ? <Plus className="h-3.5 w-3.5" /> : 'Tambah'}
-                        </button>
-                      </div>
-                    );
-                  })}
+            )
+          ) : filteredFacilities.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">Tidak ada fasilitas tersedia.</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {filteredFacilities.map((f) => (
+                <div key={f.id} className="card flex items-center gap-3">
+                  <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+                    <img
+                      src={f.image_url || FALLBACK_FAC}
+                      alt={f.name}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_FAC; }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="truncate text-sm font-bold text-slate-900 dark:text-white">{f.name}</h3>
+                    {f.location && (
+                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">{f.location}</p>
+                    )}
+                    {f.capacity != null && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">Kapasitas: {f.capacity}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() =>
+                      addToCart({
+                        key: `fac-${f.id}`,
+                        inventory_id: null,
+                        facility_id: f.id,
+                        item_type: 'fasilitas',
+                        item_name: f.name,
+                        quantity: 1,
+                      })
+                    }
+                    className="rounded-lg bg-brand-600 p-2 text-white hover:bg-brand-700"
+                    aria-label="Tambah ke keranjang"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
                 </div>
-              )
-            ) : filteredFacilities.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-400">Tidak ada fasilitas tersedia.</p>
-            ) : (
-              <div className="grid max-h-[500px] gap-3 overflow-y-auto sm:grid-cols-2">
-                {filteredFacilities.map((f) => {
-                  const key = `fac-${f.id}`;
-                  const inCart = cart.find((c) => c.key === key);
-                  return (
-                    <div key={f.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
-                        <img
-                          src={f.image_url || pexelsFallback(f.name)}
-                          alt={f.name}
-                          className="h-full w-full object-cover"
-                          onError={(e) => { (e.target as HTMLImageElement).src = pexelsFallback(f.name); }}
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-slate-900 dark:text-white">{f.name}</p>
-                        {f.location && (
-                          <p className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                            <MapPin className="h-3 w-3" />
-                            {f.location}
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => addToCart({
-                          key,
-                          inventory_id: null,
-                          facility_id: f.id,
-                          item_type: 'fasilitas',
-                          item_name: f.name,
-                          quantity: 1,
-                          maxQty: 1,
-                          isCustom: false,
-                        })}
-                        disabled={!!inCart}
-                        className="btn-primary shrink-0 px-3 py-1.5 text-xs"
-                      >
-                        {inCart ? '✓' : 'Tambah'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Right: Cart + Form */}
+        {/* Right: cart + form */}
         <div className="lg:col-span-2">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             {/* Cart */}
             <div className="card">
-              <div className="mb-3 flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5 text-brand-600 dark:text-brand-400" />
-                <h2 className="font-semibold text-slate-900 dark:text-white">Keranjang ({cart.length})</h2>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
+                  <ClipboardList className="h-5 w-5 text-brand-600" />
+                  Keranjang ({cart.length})
+                </h2>
               </div>
               {cart.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-400">
-                  {errors.cart ? <span className="text-red-500">{errors.cart}</span> : 'Keranjang kosong. Pilih item di sebelah kiri.'}
-                </p>
+                <p className="py-4 text-center text-sm text-slate-400">Keranjang kosong. Pilih item di sebelah kiri.</p>
               ) : (
-                <div className="space-y-2">
+                <ul className="space-y-2">
                   {cart.map((c) => (
-                    <div key={c.key} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2 dark:border-slate-700">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{c.item_name}</p>
-                        <p className="text-xs text-slate-400">
-                          {c.isCustom ? 'Custom' : c.item_type === 'barang' ? 'Barang' : 'Fasilitas'}
-                        </p>
-                      </div>
+                    <li
+                      key={c.key}
+                      className="flex items-center gap-2 rounded-xl border border-slate-100 p-2 dark:border-slate-800"
+                    >
+                      <span className={cn('rounded-lg px-2 py-0.5 text-xs font-medium', c.item_type === 'barang' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300')}>
+                        {c.item_type === 'barang' ? 'Barang' : 'Fasilitas'}
+                      </span>
+                      <span className="flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-200">
+                        {c.item_name}
+                        {!c.inventory_id && !c.facility_id && (
+                          <span className="ml-1 text-xs text-slate-400">(lainnya)</span>
+                        )}
+                      </span>
                       {c.item_type === 'barang' && (
                         <div className="flex items-center gap-1">
-                          <button type="button" onClick={() => updateQty(c.key, -1)} className="rounded-lg bg-slate-100 p-1 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">
+                          <button type="button" onClick={() => changeQty(c.key, -1)} className="rounded-md bg-slate-100 p-1 dark:bg-slate-800">
                             <Minus className="h-3.5 w-3.5" />
                           </button>
-                          <span className="w-8 text-center text-sm font-medium text-slate-900 dark:text-white">{c.quantity}</span>
-                          <button type="button" onClick={() => updateQty(c.key, 1)} className="rounded-lg bg-slate-100 p-1 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">
+                          <span className="w-6 text-center text-sm font-semibold">{c.quantity}</span>
+                          <button type="button" onClick={() => changeQty(c.key, 1)} className="rounded-md bg-slate-100 p-1 dark:bg-slate-800">
                             <Plus className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       )}
-                      <button type="button" onClick={() => removeFromCart(c.key)} className="rounded-lg p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">
-                        <Trash2 className="h-4 w-4" />
+                      <button type="button" onClick={() => removeFromCart(c.key)} className="rounded-md p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">
+                        <X className="h-4 w-4" />
                       </button>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </div>
 
-            {/* Borrower Info */}
+            {/* Borrower info */}
             <div className="card">
-              <h2 className="mb-3 font-semibold text-slate-900 dark:text-white">Data Peminjam</h2>
-              <div className="grid gap-3">
+              <h2 className="mb-4 text-base font-bold text-slate-900 dark:text-white">Data Peminjam</h2>
+              <div className="grid gap-4">
                 <div>
                   <label className="label">Nama Peminjam <span className="text-red-500">*</span></label>
-                  <input className={cn('input', errors.borrowerName && 'border-red-500')} value={borrowerName} onChange={(e) => setBorrowerName(e.target.value)} placeholder="Nama lengkap" />
+                  <input className="input" type="text" value={form.borrower_name} onChange={(e) => update('borrower_name', e.target.value)} required />
                 </div>
                 <div>
-                  <label className="label">Kelas/Unit <span className="text-red-500">*</span></label>
-                  <input className={cn('input', errors.borrowerClass && 'border-red-500')} value={borrowerClass} onChange={(e) => setBorrowerClass(e.target.value)} placeholder="Contoh: XII RPL 1" />
+                  <label className="label">Kelas / Unit <span className="text-red-500">*</span></label>
+                  <input className="input" type="text" value={form.borrower_class} onChange={(e) => update('borrower_class', e.target.value)} required />
                 </div>
                 <div>
-                  <label className="label">Email <span className="text-red-500">*</span></label>
-                  <input type="email" className={cn('input', errors.borrowerEmail && 'border-red-500')} value={borrowerEmail} onChange={(e) => setBorrowerEmail(e.target.value)} placeholder="email@sekolah.sch.id" />
+                  <label className="label"><Mail className="mr-1 inline h-3.5 w-3.5" />Email <span className="text-red-500">*</span></label>
+                  <input className="input" type="email" value={form.borrower_email} onChange={(e) => update('borrower_email', e.target.value)} required />
                 </div>
                 <div>
-                  <label className="label">No. Telepon (Opsional)</label>
-                  <input className="input" value={borrowerPhone} onChange={(e) => setBorrowerPhone(e.target.value)} placeholder="08xx-xxxx-xxxx" />
+                  <label className="label"><Phone className="mr-1 inline h-3.5 w-3.5" />No. Telepon <span className="text-slate-400 font-normal">(opsional)</span></label>
+                  <input className="input" type="text" value={form.borrower_phone} onChange={(e) => update('borrower_phone', e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label">Tanggal Pinjam <span className="text-red-500">*</span></label>
-                    <input type="date" className={cn('input', errors.borrowDate && 'border-red-500')} value={borrowDate} onChange={(e) => setBorrowDate(e.target.value)} />
+                    <label className="label"><Calendar className="mr-1 inline h-3.5 w-3.5" />Tanggal Pinjam <span className="text-red-500">*</span></label>
+                    <input className="input" type="date" value={form.borrow_date} onChange={(e) => update('borrow_date', e.target.value)} required />
                   </div>
                   <div>
-                    <label className="label">Tanggal Kembali <span className="text-red-500">*</span></label>
-                    <input type="date" className={cn('input', errors.returnDate && 'border-red-500')} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+                    <label className="label"><Calendar className="mr-1 inline h-3.5 w-3.5" />Tanggal Kembali <span className="text-red-500">*</span></label>
+                    <input className="input" type="date" value={form.return_date} onChange={(e) => update('return_date', e.target.value)} required />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label">Waktu Mulai</label>
-                    <input type="time" className={cn('input', errors.endTime && 'border-red-500')} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                    <label className="label"><Clock className="mr-1 inline h-3.5 w-3.5" />Waktu Mulai <span className="text-red-500">*</span></label>
+                    <input className="input" type="time" value={form.start_time} onChange={(e) => update('start_time', e.target.value)} required />
                   </div>
                   <div>
-                    <label className="label">Waktu Selesai</label>
-                    <input type="time" className={cn('input', errors.endTime && 'border-red-500')} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                    <label className="label"><Clock className="mr-1 inline h-3.5 w-3.5" />Waktu Selesai <span className="text-red-500">*</span></label>
+                    <input className="input" type="time" value={form.end_time} onChange={(e) => update('end_time', e.target.value)} required />
                   </div>
                 </div>
                 <div>
-                  <label className="label">Keperluan/Tujuan <span className="text-red-500">*</span></label>
-                  <textarea rows={2} className={cn('input resize-none', errors.purpose && 'border-red-500')} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="Jelaskan keperluan (min. 10 karakter)" />
-                  {errors.purpose && <p className="mt-1 text-xs text-red-500">{errors.purpose}</p>}
+                  <label className="label"><FileText className="mr-1 inline h-3.5 w-3.5" />Keperluan / Tujuan <span className="text-red-500">*</span></label>
+                  <textarea className="input min-h-[80px] resize-y" value={form.purpose} onChange={(e) => update('purpose', e.target.value)} placeholder="Min. 10 karakter" required />
                 </div>
                 <div>
-                  <label className="label">Catatan Tambahan (Opsional)</label>
-                  <textarea rows={2} className="input resize-none" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan tambahan..." />
+                  <label className="label">Catatan Tambahan <span className="text-slate-400 font-normal">(opsional)</span></label>
+                  <textarea className="input min-h-[60px] resize-y" value={form.notes} onChange={(e) => update('notes', e.target.value)} />
                 </div>
               </div>
             </div>
 
-            <button type="submit" className="btn-primary w-full" disabled={submitting}>
+            <button type="submit" className="btn-primary w-full" disabled={submitting || cart.length === 0}>
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />

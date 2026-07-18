@@ -32,7 +32,7 @@ interface NavItem {
   to: string;
   label: string;
   icon: typeof LayoutDashboard;
-  permission?: string;
+  permission: string;
 }
 
 const mainNav: NavItem[] = [
@@ -65,8 +65,8 @@ export default function AdminLayout() {
   const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
 
-  const visibleMain = mainNav.filter((n) => !n.permission || hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
-  const visibleSuper = superNav.filter((n) => !n.permission || hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
+  const visibleMain = mainNav.filter((n) => hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
+  const visibleSuper = superNav.filter((n) => hasPermission(n.permission.split(':')[0], n.permission.split(':')[1]));
 
   const handleSignOut = async () => {
     await signOut();
@@ -96,7 +96,6 @@ export default function AdminLayout() {
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
-      {/* Sidebar */}
       <aside
         className={cn(
           'fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-200 bg-white transition-transform dark:border-slate-800 dark:bg-slate-900 lg:translate-x-0',
@@ -142,7 +141,6 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      {/* Main */}
       <div className="flex flex-1 flex-col lg:pl-64">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
           <button onClick={() => setOpen(true)} className="lg:hidden">
