@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
+import { useEffect, useState } from 'react';
 import {
-  Boxes, Plus, Pencil, Trash2, X, Loader2, MapPin, Users, Building2,
+  Building2, Plus, Search, Pencil, Trash2, X, MapPin, Users, AlertCircle,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
+import { useAuth } from '../../context/AuthContext';
+import { showToast } from '../../components/Toast';
 
 interface Facility {
   id: string;
@@ -17,7 +18,6 @@ interface Facility {
   facility_type: string | null;
   category: string | null;
   department: string | null;
-  workflow_template_id: string | null;
   status: string | null;
   manager_name: string | null;
   manager_role: string | null;
@@ -47,197 +47,233 @@ const emptyForm: FormData = {
 
 export default function FacilitiesAdminPage() {
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission('facilities', 'create');
-  const canUpdate = hasPermission('facilities', 'update');
-  const canDelete = hasPermission('facilities', 'delete');
-
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Facility | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const fetchFacilities = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('facilities')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat data fasilitas', 'error');
-      setLoading(false);
-      return;
-    }
-    setFacilities((data as unknown as Facility[]) || []);
-    setLoading(false);
-  }, []);
+  const canCreate = hasPermission('facilities', 'create');
+  const canUpdate = hasPermission('facilities', 'update');
+  const canDelete = hasPermission('facilities', 'delete');
 
   useEffect(() => {
     fetchFacilities();
-  }, [fetchFacilities]);
+  }, []);
 
-  const openAdd = () => {
-    setEditing(null);
+  async function fetchFacilities() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('facilities')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setFacilities((data as unknown as Facility[]) ?? []);
+    } catch (err) {
+      console.error('Fetch error:', err);
+      showToast('Gagal memuat data fasilitas', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filtered = facilities.filter(
+    (f) =>
+      f.name.toLowerCase().includes(search.toLowerCase()) ||
+      (f.location ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (f.facility_type ?? '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  function openCreate() {
+    setEditingId(null);
     setForm(emptyForm);
     setModalOpen(true);
-  };
+  }
 
-  const openEdit = (facility: Facility) => {
-    setEditing(facility);
+  function openEdit(facility: Facility) {
+    setEditingId(facility.id);
     setForm({
       name: facility.name ?? '',
       description: facility.description ?? '',
       location: facility.location ?? '',
-      capacity: facility.capacity != null ? String(facility.capacity) : '',
+      capacity: String(facility.capacity ?? ''),
       image_url: facility.image_url ?? '',
       facility_type: facility.facility_type ?? '',
       category: facility.category ?? '',
       department: facility.department ?? '',
     });
     setModalOpen(true);
-  };
+  }
 
-  const handleSave = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name) {
+    if (!form.name.trim()) {
       showToast('Nama fasilitas wajib diisi', 'warning');
       return;
     }
     setSaving(true);
-    const payload = {
-      name: form.name,
-      description: form.description || null,
-      location: form.location || null,
-      capacity: form.capacity ? Number(form.capacity) : null,
-      image_url: form.image_url || null,
-      facility_type: form.facility_type || null,
-      category: form.category || null,
-      department: form.department || null,
-    };
-
     try {
-      if (editing) {
-        const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        location: form.location.trim() || null,
+        capacity: form.capacity ? Number(form.capacity) : null,
+        image_url: form.image_url.trim() || null,
+        facility_type: form.facility_type.trim() || null,
+        category: form.category.trim() || null,
+        department: form.department.trim() || null,
+      };
+
+      if (editingId) {
+        const { error } = await supabase.from('facilities').update(payload).eq('id', editingId);
         if (error) throw error;
-        showToast('Fasilitas diperbarui', 'success');
+        showToast('Fasilitas berhasil diperbarui', 'success');
       } else {
         const { error } = await supabase.from('facilities').insert(payload);
         if (error) throw error;
-        showToast('Fasilitas ditambahkan', 'success');
+        showToast('Fasilitas berhasil ditambahkan', 'success');
       }
       setModalOpen(false);
       await fetchFacilities();
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error('Save error:', err);
       showToast('Gagal menyimpan fasilitas', 'error');
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete() {
+    if (!deleteId) return;
     try {
-      const { error } = await supabase.from('facilities').delete().eq('id', id);
+      const { error } = await supabase.from('facilities').delete().eq('id', deleteId);
       if (error) throw error;
-      showToast('Fasilitas dihapus', 'success');
+      showToast('Fasilitas berhasil dihapus', 'success');
       setDeleteId(null);
       await fetchFacilities();
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error('Delete error:', err);
       showToast('Gagal menghapus fasilitas', 'error');
     }
-  };
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola ruangan dan fasilitas</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola data fasilitas dan ruangan</p>
         </div>
         {canCreate && (
           <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium text-sm shadow-md hover:shadow-lg transition-shadow"
           >
-            <Plus className="w-4 h-4" /> Tambah
+            <Plus className="w-4 h-4" /> Tambah Fasilitas
           </button>
         )}
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Cari fasilitas..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      {/* Card Grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-48 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 animate-pulse" />
+          ))}
         </div>
-      ) : facilities.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Boxes className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada fasilitas</p>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <Building2 className="w-12 h-12 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Tidak ada data fasilitas</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {facilities.map(facility => (
-            <div key={facility.id} className="card overflow-hidden group">
-              {facility.image_url ? (
-                <img
-                  src={facility.image_url}
-                  alt={facility.name}
-                  className="w-full h-40 object-cover"
-                />
-              ) : (
-                <div className="w-full h-40 bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/30 dark:to-cyan-900/30 flex items-center justify-center">
-                  <Building2 className="w-12 h-12 text-blue-300 dark:text-blue-600" />
-                </div>
-              )}
-              <div className="p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="font-semibold text-slate-900 dark:text-white">{facility.name}</h3>
-                  {facility.facility_type && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 whitespace-nowrap">
-                      {facility.facility_type}
-                    </span>
-                  )}
-                </div>
-                {facility.description && (
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{facility.description}</p>
+          {filtered.map((facility) => (
+            <div
+              key={facility.id}
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col"
+            >
+              {/* Image / Placeholder */}
+              <div className="h-32 bg-gradient-to-br from-blue-500 to-cyan-500 relative">
+                {facility.image_url ? (
+                  <img src={facility.image_url} alt={facility.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Building2 className="w-10 h-10 text-white/80" />
+                  </div>
                 )}
-                <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400 mt-3">
+                {facility.facility_type && (
+                  <span className="absolute top-2 left-2 px-2 py-1 rounded-lg bg-white/90 dark:bg-slate-800/90 text-xs font-medium text-slate-700 dark:text-slate-300">
+                    {facility.facility_type}
+                  </span>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="p-4 flex-1 flex flex-col">
+                <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-1">{facility.name}</h3>
+                {facility.description && (
+                  <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-3">{facility.description}</p>
+                )}
+
+                <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-300 mb-3">
                   {facility.location && (
-                    <span className="flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5" /> {facility.location}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-slate-400" />
+                      <span>{facility.location}</span>
+                    </div>
                   )}
                   {facility.capacity != null && (
-                    <span className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" /> {facility.capacity}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-slate-400" />
+                      <span>Kapasitas: {facility.capacity}</span>
+                    </div>
+                  )}
+                  {facility.department && (
+                    <div className="flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-slate-400" />
+                      <span>{facility.department}</span>
+                    </div>
                   )}
                 </div>
-                {facility.department && (
-                  <p className="text-xs text-slate-400 mt-2">Departemen: {facility.department}</p>
+
+                {(canUpdate || canDelete) && (
+                  <div className="flex items-center gap-2 mt-auto pt-3 border-t border-slate-100 dark:border-slate-700">
+                    {canUpdate && (
+                      <button
+                        onClick={() => openEdit(facility)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                      >
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() => setDeleteId(facility.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Hapus
+                      </button>
+                    )}
+                  </div>
                 )}
-                <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-200/50 dark:border-slate-700/50">
-                  {canUpdate && (
-                    <button
-                      onClick={() => openEdit(facility)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-sm font-medium transition-colors"
-                    >
-                      <Pencil className="w-3.5 h-3.5" /> Edit
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button
-                      onClick={() => setDeleteId(facility.id)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 text-sm font-medium transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Hapus
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           ))}
@@ -246,111 +282,125 @@ export default function FacilitiesAdminPage() {
 
       {/* Add/Edit Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
+                {editingId ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSave} className="p-5 space-y-4">
+
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
-                <label className="label">Nama Fasilitas</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nama Fasilitas *</label>
                 <input
                   type="text"
                   value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="input"
-                  required
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Masukkan nama fasilitas"
                 />
               </div>
+
               <div>
-                <label className="label">Deskripsi</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
                   rows={2}
-                  className="input"
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  placeholder="Deskripsi fasilitas"
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Lokasi</label>
-                  <input
-                    type="text"
-                    value={form.location}
-                    onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Kapasitas</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.capacity}
-                    onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
-                    className="input"
-                  />
-                </div>
-              </div>
+
               <div>
-                <label className="label">URL Gambar</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Lokasi</label>
                 <input
-                  type="url"
+                  type="text"
+                  value={form.location}
+                  onChange={(e) => setForm({ ...form, location: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Lokasi fasilitas"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Kapasitas</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.capacity}
+                  onChange={(e) => setForm({ ...form, capacity: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Jumlah kapasitas"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Gambar</label>
+                <input
+                  type="text"
                   value={form.image_url}
-                  onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))}
-                  className="input"
+                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="https://..."
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Tipe Fasilitas</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tipe Fasilitas</label>
                   <input
                     type="text"
                     value={form.facility_type}
-                    onChange={e => setForm(f => ({ ...f, facility_type: e.target.value }))}
-                    className="input"
+                    onChange={(e) => setForm({ ...form, facility_type: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Contoh: Ruang Kelas"
                   />
                 </div>
                 <div>
-                  <label className="label">Kategori</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Kategori</label>
                   <input
                     type="text"
                     value={form.category}
-                    onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Departemen</label>
-                  <input
-                    type="text"
-                    value={form.department}
-                    onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
-                    className="input"
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Kategori"
                   />
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-2">
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Departemen</label>
+                <input
+                  type="text"
+                  value={form.department}
+                  onChange={(e) => setForm({ ...form, department: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Departemen"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md hover:shadow-lg disabled:opacity-50 transition-all"
                 >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Boxes className="w-4 h-4" />}
-                  {editing ? 'Simpan' : 'Tambah'}
+                  {saving ? 'Menyimpan...' : editingId ? 'Perbarui' : 'Tambah'}
                 </button>
               </div>
             </form>
@@ -358,29 +408,29 @@ export default function FacilitiesAdminPage() {
         </div>
       )}
 
-      {/* Delete Confirmation */}
+      {/* Delete Confirm */}
       {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-md p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setDeleteId(null)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/30 flex items-center justify-center">
-                <Trash2 className="w-5 h-5 text-red-500" />
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Fasilitas?</h3>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Fasilitas?</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Tindakan ini tidak dapat dibatalkan.</p>
+              </div>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-              Tindakan ini tidak dapat dibatalkan. Yakin ingin menghapus fasilitas ini?
-            </p>
-            <div className="flex justify-end gap-3">
+            <div className="flex items-center justify-end gap-3">
               <button
                 onClick={() => setDeleteId(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
                 Batal
               </button>
               <button
-                onClick={() => handleDelete(deleteId)}
-                className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
+                onClick={handleDelete}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
               >
                 Hapus
               </button>

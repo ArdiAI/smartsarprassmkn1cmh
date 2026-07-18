@@ -104,7 +104,6 @@ export default function BorrowingsAdminPage() {
   const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
 
   const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
-
   const adminUser: AdminUser | null = adminProfile;
 
   const canApprove = hasPermission('borrowings', 'approve');
@@ -125,10 +124,8 @@ export default function BorrowingsAdminPage() {
     }
     const all = (data as unknown as Borrowing[]) || [];
     setBorrowings(all);
-
     const filtered = await filterBorrowingsForAdmin(all, adminUser);
     setFilteredBorrowings(filtered);
-
     const templateIds = [...new Set(all.map(b => b.workflow_template_id).filter(Boolean) as string[])];
     for (const tid of templateIds) {
       if (!workflowCacheRef.current[tid]) {
@@ -136,7 +133,6 @@ export default function BorrowingsAdminPage() {
         if (tmpl) workflowCacheRef.current[tid] = tmpl;
       }
     }
-
     setLoading(false);
   }, [adminUser]);
 

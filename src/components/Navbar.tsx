@@ -38,51 +38,32 @@ export default function Navbar() {
           </Link>
           <div className="hidden md:flex items-center gap-1">
             {navLinks.map(link => (
-              <Link
-                key={link.to}
-                to={link.to}
-                className="px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors"
-              >
+              <Link key={link.to} to={link.to} className="px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors">
                 {link.label}
               </Link>
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={toggle}
-              className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
+            <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
               {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
             </button>
             {user ? (
               <div className="flex items-center gap-2">
                 {isAdmin && (
-                  <Link
-                    to="/admin"
-                    className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
-                  >
+                  <Link to="/admin" className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
                     <LayoutDashboard className="w-4 h-4" /> Admin
                   </Link>
                 )}
-                <button
-                  onClick={handleSignOut}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                >
+                <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
                   <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Keluar</span>
                 </button>
               </div>
             ) : (
-              <Link
-                to="/auth"
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600"
-              >
+              <Link to="/auth" className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-500 hover:bg-blue-600">
                 <User className="w-4 h-4" /> Masuk
               </Link>
             )}
-            <button
-              onClick={() => setIsOpen(!isOpen)}
-              className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400"
-            >
+            <button onClick={() => setIsOpen(!isOpen)} className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400">
               {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
@@ -90,21 +71,12 @@ export default function Navbar() {
         {isOpen && (
           <div className="md:hidden py-3 border-t border-slate-200 dark:border-slate-700">
             {navLinks.map(link => (
-              <Link
-                key={link.to}
-                to={link.to}
-                onClick={() => setIsOpen(false)}
-                className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
-              >
+              <Link key={link.to} to={link.to} onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
                 {link.label}
               </Link>
             ))}
             {isAdmin && (
-              <Link
-                to="/admin"
-                onClick={() => setIsOpen(false)}
-                className="block px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
-              >
+              <Link to="/admin" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800">
                 Dashboard Admin
               </Link>
             )}

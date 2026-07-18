@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
+import { useEffect, useState } from 'react';
 import {
-  MessageSquare, Loader2, Mail, User, Tag, X, Send, Clock,
+  MessageSquare, Search, X, Mail, Save, Inbox, CheckCircle, Clock, AlertCircle,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
+import { useAuth } from '../../context/AuthContext';
+import { showToast } from '../../components/Toast';
 
 interface Aspirasi {
   id: string;
@@ -14,198 +14,230 @@ interface Aspirasi {
   email: string | null;
   kategori: string | null;
   judul: string;
-  isi: string | null;
-  status: string;
+  isi: string;
+  status: string | null;
   tanggapan: string | null;
   created_at: string;
   updated_at: string | null;
 }
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+const statusConfig: Record<string, { label: string; classes: string; icon: typeof Clock }> = {
+  baru: { label: 'Baru', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Inbox },
+  diproses: { label: 'Diproses', classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Clock },
+  selesai: { label: 'Selesai', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle },
 };
-
-const statusOptions = [
-  { value: 'pending', label: 'Menunggu' },
-  { value: 'in_progress', label: 'Diproses' },
-  { value: 'resolved', label: 'Selesai' },
-  { value: 'rejected', label: 'Ditolak' },
-];
 
 export default function AspirasiAdminPage() {
   const { hasPermission } = useAuth();
-  const canUpdate = hasPermission('aspirasi', 'update');
-
-  const [aspirasiList, setAspirasiList] = useState<Aspirasi[]>([]);
+  const [aspirasi, setAspirasi] = useState<Aspirasi[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [replyId, setReplyId] = useState<string | null>(null);
+  const [replyModal, setReplyModal] = useState<Aspirasi | null>(null);
   const [tanggapan, setTanggapan] = useState('');
+  const [newStatus, setNewStatus] = useState('baru');
   const [saving, setSaving] = useState(false);
-  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
 
-  const fetchAspirasi = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('aspirasi')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat aspirasi', 'error');
-      setLoading(false);
-      return;
-    }
-    setAspirasiList((data as unknown as Aspirasi[]) || []);
-    setLoading(false);
-  }, []);
+  const canUpdate = hasPermission('aspirasi', 'update');
 
   useEffect(() => {
     fetchAspirasi();
-  }, [fetchAspirasi]);
+  }, []);
 
-  const filtered = aspirasiList.filter(a => {
-    if (statusFilter !== 'all' && a.status !== statusFilter) return false;
-    return true;
+  async function fetchAspirasi() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('aspirasi')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setAspirasi((data as unknown as Aspirasi[]) ?? []);
+    } catch (err) {
+      console.error('Fetch error:', err);
+      showToast('Gagal memuat aspirasi', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filtered = aspirasi.filter((a) => {
+    const matchSearch =
+      a.nama.toLowerCase().includes(search.toLowerCase()) ||
+      a.judul.toLowerCase().includes(search.toLowerCase()) ||
+      (a.kategori ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === 'all' || a.status === statusFilter;
+    return matchSearch && matchStatus;
   });
 
-  const openReply = (item: Aspirasi) => {
-    setReplyId(item.id);
-    setTanggapan(item.tanggapan ?? '');
-  };
+  function openReply(a: Aspirasi) {
+    setReplyModal(a);
+    setTanggapan(a.tanggapan ?? '');
+    setNewStatus(a.status ?? 'baru');
+  }
 
-  const handleReply = async (item: Aspirasi) => {
+  async function handleSave() {
+    if (!replyModal) return;
     setSaving(true);
     try {
       const { error } = await supabase
         .from('aspirasi')
         .update({
-          tanggapan: tanggapan || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', item.id);
-      if (error) throw error;
-      showToast('Tanggapan dikirim', 'success');
-      setReplyId(null);
-      await fetchAspirasi();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal mengirim tanggapan', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleStatusChange = async (item: Aspirasi, newStatus: string) => {
-    setStatusUpdating(item.id);
-    try {
-      const { error } = await supabase
-        .from('aspirasi')
-        .update({
+          tanggapan: tanggapan.trim() || null,
           status: newStatus,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', item.id);
+        .eq('id', replyModal.id);
       if (error) throw error;
-      showToast('Status diperbarui', 'success');
+      showToast('Tanggapan berhasil disimpan', 'success');
+      setReplyModal(null);
       await fetchAspirasi();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal memperbarui status', 'error');
+    } catch (err) {
+      console.error('Save error:', err);
+      showToast('Gagal menyimpan tanggapan', 'error');
     } finally {
-      setStatusUpdating(null);
+      setSaving(false);
     }
-  };
+  }
 
-  const replyingItem = aspirasiList.find(a => a.id === replyId);
+  async function quickStatus(a: Aspirasi, status: string) {
+    try {
+      const { error } = await supabase
+        .from('aspirasi')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', a.id);
+      if (error) throw error;
+      showToast('Status berhasil diperbarui', 'success');
+      await fetchAspirasi();
+    } catch (err) {
+      console.error('Status error:', err);
+      showToast('Gagal memperbarui status', 'error');
+    }
+  }
+
+  function formatDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aspirasi</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola aspirasi dan saran dari pengguna</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola aspirasi dan masukan dari pengguna</p>
       </div>
 
+      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input sm:w-48">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Cari aspirasi..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
           <option value="all">Semua Status</option>
-          <option value="pending">Menunggu</option>
-          <option value="in_progress">Diproses</option>
-          <option value="resolved">Selesai</option>
-          <option value="rejected">Ditolak</option>
+          <option value="baru">Baru</option>
+          <option value="diproses">Diproses</option>
+          <option value="selesai">Selesai</option>
         </select>
       </div>
 
+      {/* List */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <div className="space-y-3">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-28 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 animate-pulse" />
+          ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <MessageSquare className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada aspirasi</p>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <MessageSquare className="w-12 h-12 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Tidak ada aspirasi</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filtered.map(item => {
-            const sc = statusConfig[item.status] || statusConfig.pending;
+        <div className="space-y-3">
+          {filtered.map((a) => {
+            const stat = statusConfig[a.status ?? 'baru'] ?? statusConfig.baru;
+            const StatusIcon = stat.icon;
             return (
-              <div key={item.id} className="card p-5">
+              <div
+                key={a.id}
+                className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4"
+              >
                 <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{item.judul}</h3>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
-                    </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{item.isi ?? '-'}</p>
-                    <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400 mt-3 flex-wrap">
-                      <span className="flex items-center gap-1.5">
-                        <User className="w-3.5 h-3.5" /> {item.nama}
-                      </span>
-                      {item.kelas_unit && (
-                        <span className="flex items-center gap-1.5">
-                          <Tag className="w-3.5 h-3.5" /> {item.kelas_unit}
-                        </span>
-                      )}
-                      {item.email && (
-                        <span className="flex items-center gap-1.5">
-                          <Mail className="w-3.5 h-3.5" /> {item.email}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5" /> {new Date(item.created_at).toLocaleDateString('id-ID')}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{a.judul}</h3>
+                      <span className={cn('px-2.5 py-0.5 rounded-md text-xs font-medium flex items-center gap-1', stat.classes)}>
+                        <StatusIcon className="w-3 h-3" /> {stat.label}
                       </span>
                     </div>
-                    {item.tanggapan && (
-                      <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50">
-                        <p className="text-sm text-slate-600 dark:text-slate-300">
-                          <span className="font-medium text-blue-600 dark:text-blue-400">Tanggapan: </span>{item.tanggapan}
-                        </p>
+                    <div className="flex items-center gap-3 flex-wrap text-xs text-slate-500 dark:text-slate-400 mb-2">
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{a.nama}</span>
+                      {a.kelas_unit && <span>({a.kelas_unit})</span>}
+                      {a.kategori && (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                          {a.kategori}
+                        </span>
+                      )}
+                      {a.email && (
+                        <span className="flex items-center gap-1">
+                          <Mail className="w-3.5 h-3.5" /> {a.email}
+                        </span>
+                      )}
+                      <span>{formatDate(a.created_at)}</span>
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{a.isi}</p>
+
+                    {a.tanggapan && (
+                      <div className="mt-3 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                        <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-0.5">Tanggapan:</p>
+                        <p className="text-sm text-slate-700 dark:text-slate-300">{a.tanggapan}</p>
                       </div>
                     )}
                   </div>
+
                   {canUpdate && (
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <select
-                        value={item.status}
-                        onChange={e => handleStatusChange(item, e.target.value)}
-                        disabled={statusUpdating === item.id}
-                        className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
-                      >
-                        {statusOptions.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
+                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
                       <button
-                        onClick={() => openReply(item)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+                        onClick={() => openReply(a)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                       >
-                        <MessageSquare className="w-4 h-4" /> Tanggapi
+                        <MessageSquare className="w-3.5 h-3.5" /> Tanggapi
                       </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => quickStatus(a, 'diproses')}
+                          className={cn(
+                            'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                            a.status === 'diproses'
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-blue-100 dark:hover:bg-blue-900/20'
+                          )}
+                        >
+                          Proses
+                        </button>
+                        <button
+                          onClick={() => quickStatus(a, 'selesai')}
+                          className={cn(
+                            'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                            a.status === 'selesai'
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/20'
+                          )}
+                        >
+                          Selesai
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -216,46 +248,71 @@ export default function AspirasiAdminPage() {
       )}
 
       {/* Reply Modal */}
-      {replyingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-lg">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+      {replyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setReplyModal(null)}>
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tanggapi Aspirasi</h2>
-              <button onClick={() => setReplyId(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setReplyModal(null)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             <div className="p-5 space-y-4">
-              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30">
-                <p className="font-medium text-slate-900 dark:text-white text-sm">{replyingItem.judul}</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{replyingItem.isi ?? '-'}</p>
-                <p className="text-xs text-slate-400 mt-2">— {replyingItem.nama}</p>
+              {/* Aspirasi Info */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-700/30 border border-slate-200 dark:border-slate-700">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">{replyModal.judul}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {replyModal.nama}
+                  {replyModal.kelas_unit ? ` (${replyModal.kelas_unit})` : ''}
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{replyModal.isi}</p>
               </div>
+
+              {/* Status */}
               <div>
-                <label className="label">Tanggapan</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Status</label>
+                <select
+                  value={newStatus}
+                  onChange={(e) => setNewStatus(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="baru">Baru</option>
+                  <option value="diproses">Diproses</option>
+                  <option value="selesai">Selesai</option>
+                </select>
+              </div>
+
+              {/* Tanggapan */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tanggapan</label>
                 <textarea
                   value={tanggapan}
-                  onChange={e => setTanggapan(e.target.value)}
+                  onChange={(e) => setTanggapan(e.target.value)}
                   rows={5}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   placeholder="Tulis tanggapan untuk aspirasi ini..."
-                  className="input"
-                  autoFocus
                 />
               </div>
-              <div className="flex justify-end gap-3 pt-2">
+
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
-                  onClick={() => setReplyId(null)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  type="button"
+                  onClick={() => setReplyModal(null)}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                 >
                   Batal
                 </button>
                 <button
-                  onClick={() => handleReply(replyingItem)}
+                  onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md hover:shadow-lg disabled:opacity-50 transition-all"
                 >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  Kirim Tanggapan
+                  <Save className="w-4 h-4" />
+                  {saving ? 'Menyimpan...' : 'Simpan'}
                 </button>
               </div>
             </div>

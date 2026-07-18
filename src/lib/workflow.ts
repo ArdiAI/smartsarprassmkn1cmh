@@ -45,11 +45,7 @@ export interface AdminUser {
 }
 
 export async function fetchWorkflowTemplate(templateId: string): Promise<WorkflowTemplate | null> {
-  const { data: template } = await supabase
-    .from('workflow_templates')
-    .select('*')
-    .eq('id', templateId)
-    .maybeSingle();
+  const { data: template } = await supabase.from('workflow_templates').select('*').eq('id', templateId).maybeSingle();
   if (!template) return null;
   const { data: steps } = await supabase
     .from('workflow_steps')
@@ -87,33 +83,17 @@ export function isLastActionableStep(steps: WorkflowStep[], currentStep: number)
 }
 
 export async function fetchRoleById(roleId: string): Promise<Role | null> {
-  const { data, error } = await supabase
-    .from('roles')
-    .select('*')
-    .eq('id', roleId)
-    .maybeSingle();
+  const { data, error } = await supabase.from('roles').select('*').eq('id', roleId).maybeSingle();
   if (error || !data) return null;
   return data as unknown as Role;
 }
 
 export async function fetchRoleByName(name: string): Promise<Role | null> {
-  const { data, error } = await supabase
-    .from('roles')
-    .select('*')
-    .eq('name', name)
-    .eq('is_active', true)
-    .maybeSingle();
+  const { data, error } = await supabase.from('roles').select('*').eq('name', name).eq('is_active', true).maybeSingle();
   if (error || !data) return null;
   return data as unknown as Role;
 }
 
-/**
- * Resolve the approver for a borrowing item based on its type:
- *  - "barang"  -> the PJ Barang assigned as manager_id on the inventory row
- *  - "fasilitas" -> the PJ Fasilitas assigned as manager_name on the facility row
- * Falls back to the workflow step's role-based approver when no specific
- * manager is assigned, preserving the existing approval workflow.
- */
 export async function resolveItemApprover(
   item: { item_type: string; inventory_id: string | null; facility_id: string | null },
 ): Promise<{ approverEmail: string | null; approverName: string | null; roleName: string | null; source: string }> {
@@ -125,12 +105,7 @@ export async function resolveItemApprover(
       .maybeSingle();
     const manager = (inv as any)?.admin_users;
     if (manager && manager.email) {
-      return {
-        approverEmail: manager.email,
-        approverName: manager.name,
-        roleName: manager.role || 'PJ Barang',
-        source: 'inventory.manager_id',
-      };
+      return { approverEmail: manager.email, approverName: manager.name, roleName: manager.role || 'PJ Barang', source: 'inventory.manager_id' };
     }
   }
 
@@ -151,12 +126,7 @@ export async function resolveItemApprover(
         .limit(1)
         .maybeSingle();
       if (adminByManager) approverEmail = (adminByManager as any).email;
-      return {
-        approverEmail,
-        approverName: facData.manager_name,
-        roleName: facData.manager_role || 'PJ Fasilitas',
-        source: 'facilities.manager_name',
-      };
+      return { approverEmail, approverName: facData.manager_name, roleName: facData.manager_role || 'PJ Fasilitas', source: 'facilities.manager_name' };
     }
   }
 
@@ -169,10 +139,8 @@ export async function fetchNextApprover(
 ): Promise<{ step: WorkflowStep | null; role: Role | null; approver: RoleApproverEmail | null }> {
   const nextStep = getNextActionableStep(steps, currentStep);
   if (!nextStep) return { step: null, role: null, approver: null };
-
   const role = await fetchRoleById(nextStep.role_id);
   let approver: RoleApproverEmail | null = null;
-
   if (role) {
     const { data } = await supabase
       .from('role_approver_emails')
@@ -183,7 +151,6 @@ export async function fetchNextApprover(
       .maybeSingle();
     if (data) approver = data as unknown as RoleApproverEmail;
   }
-
   return { step: nextStep, role, approver };
 }
 
@@ -208,13 +175,9 @@ export async function notifyNextApprover(payload: {
   }
 }
 
-export async function filterBorrowingsForAdmin(
-  borrowings: any[],
-  adminUser: AdminUser | null,
-): Promise<any[]> {
+export async function filterBorrowingsForAdmin(borrowings: any[], adminUser: AdminUser | null): Promise<any[]> {
   if (!adminUser) return [];
   if (adminUser.role === 'superadmin') return borrowings;
-
   const result: any[] = [];
   for (const b of borrowings) {
     const items = b.borrowing_items || [];
@@ -222,7 +185,6 @@ export async function filterBorrowingsForAdmin(
     if (!templateId) continue;
     const template = await fetchWorkflowTemplate(templateId);
     if (!template) continue;
-
     let include = false;
     for (const item of items) {
       const currentStepNum = item.current_step ?? 1;
@@ -230,18 +192,12 @@ export async function filterBorrowingsForAdmin(
       if (!currentStep) continue;
       const stepRole = await fetchRoleById(currentStep.role_id);
       if (!stepRole) continue;
-
       if (adminUser.role === currentStep.role_id || adminUser.role === stepRole.name) {
         include = true;
         break;
       }
-
       if (item.item_type === 'barang' && item.inventory_id) {
-        const { data: inv } = await supabase
-          .from('inventory')
-          .select('manager_id')
-          .eq('id', item.inventory_id)
-          .maybeSingle();
+        const { data: inv } = await supabase.from('inventory').select('manager_id').eq('id', item.inventory_id).maybeSingle();
         if (inv && (inv as any).manager_id === adminUser.id) {
           include = true;
           break;

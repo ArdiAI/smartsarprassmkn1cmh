@@ -150,10 +150,7 @@ export default function AdminLayout() {
             <Menu className="w-5 h-5" />
           </button>
           <h1 className="text-lg font-semibold text-slate-900 dark:text-white hidden md:block">Admin Panel</h1>
-          <button
-            onClick={toggle}
-            className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
+          <button onClick={toggle} className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
             {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
           </button>
         </header>

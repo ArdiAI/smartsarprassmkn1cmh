@@ -1,21 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Users,
-  Target,
-  Eye,
-  Zap,
-  Shield,
-  BarChart3,
-  Smartphone,
-  Mail,
-  Phone,
-  Award,
+  Info, Target, Eye, Users, Mail, Phone, Zap, ShieldCheck,
+  BarChart3, ClipboardList, Building2, Package, Bell,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
-import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
 
 interface TeamMember {
@@ -29,57 +20,29 @@ interface TeamMember {
   phone: string | null;
   order: number;
   is_active: boolean;
+  created_at: string;
 }
 
 interface AboutSettings {
   id: string;
   section: string;
-  content: any;
+  content: Record<string, any>;
+  updated_at: string;
 }
 
 const features = [
-  {
-    icon: Zap,
-    title: 'Peminjaman Cepat',
-    description: 'Ajukan peminjaman barang dan fasilitas dengan mudah dalam hitungan menit.',
-    color: 'from-blue-500 to-blue-600',
-  },
-  {
-    icon: BarChart3,
-    title: 'Pelaporan Otomatis',
-    description: 'Sistem pelaporan kerusakan terintegrasi dengan notifikasi otomatis.',
-    color: 'from-cyan-500 to-cyan-600',
-  },
-  {
-    icon: Shield,
-    title: 'Aman & Transparan',
-    description: 'Setiap peminjaman tercatat dengan alur persetujuan yang jelas dan transparan.',
-    color: 'from-indigo-500 to-indigo-600',
-  },
-  {
-    icon: Smartphone,
-    title: 'Akses Mobile',
-    description: 'Akses sistem dari mana saja melalui perangkat mobile atau desktop.',
-    color: 'from-emerald-500 to-emerald-600',
-  },
-  {
-    icon: Users,
-    title: 'Manajemen Tim',
-    description: 'Kelola penanggung jawab sarana prasarana dengan sistem role-based.',
-    color: 'from-rose-500 to-rose-600',
-  },
-  {
-    icon: Award,
-    title: 'Audit Trail',
-    description: 'Setiap aktivitas tercatat untuk keperluan audit dan evaluasi.',
-    color: 'from-amber-500 to-amber-600',
-  },
+  { icon: Package, title: 'Manajemen Inventaris', desc: 'Kelola semua barang inventaris dengan pelacakan stok real-time dan kondisi barang.' },
+  { icon: Building2, title: 'Pengelolaan Fasilitas', desc: 'Daftar dan kelola fasilitas dengan informasi kapasitas dan lokasi yang lengkap.' },
+  { icon: ClipboardList, title: 'Sistem Peminjaman', desc: 'Ajukan peminjaman barang atau fasilitas dengan alur persetujuan berjenjang.' },
+  { icon: ShieldCheck, title: 'Laporan Kerusakan', desc: 'Laporkan kerusakan sarana prasarana dengan tingkat keparahan dan pelacakan status.' },
+  { icon: BarChart3, title: 'Rekap & Statistik', desc: 'Pantau statistik peminjaman, inventaris, dan fasilitas dalam satu dashboard.' },
+  { icon: Bell, title: 'Pengumuman', desc: 'Sampaikan informasi penting kepada seluruh pengguna melalui sistem pengumuman.' },
 ];
 
 function getInitials(name: string): string {
   return name
     .split(' ')
-    .map((w) => w[0])
+    .map((n) => n[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
@@ -87,13 +50,13 @@ function getInitials(name: string): string {
 
 export default function AboutPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [aboutSettings, setAboutSettings] = useState<AboutSettings[]>([]);
+  const [aboutSettings, setAboutSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [teamResult, settingsResult] = await Promise.all([
+        const [teamRes, settingsRes] = await Promise.all([
           supabase
             .from('team_members')
             .select('*')
@@ -102,11 +65,14 @@ export default function AboutPage() {
           supabase.from('about_settings').select('*'),
         ]);
 
-        if (teamResult.error) throw teamResult.error;
-        setTeamMembers((teamResult.data as unknown as TeamMember[]) || []);
+        if (teamRes.error) throw teamRes.error;
+        setTeamMembers((teamRes.data as unknown as TeamMember[]) || []);
 
-        if (settingsResult.error) throw settingsResult.error;
-        setAboutSettings((settingsResult.data as unknown as AboutSettings[]) || []);
+        const settingsMap: Record<string, any> = {};
+        (settingsRes.data as unknown as AboutSettings[] || []).forEach((s) => {
+          settingsMap[s.section] = s.content;
+        });
+        setAboutSettings(settingsMap);
       } catch (err) {
         console.error('Error fetching about data:', err);
       } finally {
@@ -116,41 +82,30 @@ export default function AboutPage() {
     fetchData();
   }, []);
 
-  const visionSetting = aboutSettings.find((s) => s.section === 'vision');
-  const missionSetting = aboutSettings.find((s) => s.section === 'mission');
-
-  const defaultVision = 'Menjadi sistem manajemen sarana dan prasarana terdepan yang mengintegrasikan teknologi digital untuk menciptakan tata kelola yang efisien, transparan, dan akuntabel.';
-  const defaultMission = [
-    'Mempermudah proses peminjaman dan pengembalian sarana prasarana',
-    'Meningkatkan transparansi dalam pengelolaan inventaris',
-    'Mempercepat respons terhadap laporan kerusakan',
-    'Menyediakan data akurat untuk pengambilan keputusan',
+  const vision = aboutSettings.vision?.text || 'Menjadi sistem manajemen sarana dan prasarana terdepan yang terintegrasi, transparan, dan efisien untuk mendukung seluruh kegiatan operasional.';
+  const mission = aboutSettings.mission?.text || aboutSettings.mission?.items || [
+    'Menyediakan platform terpadu untuk pengelolaan sarana dan prasarana',
+    'Memastikan transparansi dan akuntabilitas dalam setiap peminjaman',
+    'Meningkatkan efisiensi pengelolaan inventaris dan fasilitas',
+    'Memberikan kemudahan akses informasi bagi seluruh pengguna',
   ];
 
-  const visionText = visionSetting?.content?.text || defaultVision;
-  const missionItems: string[] = missionSetting?.content?.items || defaultMission;
-
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
       <main className="flex-1">
         {/* Hero / Intro */}
-        <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-8">
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
           <div className="text-center max-w-3xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-sm font-medium mb-6">
-              <Award className="w-4 h-4" />
-              Tentang Kami
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 mb-6">
+              <Info className="w-4 h-4 text-blue-500" />
+              <span className="text-sm font-medium text-blue-600 dark:text-blue-300">Tentang Sistem</span>
             </div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {brandConfig.system.name}
+            <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 dark:text-white mb-4">
+              <span className="bg-gradient-to-r from-blue-500 to-cyan-500 bg-clip-text text-transparent">SMART SARPRAS</span>
             </h1>
-            <p className="mt-4 text-lg text-slate-600 dark:text-slate-300">
-              {brandConfig.system.fullName}
-            </p>
-            <p className="mt-6 text-slate-600 dark:text-slate-400 leading-relaxed">
-              SMART SARPRAS adalah sistem terpadu yang dirancang untuk memudahkan pengelolaan sarana dan prasarana.
-              Dengan teknologi modern, sistem ini mengintegrasikan peminjaman, pelaporan, dan manajemen inventaris
-              dalam satu platform yang mudah diakses dan digunakan.
+            <p className="text-lg text-slate-600 dark:text-slate-300">
+              Sistem Manajemen Sarana dan Prasarana Terpadu — platform digital yang mengintegrasikan pengelolaan inventaris, fasilitas, peminjaman, dan pelaporan kerusakan dalam satu sistem yang efisien dan transparan.
             </p>
           </div>
         </section>
@@ -158,22 +113,20 @@ export default function AboutPage() {
         {/* Features */}
         <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="text-center mb-10">
-            <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Fitur Unggulan</h2>
-            <p className="mt-2 text-slate-600 dark:text-slate-400">
-              Berbagai fitur yang membuat pengelolaan sarana prasarana lebih mudah
-            </p>
+            <div className="inline-flex items-center gap-2 mb-3">
+              <Zap className="w-5 h-5 text-blue-500" />
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Fitur Utama</h2>
+            </div>
+            <p className="text-slate-500 dark:text-slate-400">Berbagai fitur untuk pengelolaan sarana dan prasarana</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature) => (
-              <div
-                key={feature.title}
-                className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-6 shadow-sm hover:shadow-md transition-all"
-              >
-                <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center mb-4', feature.color)}>
-                  <feature.icon className="w-6 h-6 text-white" />
+            {features.map((f, i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 hover:shadow-lg transition-shadow">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-4">
+                  <f.icon className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">{feature.title}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300">{feature.description}</p>
+                <h3 className="font-semibold text-slate-900 dark:text-white mb-2">{f.title}</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400">{f.desc}</p>
               </div>
             ))}
           </div>
@@ -183,34 +136,36 @@ export default function AboutPage() {
         <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Vision */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-8 shadow-sm">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-8">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
-                  <Eye className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                  <Eye className="w-5 h-5 text-blue-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Visi</h2>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Visi</h2>
               </div>
-              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">{visionText}</p>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">{vision}</p>
             </div>
 
             {/* Mission */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-8 shadow-sm">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-8">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 flex items-center justify-center">
-                  <Target className="w-6 h-6 text-cyan-600 dark:text-cyan-400" />
+                <div className="w-10 h-10 rounded-xl bg-cyan-100 dark:bg-cyan-900/30 flex items-center justify-center">
+                  <Target className="w-5 h-5 text-cyan-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Misi</h2>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Misi</h2>
               </div>
-              <ul className="space-y-3">
-                {missionItems.map((item, idx) => (
-                  <li key={idx} className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-xs font-bold flex items-center justify-center mt-0.5">
-                      {idx + 1}
-                    </span>
-                    <span className="text-slate-600 dark:text-slate-300">{item}</span>
-                  </li>
-                ))}
-              </ul>
+              {Array.isArray(mission) ? (
+                <ul className="space-y-3">
+                  {mission.map((m: string, i: number) => (
+                    <li key={i} className="flex items-start gap-3 text-slate-600 dark:text-slate-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-2 flex-shrink-0" />
+                      <span className="leading-relaxed">{m}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">{mission}</p>
+              )}
             </div>
           </div>
         </section>
@@ -218,85 +173,56 @@ export default function AboutPage() {
         {/* Team */}
         <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="text-center mb-10">
-            <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Tim</h2>
-            <p className="mt-2 text-slate-600 dark:text-slate-400">
-              Tim pengelola sarana dan prasarana
-            </p>
+            <div className="inline-flex items-center gap-2 mb-3">
+              <Users className="w-5 h-5 text-blue-500" />
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim</h2>
+            </div>
+            <p className="text-slate-500 dark:text-slate-400">Tim pengelola SMART SARPRAS</p>
           </div>
 
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-6 animate-pulse">
-                  <div className="w-20 h-20 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-4" />
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 animate-pulse">
+                  <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-700 mx-auto mb-4" />
                   <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mx-auto mb-2" />
                   <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/2 mx-auto" />
                 </div>
               ))}
             </div>
           ) : teamMembers.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title="Belum ada anggota tim"
-              description="Anggota tim akan ditampilkan di sini."
-            />
+            <EmptyState icon={Users} title="Belum ada anggota tim" description="Anggota tim akan ditampilkan di sini" />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {teamMembers.map((member) => (
-                <div
-                  key={member.id}
-                  className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-6 shadow-sm hover:shadow-md transition-all text-center"
-                >
-                  {/* Photo or initials */}
+              {teamMembers.map((m) => (
+                <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 text-center hover:shadow-lg transition-shadow">
                   <div className="w-20 h-20 rounded-full mx-auto mb-4 overflow-hidden bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                    {member.photo_url ? (
-                      <img
-                        src={member.photo_url}
-                        alt={member.name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
+                    {m.photo_url ? (
+                      <img src={m.photo_url} alt={m.name} className="w-full h-full object-cover" />
                     ) : (
-                      <span className="text-2xl font-bold text-white">{getInitials(member.name)}</span>
+                      <span className="text-2xl font-bold text-white">{getInitials(m.name)}</span>
                     )}
                   </div>
-
-                  <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{member.name}</h3>
-                  <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">{member.position}</p>
-                  {member.role && (
-                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{member.role}</p>
+                  <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{m.name}</h3>
+                  <p className="text-sm text-blue-600 dark:text-blue-400 font-medium mb-1">{m.position}</p>
+                  {m.role && <p className="text-xs text-slate-400 mb-3">{m.role}</p>}
+                  {m.description && (
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 line-clamp-3">{m.description}</p>
                   )}
-
-                  {member.description && (
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-3 line-clamp-3">
-                      {member.description}
-                    </p>
-                  )}
-
-                  {(member.email || member.phone) && (
-                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 space-y-2">
-                      {member.email && (
-                        <a
-                          href={`mailto:${member.email}`}
-                          className="flex items-center justify-center gap-2 text-sm text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                        >
-                          <Mail className="w-4 h-4" />
-                          {member.email}
-                        </a>
-                      )}
-                      {member.phone && (
-                        <a
-                          href={`tel:${member.phone}`}
-                          className="flex items-center justify-center gap-2 text-sm text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                        >
-                          <Phone className="w-4 h-4" />
-                          {member.phone}
-                        </a>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex flex-col gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+                    {m.email && (
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5" />
+                        <span className="truncate">{m.email}</span>
+                      </div>
+                    )}
+                    {m.phone && (
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{m.phone}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

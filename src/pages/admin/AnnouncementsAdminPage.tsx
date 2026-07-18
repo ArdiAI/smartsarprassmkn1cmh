@@ -1,18 +1,18 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
+import { useEffect, useState } from 'react';
 import {
-  Megaphone, Plus, Pencil, Trash2, X, Loader2, Calendar, User,
+  Megaphone, Plus, Pencil, Trash2, X, AlertCircle, Calendar, User,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { cn } from '../../utils/cn';
+import { useAuth } from '../../context/AuthContext';
+import { showToast } from '../../components/Toast';
 
 interface Announcement {
   id: string;
   title: string;
   description: string | null;
-  priority: string;
-  status: string;
+  priority: string | null;
+  status: string | null;
   published_at: string | null;
   created_at: string;
   updated_at: string | null;
@@ -35,197 +35,214 @@ const emptyForm: FormData = {
   author: '',
 };
 
-const priorityConfig: Record<string, { label: string; color: string }> = {
-  high: { label: 'Tinggi', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  normal: { label: 'Normal', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  low: { label: 'Rendah', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
+const priorityConfig: Record<string, { label: string; classes: string }> = {
+  high: { label: 'Tinggi', classes: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  normal: { label: 'Normal', classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  low: { label: 'Rendah', classes: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300' },
 };
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  active: { label: 'Aktif', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  draft: { label: 'Draft', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
-  archived: { label: 'Arsip', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+const statusConfig: Record<string, { label: string; classes: string }> = {
+  active: { label: 'Aktif', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  inactive: { label: 'Nonaktif', classes: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300' },
+  draft: { label: 'Draft', classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
 };
 
 export default function AnnouncementsAdminPage() {
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission('announcements', 'create');
-  const canUpdate = hasPermission('announcements', 'update');
-  const canDelete = hasPermission('announcements', 'delete');
-
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Announcement | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const fetchAnnouncements = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('announcements')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat pengumuman', 'error');
-      setLoading(false);
-      return;
-    }
-    setAnnouncements((data as unknown as Announcement[]) || []);
-    setLoading(false);
-  }, []);
+  const canCreate = hasPermission('announcements', 'create');
+  const canUpdate = hasPermission('announcements', 'update');
+  const canDelete = hasPermission('announcements', 'delete');
 
   useEffect(() => {
     fetchAnnouncements();
-  }, [fetchAnnouncements]);
+  }, []);
 
-  const openAdd = () => {
-    setEditing(null);
+  async function fetchAnnouncements() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setAnnouncements((data as unknown as Announcement[]) ?? []);
+    } catch (err) {
+      console.error('Fetch error:', err);
+      showToast('Gagal memuat pengumuman', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openCreate() {
+    setEditingId(null);
     setForm(emptyForm);
     setModalOpen(true);
-  };
+  }
 
-  const openEdit = (announcement: Announcement) => {
-    setEditing(announcement);
+  function openEdit(ann: Announcement) {
+    setEditingId(ann.id);
     setForm({
-      title: announcement.title ?? '',
-      description: announcement.description ?? '',
-      priority: announcement.priority ?? 'normal',
-      status: announcement.status ?? 'active',
-      author: announcement.author ?? '',
+      title: ann.title ?? '',
+      description: ann.description ?? '',
+      priority: ann.priority ?? 'normal',
+      status: ann.status ?? 'active',
+      author: ann.author ?? '',
     });
     setModalOpen(true);
-  };
+  }
 
-  const handleSave = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.title) {
+    if (!form.title.trim()) {
       showToast('Judul wajib diisi', 'warning');
       return;
     }
     setSaving(true);
-    const payload = {
-      title: form.title,
-      description: form.description || null,
-      priority: form.priority,
-      status: form.status,
-      author: form.author || null,
-      published_at: form.status === 'active' ? new Date().toISOString() : null,
-    };
-
     try {
-      if (editing) {
-        const { error } = await supabase.from('announcements').update({
-          ...payload,
-          updated_at: new Date().toISOString(),
-        }).eq('id', editing.id);
+      const isActive = form.status === 'active';
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        priority: form.priority,
+        status: form.status,
+        author: form.author.trim() || null,
+        published_at: isActive ? new Date().toISOString() : null,
+      };
+
+      if (editingId) {
+        const { error } = await supabase.from('announcements').update(payload).eq('id', editingId);
         if (error) throw error;
-        showToast('Pengumuman diperbarui', 'success');
+        showToast('Pengumuman berhasil diperbarui', 'success');
       } else {
         const { error } = await supabase.from('announcements').insert(payload);
         if (error) throw error;
-        showToast('Pengumuman ditambahkan', 'success');
+        showToast('Pengumuman berhasil ditambahkan', 'success');
       }
       setModalOpen(false);
       await fetchAnnouncements();
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error('Save error:', err);
       showToast('Gagal menyimpan pengumuman', 'error');
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete() {
+    if (!deleteId) return;
     try {
-      const { error } = await supabase.from('announcements').delete().eq('id', id);
+      const { error } = await supabase.from('announcements').delete().eq('id', deleteId);
       if (error) throw error;
-      showToast('Pengumuman dihapus', 'success');
+      showToast('Pengumuman berhasil dihapus', 'success');
       setDeleteId(null);
       await fetchAnnouncements();
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error('Delete error:', err);
       showToast('Gagal menghapus pengumuman', 'error');
     }
-  };
+  }
+
+  function formatDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola pengumuman sistem</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola pengumuman sistem</p>
         </div>
         {canCreate && (
           <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium text-sm shadow-md hover:shadow-lg transition-shadow"
           >
-            <Plus className="w-4 h-4" /> Tambah
+            <Plus className="w-4 h-4" /> Tambah Pengumuman
           </button>
         )}
       </div>
 
+      {/* List */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <div className="space-y-3">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-24 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 animate-pulse" />
+          ))}
         </div>
       ) : announcements.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Megaphone className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada pengumuman</p>
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <Megaphone className="w-12 h-12 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Tidak ada pengumuman</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {announcements.map(announcement => {
-            const pc = priorityConfig[announcement.priority] || priorityConfig.normal;
-            const sc = statusConfig[announcement.status] || statusConfig.active;
+        <div className="space-y-3">
+          {announcements.map((ann) => {
+            const prio = priorityConfig[ann.priority ?? 'normal'] ?? priorityConfig.normal;
+            const stat = statusConfig[ann.status ?? 'active'] ?? statusConfig.active;
             return (
-              <div key={announcement.id} className="card p-5">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{announcement.title}</h3>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', pc.color)}>{pc.label}</span>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
+              <div
+                key={ann.id}
+                className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{ann.title}</h3>
+                      <span className={cn('px-2 py-0.5 rounded-md text-xs font-medium', prio.classes)}>
+                        {prio.label}
+                      </span>
+                      <span className={cn('px-2 py-0.5 rounded-md text-xs font-medium', stat.classes)}>
+                        {stat.label}
+                      </span>
                     </div>
-                    {announcement.description && (
-                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{announcement.description}</p>
+                    {ann.description && (
+                      <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-2 mb-2">{ann.description}</p>
                     )}
-                    <div className="flex items-center gap-4 text-xs text-slate-400 mt-3">
-                      {announcement.author && (
+                    <div className="flex items-center gap-3 flex-wrap text-xs text-slate-500 dark:text-slate-400">
+                      {ann.author && (
                         <span className="flex items-center gap-1">
-                          <User className="w-3.5 h-3.5" /> {announcement.author}
+                          <User className="w-3.5 h-3.5" /> {ann.author}
                         </span>
                       )}
                       <span className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5" /> {new Date(announcement.created_at).toLocaleDateString('id-ID')}
+                        <Calendar className="w-3.5 h-3.5" /> {formatDate(ann.created_at)}
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {canUpdate && (
-                      <button
-                        onClick={() => openEdit(announcement)}
-                        className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
-                        title="Edit"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    )}
-                    {canDelete && (
-                      <button
-                        onClick={() => setDeleteId(announcement.id)}
-                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
-                        title="Hapus"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
+
+                  {(canUpdate || canDelete) && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {canUpdate && (
+                        <button
+                          onClick={() => openEdit(ann)}
+                          className="p-2 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => setDeleteId(ann.id)}
+                          className="p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -235,43 +252,50 @@ export default function AnnouncementsAdminPage() {
 
       {/* Add/Edit Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {editing ? 'Edit Pengumuman' : 'Tambah Pengumuman'}
+                {editingId ? 'Edit Pengumuman' : 'Tambah Pengumuman'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSave} className="p-5 space-y-4">
+
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
-                <label className="label">Judul</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Judul *</label>
                 <input
                   type="text"
                   value={form.title}
-                  onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-                  className="input"
-                  required
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Judul pengumuman"
                 />
               </div>
+
               <div>
-                <label className="label">Deskripsi</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
                   rows={4}
-                  className="input"
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  placeholder="Isi pengumuman"
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Prioritas</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Prioritas</label>
                   <select
                     value={form.priority}
-                    onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
-                    className="input"
+                    onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="high">Tinggi</option>
                     <option value="normal">Normal</option>
@@ -279,42 +303,44 @@ export default function AnnouncementsAdminPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Status</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Status</label>
                   <select
                     value={form.status}
-                    onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                    className="input"
+                    onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="active">Aktif</option>
+                    <option value="inactive">Nonaktif</option>
                     <option value="draft">Draft</option>
-                    <option value="archived">Arsip</option>
                   </select>
                 </div>
-                <div>
-                  <label className="label">Penulis</label>
-                  <input
-                    type="text"
-                    value={form.author}
-                    onChange={e => setForm(f => ({ ...f, author: e.target.value }))}
-                    className="input"
-                  />
-                </div>
               </div>
-              <div className="flex justify-end gap-3 pt-2">
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Penulis</label>
+                <input
+                  type="text"
+                  value={form.author}
+                  onChange={(e) => setForm({ ...form, author: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Nama penulis"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md hover:shadow-lg disabled:opacity-50 transition-all"
                 >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
-                  {editing ? 'Simpan' : 'Tambah'}
+                  {saving ? 'Menyimpan...' : editingId ? 'Perbarui' : 'Tambah'}
                 </button>
               </div>
             </form>
@@ -322,29 +348,29 @@ export default function AnnouncementsAdminPage() {
         </div>
       )}
 
-      {/* Delete Confirmation */}
+      {/* Delete Confirm */}
       {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-md p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setDeleteId(null)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/30 flex items-center justify-center">
-                <Trash2 className="w-5 h-5 text-red-500" />
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Pengumuman?</h3>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Pengumuman?</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Tindakan ini tidak dapat dibatalkan.</p>
+              </div>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-              Tindakan ini tidak dapat dibatalkan. Yakin ingin menghapus pengumuman ini?
-            </p>
-            <div className="flex justify-end gap-3">
+            <div className="flex items-center justify-end gap-3">
               <button
                 onClick={() => setDeleteId(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
                 Batal
               </button>
               <button
-                onClick={() => handleDelete(deleteId)}
-                className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
+                onClick={handleDelete}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
               >
                 Hapus
               </button>
