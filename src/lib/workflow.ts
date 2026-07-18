@@ -86,7 +86,6 @@ export function isLastActionableStep(steps: WorkflowStep[], currentStep: number)
   return getNextActionableStep(steps, currentStep) === null;
 }
 
-// Fetch the role record for a given step's role_id
 export async function fetchRoleById(roleId: string): Promise<Role | null> {
   const { data, error } = await supabase
     .from('roles')
@@ -97,8 +96,6 @@ export async function fetchRoleById(roleId: string): Promise<Role | null> {
   return data as unknown as Role;
 }
 
-// Auto-determine the next approver's email from the database based on the next workflow step's role.
-// Looks up role_approver_emails by role_id, filtered to active records.
 export async function fetchNextApprover(
   steps: WorkflowStep[],
   currentStep: number,
@@ -123,7 +120,6 @@ export async function fetchNextApprover(
   return { step: nextStep, role, approver };
 }
 
-// Send notification email to the next approver via the edge function.
 export async function notifyNextApprover(payload: {
   type: string;
   borrowing_id: string;
@@ -141,19 +137,15 @@ export async function notifyNextApprover(payload: {
       body: JSON.stringify(payload),
     });
   } catch (e) {
-    // Non-blocking: notification failure should not block approval flow
     console.error('Failed to notify next approver:', e);
   }
 }
 
-// Determine which borrowings an admin user is responsible for based on their role.
-// Each role only sees requests whose current workflow step matches their role.
 export async function filterBorrowingsForAdmin(
   borrowings: any[],
   adminUser: AdminUser | null,
 ): Promise<any[]> {
   if (!adminUser) return [];
-  // Super Admin sees everything
   if (adminUser.role === 'superadmin') return borrowings;
 
   const { data: adminRecord } = await supabase
@@ -165,7 +157,6 @@ export async function filterBorrowingsForAdmin(
   const adminRole = adminRecord?.role;
   if (adminRole === 'superadmin') return borrowings;
 
-  // For each borrowing, load its workflow template and check if the current step's role matches the admin's role.
   const result: any[] = [];
   for (const b of borrowings) {
     const templateId = b.workflow_template_id;
@@ -176,7 +167,6 @@ export async function filterBorrowingsForAdmin(
     if (!currentStep) continue;
     const stepRole = await fetchRoleById(currentStep.role_id);
     if (!stepRole) continue;
-    // Match by role id (admin_users.role stores role id) or role name
     if (adminRole === currentStep.role_id || adminRole === stepRole.name) {
       result.push(b);
     }

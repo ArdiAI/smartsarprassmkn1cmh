@@ -1,20 +1,21 @@
-import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, X, Megaphone, Calendar } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { cn } from '../../utils/cn';
 import { showToast } from '../../components/Toast';
-import { useAuth } from '../../context/AuthContext';
+import { cn } from '../../utils/cn';
+import {
+  Megaphone, Plus, Edit2, Trash2, X, Loader2, Calendar, User,
+} from 'lucide-react';
 
 interface Announcement {
   id: string;
   title: string;
-  description: string;
-  priority: string;
-  status: string;
-  published_at: string;
+  description: string | null;
+  priority: string | null;
+  status: string | null;
+  published_at: string | null;
   created_at: string;
-  updated_at: string;
-  author: string;
+  updated_at: string | null;
+  author: string | null;
 }
 
 interface FormData {
@@ -26,271 +27,296 @@ interface FormData {
 }
 
 const emptyForm: FormData = {
-  title: '', description: '', priority: 'normal', status: 'draft', author: '',
+  title: '',
+  description: '',
+  priority: 'normal',
+  status: 'draft',
+  author: '',
 };
 
-const priorityStyles: Record<string, string> = {
-  high: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  normal: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  low: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+const priorityConfig: Record<string, { label: string; color: string }> = {
+  high: { label: 'Tinggi', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  normal: { label: 'Normal', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  low: { label: 'Rendah', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
 };
 
-const statusStyles: Record<string, string> = {
-  published: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-  archived: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+const statusConfig: Record<string, { label: string; color: string }> = {
+  published: { label: 'Dipublikasi', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  draft: { label: 'Draft', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
+  archived: { label: 'Arsip', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
 };
 
 export default function AnnouncementsAdminPage() {
-  const { user } = useAuth();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Announcement | null>(null);
+  const [editingItem, setEditingItem] = useState<Announcement | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Announcement | null>(null);
 
-  const fetchAnnouncements = async () => {
+  const fetchAnnouncements = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (error) {
       showToast('Gagal memuat pengumuman', 'error');
     } else {
-      setAnnouncements((data as unknown as Announcement[]) ?? []);
+      setAnnouncements((data as unknown as Announcement[]) || []);
     }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     fetchAnnouncements();
-  }, []);
+  }, [fetchAnnouncements]);
 
   const openAdd = () => {
-    setEditing(null);
-    setForm({ ...emptyForm, author: user?.email ?? '' });
+    setEditingItem(null);
+    setForm(emptyForm);
     setModalOpen(true);
   };
 
-  const openEdit = (a: Announcement) => {
-    setEditing(a);
+  const openEdit = (item: Announcement) => {
+    setEditingItem(item);
     setForm({
-      title: a.title ?? '',
-      description: a.description ?? '',
-      priority: a.priority ?? 'normal',
-      status: a.status ?? 'draft',
-      author: a.author ?? '',
+      title: item.title ?? '',
+      description: item.description ?? '',
+      priority: item.priority ?? 'normal',
+      status: item.status ?? 'draft',
+      author: item.author ?? '',
     });
     setModalOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim()) {
+    if (!form.title) {
       showToast('Judul wajib diisi', 'warning');
       return;
     }
     setSaving(true);
+    const isPublishing = form.status === 'published' && editingItem?.status !== 'published';
     const payload = {
       title: form.title,
-      description: form.description,
+      description: form.description || null,
       priority: form.priority,
       status: form.status,
-      author: form.author,
+      author: form.author || null,
+      published_at: isPublishing ? new Date().toISOString() : (editingItem?.published_at ?? null),
+      updated_at: new Date().toISOString(),
     };
-
-    if (editing) {
-      const { error } = await supabase.from('announcements').update(payload).eq('id', editing.id);
-      if (error) {
-        showToast('Gagal mengupdate pengumuman', 'error');
+    try {
+      if (editingItem) {
+        const { error } = await supabase.from('announcements').update(payload).eq('id', editingItem.id);
+        if (error) throw error;
+        showToast('Pengumuman berhasil diperbarui', 'success');
       } else {
-        showToast('Pengumuman berhasil diupdate', 'success');
-        setModalOpen(false);
-        fetchAnnouncements();
-      }
-    } else {
-      const insertPayload = {
-        ...payload,
-        published_at: form.status === 'published' ? new Date().toISOString() : null,
-      };
-      const { error } = await supabase.from('announcements').insert(insertPayload);
-      if (error) {
-        showToast('Gagal menambah pengumuman', 'error');
-      } else {
+        const insertPayload = {
+          ...payload,
+          published_at: form.status === 'published' ? new Date().toISOString() : null,
+        };
+        const { error } = await supabase.from('announcements').insert(insertPayload);
+        if (error) throw error;
         showToast('Pengumuman berhasil ditambahkan', 'success');
-        setModalOpen(false);
-        fetchAnnouncements();
       }
+      setModalOpen(false);
+      fetchAnnouncements();
+    } catch {
+      showToast('Gagal menyimpan pengumuman', 'error');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
-  const handleDelete = async (a: Announcement) => {
-    if (!confirm(`Hapus "${a.title}"?`)) return;
-    const { error } = await supabase.from('announcements').delete().eq('id', a.id);
+  const handleDelete = async () => {
+    if (!confirmDelete) return;
+    const { error } = await supabase.from('announcements').delete().eq('id', confirmDelete.id);
     if (error) {
       showToast('Gagal menghapus pengumuman', 'error');
     } else {
       showToast('Pengumuman berhasil dihapus', 'success');
       fetchAnnouncements();
     }
+    setConfirmDelete(null);
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman</h1>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola pengumuman sistem</p>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-medium text-sm hover:opacity-90 transition-opacity"
-        >
+        <button onClick={openAdd} className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" /> Tambah Pengumuman
         </button>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
         </div>
       ) : announcements.length === 0 ? (
-        <div className="flex flex-col items-center py-16 text-slate-400">
-          <Megaphone className="w-12 h-12 mb-3" />
-          <p className="text-sm">Tidak ada pengumuman</p>
+        <div className="card py-16 text-center">
+          <Megaphone className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+          <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada pengumuman</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {announcements.map((a) => (
-            <div key={a.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                    <Megaphone className="w-5 h-5 text-white" />
+        <div className="space-y-4">
+          {announcements.map(item => {
+            const pr = priorityConfig[item.priority ?? 'normal'] ?? priorityConfig.normal;
+            const st = statusConfig[item.status ?? 'draft'] ?? statusConfig.draft;
+            return (
+              <div key={item.id} className="card p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <span className={cn('px-2.5 py-1 rounded-lg text-xs font-medium', pr.color)}>{pr.label}</span>
+                      <span className={cn('px-2.5 py-1 rounded-lg text-xs font-medium', st.color)}>{st.label}</span>
+                    </div>
+                    <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{item.title ?? '-'}</h3>
+                    {item.description && (
+                      <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2">{item.description}</p>
+                    )}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-slate-500 dark:text-slate-400">
+                      {item.author && (
+                        <span className="flex items-center gap-1">
+                          <User className="w-3.5 h-3.5" /> {item.author}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5" />
+                        {new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium', priorityStyles[a.priority] ?? priorityStyles.normal)}>
-                      {a.priority ?? 'normal'}
-                    </span>
-                    <span className={cn('px-2.5 py-1 rounded-full text-xs font-medium', statusStyles[a.status] ?? statusStyles.draft)}>
-                      {a.status ?? 'draft'}
-                    </span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => openEdit(item)}
+                      className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(item)}
+                      className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               </div>
-              <h3 className="font-semibold text-slate-900 dark:text-white">{a.title ?? ''}</h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-3">{a.description ?? ''}</p>
-              <div className="flex items-center gap-4 mt-3 text-xs text-slate-400">
-                {a.author && <span>By: {a.author}</span>}
-                <span className="flex items-center gap-1">
-                  <Calendar className="w-3 h-3" /> {new Date(a.created_at ?? '').toLocaleDateString('id-ID')}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-                <button
-                  onClick={() => openEdit(a)}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30"
-                >
-                  <Pencil className="w-4 h-4" /> Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(a)}
-                  className="px-3 py-2 rounded-xl text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal Form */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
-          <div
-            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {editing ? 'Edit Pengumuman' : 'Tambah Pengumuman'}
-              </h2>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
-                <X className="w-5 h-5 text-slate-500" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
+              <h3 className="font-semibold text-slate-900 dark:text-white">
+                {editingItem ? 'Edit Pengumuman' : 'Tambah Pengumuman'}
+              </h3>
+              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Judul *</label>
+                <label className="label">Judul</label>
                 <input
                   type="text"
                   value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setForm({ ...form, title: e.target.value })}
+                  required
+                  className="input"
+                  placeholder="Judul pengumuman"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Deskripsi</label>
+                <label className="label">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  onChange={e => setForm({ ...form, description: e.target.value })}
                   rows={4}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
+                  placeholder="Isi pengumuman"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Prioritas</label>
+                  <label className="label">Prioritas</label>
                   <select
                     value={form.priority}
-                    onChange={(e) => setForm({ ...form, priority: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={e => setForm({ ...form, priority: e.target.value })}
+                    className="input"
                   >
-                    <option value="high">High</option>
+                    <option value="high">Tinggi</option>
                     <option value="normal">Normal</option>
-                    <option value="low">Low</option>
+                    <option value="low">Rendah</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status</label>
+                  <label className="label">Status</label>
                   <select
                     value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={e => setForm({ ...form, status: e.target.value })}
+                    className="input"
                   >
                     <option value="draft">Draft</option>
-                    <option value="published">Published</option>
-                    <option value="archived">Archived</option>
+                    <option value="published">Dipublikasi</option>
+                    <option value="archived">Arsip</option>
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Penulis</label>
+                <label className="label">Penulis</label>
                 <input
                   type="text"
                   value={form.author}
-                  onChange={(e) => setForm({ ...form, author: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setForm({ ...form, author: e.target.value })}
+                  className="input"
+                  placeholder="Nama penulis"
                 />
               </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                >
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setModalOpen(false)} className="btn-secondary">
                   Batal
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-cyan-500 hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving ? 'Menyimpan...' : 'Simpan'}
+                <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
+                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {editingItem ? 'Simpan' : 'Tambah'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white">Hapus Pengumuman?</h3>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+              Yakin ingin menghapus "{confirmDelete.title}"? Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button onClick={() => setConfirmDelete(null)} className="btn-secondary">Batal</button>
+              <button onClick={handleDelete} className="px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors">
+                Hapus
+              </button>
+            </div>
           </div>
         </div>
       )}

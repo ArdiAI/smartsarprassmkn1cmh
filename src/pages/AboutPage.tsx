@@ -1,24 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Info,
-  Users,
-  Target,
-  Eye,
-  CheckCircle2,
-  Package,
-  ClipboardList,
-  Wrench,
-  BarChart3,
-  Building2,
-  Mail,
-  Phone,
-  Calendar,
-  User as UserIcon,
+  Info, Target, Eye, ShieldCheck, Zap, Users, Mail, Phone, Loader2, Building2, Calendar, User as UserIcon, FileText,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
 import { supabase } from '../lib/supabase';
+import { brandConfig } from '../brand/config';
 import { cn } from '../utils/cn';
 
 interface TeamMember {
@@ -26,10 +14,10 @@ interface TeamMember {
   name: string;
   position: string;
   role: string;
-  photo_url: string;
-  description: string;
-  email: string;
-  phone: string;
+  photo_url: string | null;
+  description: string | null;
+  email: string | null;
+  phone: string | null;
   order: number;
   is_active: boolean;
 }
@@ -37,48 +25,40 @@ interface TeamMember {
 interface Organization {
   id: string;
   name: string;
-  type: string;
-  advisor: string;
-  leader: string;
-  description: string;
-  schedule: string;
-  contact: string;
-  logo_url: string;
-  order: number;
+  type: string | null;
+  advisor: string | null;
+  leader: string | null;
+  description: string | null;
+  schedule: string | null;
+  contact: string | null;
+  logo_url: string | null;
+  order: number | null;
 }
 
 interface AboutSettings {
   id: string;
   section: string;
-  content: any;
+  content: Record<string, unknown>;
 }
 
 const features = [
-  { icon: Package, title: 'Manajemen Inventaris', desc: 'Kelola seluruh barang inventaris dengan pelacakan kondisi dan ketersediaan real-time.' },
-  { icon: Building2, title: 'Peminjaman Fasilitas', desc: 'Sistem peminjaman fasilitas dengan alur persetujuan multi-level.' },
-  { icon: ClipboardList, title: 'Pengajuan Online', desc: 'Ajukan peminjaman barang kapan saja, di mana saja secara online.' },
-  { icon: Wrench, title: 'Laporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan cepat dan mudah dengan pelacakan status.' },
-  { icon: BarChart3, title: 'Rekap & Statistik', desc: 'Pantau statistik peminjaman dan inventaris dalam satu dashboard.' },
-  { icon: CheckCircle2, title: 'Alur Persetujuan', desc: 'Workflow persetujuan bertingkat dengan notifikasi otomatis via email.' },
+  { icon: Zap, title: 'Peminjaman Cepat', desc: 'Ajukan peminjaman barang atau fasilitas hanya dalam beberapa langkah.' },
+  { icon: ShieldCheck, title: 'Pelacakan Status', desc: 'Pantau status pengajuan secara real-time dengan alur persetujuan.' },
+  { icon: FileText, title: 'Laporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan mudah dan terdokumentasi.' },
+  { icon: Building2, title: 'Manajemen Inventaris', desc: 'Kelola stok, kondisi, dan lokasi barang dalam satu sistem.' },
+  { icon: Users, title: 'Kolaborasi Tim', desc: 'Koordinasi antar pengelola dengan informasi tim yang transparan.' },
+  { icon: Eye, title: 'Transparansi Data', desc: 'Akses informasi fasilitas dan inventaris secara terbuka.' },
 ];
-
-function initials(name: string): string {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
 
 export default function AboutPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
-  const [orgs, setOrgs] = useState<Organization[]>([]);
-  const [aboutSettings, setAboutSettings] = useState<Record<string, AboutSettings>>({});
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [settings, setSettings] = useState<AboutSettings[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
       try {
         const [teamRes, orgRes, settingsRes] = await Promise.all([
           supabase
@@ -90,17 +70,13 @@ export default function AboutPage() {
             .from('organizations')
             .select('*')
             .order('order', { ascending: true }),
-          supabase.from('about_settings').select('*'),
+          supabase
+            .from('about_settings')
+            .select('*'),
         ]);
-
-        setTeam((teamRes.data as unknown as TeamMember[]) || []);
-        setOrgs((orgRes.data as unknown as Organization[]) || []);
-
-        const settingsMap: Record<string, AboutSettings> = {};
-        ((settingsRes.data as unknown as AboutSettings[]) || []).forEach((s) => {
-          settingsMap[s.section] = s;
-        });
-        setAboutSettings(settingsMap);
+        setTeam((teamRes.data as unknown as TeamMember[]) ?? []);
+        setOrganizations((orgRes.data as unknown as Organization[]) ?? []);
+        setSettings((settingsRes.data as unknown as AboutSettings[]) ?? []);
       } catch (e) {
         console.error('Failed to fetch about data:', e);
       } finally {
@@ -110,151 +86,147 @@ export default function AboutPage() {
     fetchData();
   }, []);
 
-  const visionContent = aboutSettings['vision']?.content;
-  const missionContent = aboutSettings['mission']?.content;
+  const visionSetting = settings.find((s) => s.section === 'vision');
+  const missionSetting = settings.find((s) => s.section === 'mission');
+  const visionText = (visionSetting?.content?.text as string) || brandConfig.system.fullName;
+  const missionText = (missionSetting?.content?.text as string) ||
+    'Memberikan layanan manajemen sarana dan prasarana yang cepat, transparan, dan akuntabel untuk seluruh warga sekolah.';
+
+  function initials(name: string): string {
+    return name
+      .split(' ')
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase();
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Hero */}
-        <section className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 mb-4">
-            <Info className="w-4 h-4 text-blue-500" />
-            <span className="text-sm font-medium text-blue-600 dark:text-blue-400">Tentang Kami</span>
+
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 mb-4 shadow-lg shadow-blue-500/30">
+            <span className="text-white font-bold text-2xl">S</span>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white mb-4">
-            <span className="bg-gradient-to-r from-blue-500 to-cyan-500 bg-clip-text text-transparent">SMART SARPRAS</span>
-          </h1>
-          <p className="text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto">
-            Sistem Manajemen Sarana dan Prasarana Terpadu — Platform digital terpadu untuk pengelolaan sarana, prasarana, inventaris, dan peminjaman secara efisien dan transparan.
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Tentang {brandConfig.system.name}</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-2 max-w-2xl mx-auto">
+            {brandConfig.system.fullName}
+          </p>
+        </div>
+
+        {/* Intro */}
+        <section className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm mb-8">
+          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong className="text-slate-900 dark:text-white">{brandConfig.system.name}</strong> adalah sistem
+            terpadu untuk mengelola sarana dan prasarana. Dengan sistem ini, pengguna dapat melakukan peminjaman
+            barang atau fasilitas, melaporkan kerusakan, memantau status pengajuan, serta mengakses informasi
+            inventaris secara transparan.
           </p>
         </section>
 
         {/* Features */}
-        <section className="mb-12">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 text-center">Fitur Utama</h2>
+        <section className="mb-8">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <Zap className="w-5 h-5 text-blue-500" /> Fitur Utama
+          </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {features.map((f) => (
-              <div key={f.title} className="card p-6 hover:shadow-md transition-all">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-4">
-                  <f.icon className="w-6 h-6 text-white" />
+              <div
+                key={f.title}
+                className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm"
+              >
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center mb-3">
+                  <f.icon className="w-5 h-5 text-blue-500" />
                 </div>
-                <h3 className="font-semibold text-slate-900 dark:text-white mb-2">{f.title}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-400">{f.desc}</p>
+                <h3 className="font-semibold text-slate-900 dark:text-white">{f.title}</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{f.desc}</p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Vision & Mission */}
-        <section className="mb-12">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Vision */}
-            <div className="card p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-slate-700/50 flex items-center justify-center">
-                  <Eye className="w-5 h-5 text-blue-500" />
-                </div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Visi</h2>
+        {/* Vision / Mission */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
+                <Eye className="w-5 h-5 text-blue-500" />
               </div>
-              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
-                {visionContent?.text || visionContent?.vision || 'Menjadi sistem manajemen sarana dan prasarana yang terdepan, efisien, dan transparan untuk mendukung seluruh kegiatan operasional dengan teknologi digital.'}
-              </p>
+              <h2 className="font-bold text-slate-900 dark:text-white">Visi</h2>
             </div>
-            {/* Mission */}
-            <div className="card p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-cyan-50 dark:bg-slate-700/50 flex items-center justify-center">
-                  <Target className="w-5 h-5 text-cyan-500" />
-                </div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Misi</h2>
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{visionText}</p>
+          </div>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-cyan-50 dark:bg-cyan-900/30 flex items-center justify-center">
+                <Target className="w-5 h-5 text-cyan-500" />
               </div>
-              {Array.isArray(missionContent?.missions) && missionContent.missions.length > 0 ? (
-                <ul className="space-y-2">
-                  {missionContent.missions.map((m: string, i: number) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                      <CheckCircle2 className="w-4 h-4 text-cyan-500 mt-0.5 flex-shrink-0" />
-                      <span>{m}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <ul className="space-y-2">
-                  {[
-                    'Menyediakan platform digital untuk pengelolaan sarana dan prasarana.',
-                    'Meningkatkan efisiensi dan transparansi proses peminjaman.',
-                    'Memfasilitasi pelaporan kerusakan secara cepat dan akurat.',
-                    'Mengoptimalkan pemanfaatan sumber daya yang tersedia.',
-                  ].map((m, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                      <CheckCircle2 className="w-4 h-4 text-cyan-500 mt-0.5 flex-shrink-0" />
-                      <span>{m}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <h2 className="font-bold text-slate-900 dark:text-white">Misi</h2>
             </div>
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{missionText}</p>
           </div>
         </section>
 
         {/* Team */}
-        <section className="mb-12">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center">
-              <Users className="w-5 h-5 text-white" />
-            </div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Tim</h2>
-          </div>
+        <section className="mb-8">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-500" /> Tim
+          </h2>
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="card p-6 animate-pulse">
-                  <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-700 mx-auto mb-4" />
-                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mx-auto mb-2" />
-                  <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2 mx-auto" />
-                </div>
-              ))}
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
             </div>
           ) : team.length === 0 ? (
-            <EmptyState icon={Users} title="Belum ada anggota tim" description="Anggota tim akan muncul di sini." />
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <EmptyState icon={Users} title="Belum ada anggota tim" />
+            </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {team.map((m) => (
-                <div key={m.id} className="card p-6 text-center hover:shadow-md transition-all">
-                  <div className="w-20 h-20 rounded-full mx-auto mb-4 overflow-hidden bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                <div
+                  key={m.id}
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm"
+                >
+                  <div className="flex items-center gap-3 mb-3">
                     {m.photo_url ? (
                       <img
                         src={m.photo_url}
                         alt={m.name}
-                        className="w-full h-full object-cover"
+                        className="w-14 h-14 rounded-xl object-cover flex-shrink-0"
                         onError={(e) => {
                           (e.target as HTMLImageElement).style.display = 'none';
                         }}
                       />
                     ) : (
-                      <span className="text-2xl font-bold text-white">{initials(m.name)}</span>
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+                        <span className="text-white font-bold">{initials(m.name)}</span>
+                      </div>
                     )}
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{m.name}</h3>
+                      <p className="text-sm text-blue-500 dark:text-blue-400 truncate">{m.position}</p>
+                    </div>
                   </div>
-                  <h3 className="font-bold text-slate-900 dark:text-white">{m.name}</h3>
-                  <p className="text-sm text-blue-600 dark:text-blue-400 font-medium mb-1">{m.position}</p>
                   {m.role && (
-                    <p className="text-xs text-slate-400 mb-3">{m.role}</p>
+                    <span className="inline-block text-xs font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 mb-2">
+                      {m.role}
+                    </span>
                   )}
                   {m.description && (
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">{m.description}</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">{m.description}</p>
                   )}
-                  <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                  <div className="space-y-1 text-sm text-slate-500 dark:text-slate-400">
                     {m.email && (
-                      <div className="flex items-center justify-center gap-1.5">
-                        <Mail className="w-3.5 h-3.5" />
-                        <span className="truncate">{m.email}</span>
+                      <div className="flex items-center gap-2 truncate">
+                        <Mail className="w-4 h-4 text-blue-400 flex-shrink-0" /> <span className="truncate">{m.email}</span>
                       </div>
                     )}
                     {m.phone && (
-                      <div className="flex items-center justify-center gap-1.5">
-                        <Phone className="w-3.5 h-3.5" />
-                        <span>{m.phone}</span>
+                      <div className="flex items-center gap-2">
+                        <Phone className="w-4 h-4 text-cyan-400 flex-shrink-0" /> {m.phone}
                       </div>
                     )}
                   </div>
@@ -265,66 +237,75 @@ export default function AboutPage() {
         </section>
 
         {/* Organizations */}
-        {orgs.length > 0 && (
-          <section className="mb-8">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-white" />
-              </div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Organisasi</h2>
+        <section className="mb-8">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <Building2 className="w-5 h-5 text-blue-500" /> Organisasi
+          </h2>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {orgs.map((o) => (
-                <div key={o.id} className="card p-6 hover:shadow-md transition-all">
+          ) : organizations.length === 0 ? (
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <EmptyState icon={Building2} title="Belum ada organisasi" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {organizations.map((o) => (
+                <div
+                  key={o.id}
+                  className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm"
+                >
                   <div className="flex items-start gap-3 mb-3">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {o.logo_url ? (
-                        <img src={o.logo_url} alt={o.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <Building2 className="w-6 h-6 text-white" />
+                    {o.logo_url ? (
+                      <img src={o.logo_url} alt={o.name} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                        <Building2 className="w-6 h-6 text-slate-400" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{o.name}</h3>
+                      {o.type && (
+                        <span className="text-xs font-medium text-blue-500 dark:text-blue-400">{o.type}</span>
                       )}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-900 dark:text-white">{o.name}</h3>
-                      {o.type && <span className="text-xs text-emerald-600 dark:text-emerald-400">{o.type}</span>}
                     </div>
                   </div>
                   {o.description && (
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">{o.description}</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">{o.description}</p>
                   )}
-                  <div className="space-y-1.5 text-xs text-slate-500 dark:text-slate-400">
-                    {o.advisor && (
-                      <div className="flex items-center gap-1.5">
-                        <UserIcon className="w-3.5 h-3.5" />
-                        <span>Pembina: {o.advisor}</span>
+                  <div className="space-y-1.5 text-sm text-slate-500 dark:text-slate-400">
+                    {o.leader && (
+                      <div className="flex items-center gap-2">
+                        <UserIcon className="w-4 h-4 text-blue-400" /> Ketua: {o.leader}
                       </div>
                     )}
-                    {o.leader && (
-                      <div className="flex items-center gap-1.5">
-                        <UserIcon className="w-3.5 h-3.5" />
-                        <span>Ketua: {o.leader}</span>
+                    {o.advisor && (
+                      <div className="flex items-center gap-2">
+                        <UserIcon className="w-4 h-4 text-cyan-400" /> Pembina: {o.advisor}
                       </div>
                     )}
                     {o.schedule && (
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>{o.schedule}</span>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-emerald-400" /> {o.schedule}
                       </div>
                     )}
                     {o.contact && (
-                      <div className="flex items-center gap-1.5">
-                        <Phone className="w-3.5 h-3.5" />
-                        <span>{o.contact}</span>
+                      <div className="flex items-center gap-2">
+                        <Phone className="w-4 h-4 text-amber-400" /> {o.contact}
                       </div>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          </section>
-        )}
-      </main>
-      <Footer />
+          )}
+        </section>
+      </div>
+
+      <div className="mt-auto">
+        <Footer />
+      </div>
     </div>
   );
 }

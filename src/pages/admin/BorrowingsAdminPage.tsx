@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -11,7 +11,6 @@ import {
   filterBorrowingsForAdmin,
   fetchRoleById,
   type WorkflowTemplate,
-  type WorkflowStep,
   type AdminUser,
 } from '../../lib/workflow';
 import { showToast } from '../../components/Toast';
@@ -100,10 +99,15 @@ export default function BorrowingsAdminPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
-  const [workflowCache, setWorkflowCache] = useState<Record<string, WorkflowTemplate>>({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
   const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
+
+  // FIX: workflow cache stored in a ref so updating it does NOT trigger a re-render.
+  // Previously it was useState, and fetchBorrowings listed it in useCallback deps while
+  // also calling setWorkflowCache inside — creating an infinite render loop that kept
+  // the page in "Loading..." forever.
+  const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
 
   const fetchAdminUser = useCallback(async () => {
     if (!user) return;
@@ -130,22 +134,19 @@ export default function BorrowingsAdminPage() {
     const all = (data as unknown as Borrowing[]) || [];
     setBorrowings(all);
 
-    // Role-based filtering: each role only sees requests they're responsible for
     const filtered = await filterBorrowingsForAdmin(all, adminUser);
     setFilteredBorrowings(filtered);
 
-    // Preload workflow templates
     const templateIds = [...new Set(all.map(b => b.workflow_template_id).filter(Boolean) as string[])];
-    const cache: Record<string, WorkflowTemplate> = { ...workflowCache };
     for (const tid of templateIds) {
-      if (!cache[tid]) {
+      if (!workflowCacheRef.current[tid]) {
         const tmpl = await fetchWorkflowTemplate(tid);
-        if (tmpl) cache[tid] = tmpl;
+        if (tmpl) workflowCacheRef.current[tid] = tmpl;
       }
     }
-    setWorkflowCache(cache);
+
     setLoading(false);
-  }, [adminUser, workflowCache]);
+  }, [adminUser]);
 
   const fetchHistory = useCallback(async (borrowingId: string) => {
     const { data } = await supabase
@@ -188,18 +189,18 @@ export default function BorrowingsAdminPage() {
         setActionLoading(null);
         return;
       }
-      const template = workflowCache[templateId] || (await fetchWorkflowTemplate(templateId));
+      const template = workflowCacheRef.current[templateId] || (await fetchWorkflowTemplate(templateId));
       if (!template) {
         showToast('Template workflow tidak ditemukan', 'error');
         setActionLoading(null);
         return;
       }
+      workflowCacheRef.current[templateId] = template;
 
       const currentStepNum = item.current_step ?? 1;
       const currentStep = getCurrentStep(template.steps, currentStepNum);
       const notes = notesByItem[item.id] || '';
 
-      // Determine admin's display name & role for the approval history log
       const approverName = adminUser?.name || user.email || 'Admin';
       const stepRole = currentStep ? await fetchRoleById(currentStep.role_id) : null;
       const approverRole = stepRole?.name || adminUser?.role || 'Admin';
@@ -212,17 +213,14 @@ export default function BorrowingsAdminPage() {
       let newStatusLabel = 'Disetujui';
 
       if (isLast) {
-        // Final approval — item fully approved
         newStatus = 'approved';
         newStatusLabel = 'Disetujui - Selesai';
       } else if (nextStep) {
-        // Advance to next actionable step
         newStep = nextStep.step_order;
         newStatus = 'pending';
         newStatusLabel = nextStep.step_label;
       }
 
-      // Update borrowing_items
       const { error: itemError } = await supabase
         .from('borrowing_items')
         .update({
@@ -238,7 +236,6 @@ export default function BorrowingsAdminPage() {
         return;
       }
 
-      // Log to approval_history
       await supabase.from('approval_history').insert({
         borrowing_id: borrowing.id,
         borrowing_item_id: item.id,
@@ -251,7 +248,6 @@ export default function BorrowingsAdminPage() {
         acted_at: new Date().toISOString(),
       });
 
-      // Auto-determine next approver and send notification email
       if (!isLast && nextStep) {
         const { role, approver } = await fetchNextApprover(template.steps, currentStepNum);
         if (approver && role) {
@@ -273,7 +269,6 @@ export default function BorrowingsAdminPage() {
         showToast('Pengajuan disetujui sepenuhnya', 'success');
       }
 
-      // Update parent borrowing status & current_step
       const allItems = borrowing.borrowing_items.map(bi =>
         bi.id === item.id ? { ...bi, status: newStatus, current_step: newStep, current_status_label: newStatusLabel } : bi
       );
@@ -323,7 +318,7 @@ export default function BorrowingsAdminPage() {
     setActionLoading(`reject-${item.id}`);
     try {
       const templateId = item.workflow_template_id || borrowing.workflow_template_id;
-      const template = templateId ? (workflowCache[templateId] || (await fetchWorkflowTemplate(templateId))) : null;
+      const template = templateId ? (workflowCacheRef.current[templateId] || (await fetchWorkflowTemplate(templateId))) : null;
       const currentStepNum = item.current_step ?? 1;
       const currentStep = template ? getCurrentStep(template.steps, currentStepNum) : null;
       const notes = notesByItem[item.id] || '';
@@ -358,7 +353,6 @@ export default function BorrowingsAdminPage() {
         acted_at: new Date().toISOString(),
       });
 
-      // Notify borrower of rejection
       await notifyNextApprover({
         type: 'rejected',
         borrowing_id: borrowing.id,
@@ -414,7 +408,7 @@ export default function BorrowingsAdminPage() {
   const renderWorkflowProgress = (borrowing: Borrowing, item: BorrowingItem) => {
     const templateId = item.workflow_template_id || borrowing.workflow_template_id;
     if (!templateId) return null;
-    const template = workflowCache[templateId];
+    const template = workflowCacheRef.current[templateId];
     if (!template) return null;
 
     return (
