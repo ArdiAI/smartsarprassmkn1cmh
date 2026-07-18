@@ -28,7 +28,6 @@ async function uploadToGoogleDrive(
     return null;
   }
 
-  // Exchange refresh token for access token
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -48,7 +47,6 @@ async function uploadToGoogleDrive(
   const tokenData = await tokenRes.json();
   const accessToken = tokenData.access_token;
 
-  // Build multipart/related body for Drive API v3 upload
   const boundary = "smart_sarpras_boundary_" + Math.random().toString(36).slice(2);
   const metadata: any = { name: fileName, mimeType };
   if (folderId) metadata.parents = [folderId];
@@ -88,7 +86,6 @@ async function uploadToGoogleDrive(
   const fileId = uploaded.id;
   const url = uploaded.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
 
-  // Make the file publicly viewable so the URL works without login
   try {
     await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
       method: "POST",

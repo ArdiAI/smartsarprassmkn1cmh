@@ -3,7 +3,7 @@ import { useState } from 'react';
 import {
   LayoutDashboard, Package, Building2, FileText, BarChart3, Users,
   Megaphone, MessageSquare, Menu, X, Moon, Sun, LogOut, Settings,
-  Shield, UserCog, Workflow, Mail, ChevronDown, Calendar, ClipboardList,
+  Shield, UserCog, Workflow, Mail, ChevronDown, Calendar, CalendarDays,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -28,7 +28,7 @@ export default function AdminLayout() {
     { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, permission: { module: '', action: '' }, end: true },
     { to: '/admin/borrowings', label: 'Peminjaman', icon: Package, permission: { module: 'borrowings', action: 'read' } },
     { to: '/admin/agendas', label: 'Agenda', icon: Calendar, permission: { module: 'agendas', action: 'read' } },
-    { to: '/admin/rekap-data', label: 'Rekap Data', icon: ClipboardList, permission: { module: 'rekap_data', action: 'read' } },
+    { to: '/admin/timeline', label: 'Timeline', icon: CalendarDays, permission: { module: 'timeline', action: 'read' } },
     { to: '/admin/inventory', label: 'Inventaris', icon: Package, permission: { module: 'inventory', action: 'read' } },
     { to: '/admin/facilities', label: 'Fasilitas', icon: Building2, permission: { module: 'facilities', action: 'read' } },
     { to: '/admin/reports', label: 'Laporan', icon: FileText, permission: { module: 'reports', action: 'read' } },

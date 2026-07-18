@@ -1,6 +1,5 @@
 /**
  * Upload a file to Google Drive via the upload-file edge function.
- * Returns the public Google Drive URL and file ID.
  */
 export async function uploadFileToDrive(
   file: File,

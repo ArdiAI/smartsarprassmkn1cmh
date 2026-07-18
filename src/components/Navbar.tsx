@@ -22,6 +22,7 @@ export default function Navbar() {
     { to: '/inventaris', label: 'Inventaris' },
     { to: '/pinjam', label: 'Pinjam' },
     { to: '/agenda', label: 'Agenda' },
+    { to: '/timeline', label: 'Timeline' },
     { to: '/laporan', label: 'Laporan' },
     { to: '/riwayat', label: 'Riwayat' },
     { to: '/tentang', label: 'Tentang' },

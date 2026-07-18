@@ -263,12 +263,6 @@ export default function AgendaAdminPage() {
                         {a.location}
                       </div>
                     )}
-                    {(a.penyelenggara || a.organizer) && (
-                      <div className="flex items-center gap-2">
-                        <User className="w-4 h-4 text-slate-400" />
-                        {a.penyelenggara || a.organizer}
-                      </div>
-                    )}
                     {a.organisasi_jurusan && (
                       <div className="flex items-center gap-2">
                         <User className="w-4 h-4 text-slate-400" />
@@ -324,132 +318,56 @@ export default function AgendaAdminPage() {
             <div className="p-5 space-y-4">
               <div>
                 <label className="label">Nama Kegiatan</label>
-                <input
-                  type="text"
-                  value={form.title}
-                  onChange={e => setForm({ ...form, title: e.target.value })}
-                  className="input"
-                  placeholder="Contoh: Rapat Koordinasi"
-                />
-              </div>
-              <div>
-                <label className="label">Penyelenggara</label>
-                <input
-                  type="text"
-                  value={form.penyelenggara}
-                  onChange={e => setForm({ ...form, penyelenggara: e.target.value })}
-                  className="input"
-                  placeholder="Contoh: OSIS"
-                />
+                <input type="text" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className="input" placeholder="Contoh: Rapat Koordinasi" />
               </div>
               <div>
                 <label className="label">Organisasi/Jurusan</label>
-                <input
-                  type="text"
-                  value={form.organisasi_jurusan}
-                  onChange={e => setForm({ ...form, organisasi_jurusan: e.target.value })}
-                  className="input"
-                  placeholder="Contoh: Jurusan RPL"
-                />
+                <input type="text" value={form.organisasi_jurusan} onChange={e => setForm({ ...form, organisasi_jurusan: e.target.value })} className="input" placeholder="Contoh: Jurusan RPL" />
               </div>
               <div>
                 <label className="label">Penanggung Jawab</label>
-                <input
-                  type="text"
-                  value={form.penanggung_jawab}
-                  onChange={e => setForm({ ...form, penanggung_jawab: e.target.value })}
-                  className="input"
-                  placeholder="Contoh: Budi Santoso"
-                />
+                <input type="text" value={form.penanggung_jawab} onChange={e => setForm({ ...form, penanggung_jawab: e.target.value })} className="input" placeholder="Contoh: Budi Santoso" />
               </div>
               <div>
                 <label className="label">Lokasi</label>
-                <input
-                  type="text"
-                  value={form.location}
-                  onChange={e => setForm({ ...form, location: e.target.value })}
-                  className="input"
-                  placeholder="Contoh: Aula Sekolah"
-                />
+                <input type="text" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className="input" placeholder="Contoh: Aula Sekolah" />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="label">Tanggal</label>
-                  <input
-                    type="date"
-                    value={form.event_date}
-                    onChange={e => setForm({ ...form, event_date: e.target.value })}
-                    className="input"
-                  />
+                  <input type="date" value={form.event_date} onChange={e => setForm({ ...form, event_date: e.target.value })} className="input" />
                 </div>
                 <div>
                   <label className="label">Waktu Mulai</label>
-                  <input
-                    type="time"
-                    value={form.start_time}
-                    onChange={e => setForm({ ...form, start_time: e.target.value })}
-                    className="input"
-                  />
+                  <input type="time" value={form.start_time} onChange={e => setForm({ ...form, start_time: e.target.value })} className="input" />
                 </div>
                 <div>
                   <label className="label">Waktu Selesai</label>
-                  <input
-                    type="time"
-                    value={form.end_time}
-                    onChange={e => setForm({ ...form, end_time: e.target.value })}
-                    className="input"
-                  />
+                  <input type="time" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} className="input" />
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="label">Kategori</label>
-                  <select
-                    value={form.category}
-                    onChange={e => setForm({ ...form, category: e.target.value })}
-                    className="input"
-                  >
-                    {categoryOptions.map(c => (
-                      <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
-                    ))}
+                  <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="input">
+                    {categoryOptions.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="label">Status</label>
-                  <select
-                    value={form.status}
-                    onChange={e => setForm({ ...form, status: e.target.value })}
-                    className="input"
-                  >
-                    {statusOptions.map(s => (
-                      <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                    ))}
+                  <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="input">
+                    {statusOptions.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="label">Deskripsi</label>
-                <textarea
-                  value={form.description}
-                  onChange={e => setForm({ ...form, description: e.target.value })}
-                  rows={3}
-                  className="input"
-                  placeholder="Deskripsi kegiatan..."
-                />
+                <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} className="input" placeholder="Deskripsi kegiatan..." />
               </div>
             </div>
             <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-              >
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">Batal</button>
+              <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Simpan
               </button>
@@ -462,22 +380,10 @@ export default function AgendaAdminPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setDeleteId(null)}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Hapus Agenda?</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              Agenda yang dihapus tidak dapat dikembalikan.
-            </p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Agenda yang dihapus tidak dapat dikembalikan.</p>
             <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteId(null)}
-                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleDelete}
-                className="px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
-              >
-                Hapus
-              </button>
+              <button onClick={() => setDeleteId(null)} className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">Batal</button>
+              <button onClick={handleDelete} className="px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors">Hapus</button>
             </div>
           </div>
         </div>

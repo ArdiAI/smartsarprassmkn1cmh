@@ -4,7 +4,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { showToast } from '../../../components/Toast';
 import { cn } from '../../../utils/cn';
 import {
-  Shield, Plus, Pencil, Trash2, X, Loader2, Search, Lock, Crown, Star,
+  Shield, Plus, Pencil, Trash2, X, Loader2, Crown, Lock, Search,
 } from 'lucide-react';
 
 interface Role {
@@ -14,7 +14,7 @@ interface Role {
   level: number | null;
   is_system: boolean | null;
   is_active: boolean | null;
-  created_at: string | null;
+  created_at: string;
 }
 
 const emptyForm = {
@@ -24,24 +24,16 @@ const emptyForm = {
   is_active: true,
 };
 
-const levelIcons: Record<number, typeof Crown> = {
-  100: Crown,
-  80: Star,
-  60: Shield,
-};
-
 export default function RolesPermissionsPage() {
   const { hasPermission } = useAuth();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-
-  const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
+  const [deleteRole, setDeleteRole] = useState<Role | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const canCreate = hasPermission('roles', 'create');
@@ -74,8 +66,8 @@ export default function RolesPermissionsPage() {
 
   const openEdit = (r: Role) => {
     setForm({
-      name: r.name ?? '',
-      description: r.description ?? '',
+      name: r.name || '',
+      description: r.description || '',
       level: r.level ?? 0,
       is_active: r.is_active ?? true,
     });
@@ -92,14 +84,14 @@ export default function RolesPermissionsPage() {
     const payload = {
       name: form.name.trim(),
       description: form.description.trim() || null,
-      level: Number(form.level) || 0,
+      level: form.level,
       is_active: form.is_active,
     };
 
     if (editingId) {
       const { error } = await supabase.from('roles').update(payload).eq('id', editingId);
       if (error) {
-        showToast('Gagal memperbarui role: ' + error.message, 'error');
+        showToast('Gagal memperbarui role', 'error');
       } else {
         showToast('Role diperbarui', 'success');
         setModalOpen(false);
@@ -108,7 +100,7 @@ export default function RolesPermissionsPage() {
     } else {
       const { error } = await supabase.from('roles').insert({ ...payload, is_system: false });
       if (error) {
-        showToast('Gagal menambah role: ' + error.message, 'error');
+        showToast('Gagal menambah role', 'error');
       } else {
         showToast('Role ditambahkan', 'success');
         setModalOpen(false);
@@ -119,19 +111,14 @@ export default function RolesPermissionsPage() {
   };
 
   const handleDelete = async () => {
-    if (!deleteTarget) return;
-    if (deleteTarget.is_system) {
-      showToast('Role sistem tidak dapat dihapus', 'error');
-      setDeleteTarget(null);
-      return;
-    }
+    if (!deleteRole) return;
     setDeleting(true);
-    const { error } = await supabase.from('roles').delete().eq('id', deleteTarget.id);
+    const { error } = await supabase.from('roles').delete().eq('id', deleteRole.id);
     if (error) {
-      showToast('Gagal menghapus role: ' + error.message, 'error');
+      showToast('Gagal menghapus role', 'error');
     } else {
       showToast('Role dihapus', 'success');
-      setDeleteTarget(null);
+      setDeleteRole(null);
       await fetchRoles();
     }
     setDeleting(false);
@@ -140,10 +127,7 @@ export default function RolesPermissionsPage() {
   const filtered = roles.filter(r => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return (
-      r.name?.toLowerCase().includes(q) ||
-      r.description?.toLowerCase().includes(q)
-    );
+    return r.name?.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q);
   });
 
   return (
@@ -152,7 +136,7 @@ export default function RolesPermissionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Roles & Permissions</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Kelola role admin dan tingkat aksesnya
+            Kelola role admin dan level aksesnya
           </p>
         </div>
         {canCreate && (
@@ -190,59 +174,60 @@ export default function RolesPermissionsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map(r => {
-            const LevelIcon = levelIcons[r.level ?? 0] ?? Shield;
+            const isSystem = r.is_system ?? false;
+            const isActive = r.is_active ?? false;
             return (
-              <div key={r.id} className="card p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
-                      <LevelIcon className="w-6 h-6 text-blue-500" />
+              <div key={r.id} className="card p-5 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+                      <Shield className="w-5 h-5 text-white" />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-slate-900 dark:text-white truncate">{r.name}</h3>
-                        {r.is_system && (
-                          <Lock className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                        )}
-                      </div>
-                      <span className="text-xs text-slate-400">Level {r.level ?? '-'}</span>
+                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{r.name}</h3>
+                      {r.level != null && (
+                        <div className="flex items-center gap-1 text-xs text-slate-400">
+                          <Crown className="w-3 h-3" /> Level {r.level}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <span
-                    className={cn(
-                      'px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
-                      r.is_active
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {isSystem && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                        <Lock className="w-3 h-3" /> System
+                      </span>
                     )}
-                  >
-                    {r.is_active ? 'Aktif' : 'Nonaktif'}
-                  </span>
+                    <span
+                      className={cn(
+                        'px-2 py-0.5 rounded-full text-xs font-medium',
+                        isActive
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                      )}
+                    >
+                      {isActive ? 'Aktif' : 'Nonaktif'}
+                    </span>
+                  </div>
                 </div>
-
                 {r.description && (
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 line-clamp-2">
-                    {r.description}
-                  </p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{r.description}</p>
                 )}
-
-                <div className="mt-4 flex items-center justify-end gap-1 border-t border-slate-100 dark:border-slate-700 pt-3">
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/50">
                   {canUpdate && (
                     <button
                       onClick={() => openEdit(r)}
-                      className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
-                      title="Edit Role"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
                     >
-                      <Pencil className="w-4 h-4" />
+                      <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                   )}
-                  {canDelete && !r.is_system && (
+                  {canDelete && !isSystem && (
                     <button
-                      onClick={() => setDeleteTarget(r)}
-                      className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                      title="Hapus Role"
+                      onClick={() => setDeleteRole(r)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ml-auto"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" /> Hapus
                     </button>
                   )}
                 </div>
@@ -252,10 +237,9 @@ export default function RolesPermissionsPage() {
         </div>
       )}
 
-      {/* Add/Edit Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                 {editingId ? 'Edit Role' : 'Tambah Role'}
@@ -282,45 +266,41 @@ export default function RolesPermissionsPage() {
                   onChange={e => setForm({ ...form, description: e.target.value })}
                   rows={3}
                   className="input"
-                  placeholder="Deskripsi singkat role..."
+                  placeholder="Deskripsi role..."
                 />
               </div>
-              <div>
-                <label className="label">Level</label>
-                <input
-                  type="number"
-                  value={form.level}
-                  onChange={e => setForm({ ...form, level: Number(e.target.value) })}
-                  className="input"
-                  placeholder="0-100"
-                />
-                <p className="text-xs text-slate-400 mt-1.5">
-                  Level lebih tinggi = akses lebih luas (contoh: 100 = Super Admin, 80 = Admin, 60 = Staff).
-                </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Level</label>
+                  <input
+                    type="number"
+                    value={form.level}
+                    onChange={e => setForm({ ...form, level: Number(e.target.value) })}
+                    className="input"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">Level lebih tinggi = akses lebih luas</p>
+                </div>
+                <div>
+                  <label className="label">Status</label>
+                  <select
+                    value={form.is_active ? 'true' : 'false'}
+                    onChange={e => setForm({ ...form, is_active: e.target.value === 'true' })}
+                    className="input"
+                  >
+                    <option value="true">Aktif</option>
+                    <option value="false">Nonaktif</option>
+                  </select>
+                </div>
               </div>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.is_active}
-                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700 dark:text-slate-300">Role aktif</span>
-              </label>
             </div>
             <div className="flex justify-end gap-2 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-              >
-                Batal
-              </button>
+              <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 btn-primary"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 Simpan
               </button>
             </div>
@@ -328,27 +308,21 @@ export default function RolesPermissionsPage() {
         </div>
       )}
 
-      {/* Delete Confirm */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setDeleteTarget(null)}>
+      {deleteRole && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setDeleteRole(null)}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Hapus Role?</h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              Role <span className="font-medium">{deleteTarget.name}</span> akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.
+              Role <span className="font-medium text-slate-900 dark:text-white">{deleteRole.name}</span> akan dihapus permanen.
             </p>
             <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-              >
-                Batal
-              </button>
+              <button onClick={() => setDeleteRole(null)} className="btn-secondary">Batal</button>
               <button
                 onClick={handleDelete}
                 disabled={deleting}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
               >
-                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
                 Hapus
               </button>
             </div>
