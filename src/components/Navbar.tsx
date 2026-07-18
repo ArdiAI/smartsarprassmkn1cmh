@@ -1,6 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { Menu, X, Moon, Sun, LogOut, User, LayoutDashboard } from 'lucide-react';
+import { Menu, X, Moon, Sun, LogOut, User, LayoutDashboard, Calendar } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { brandConfig } from '../brand/config';
@@ -21,6 +21,7 @@ export default function Navbar() {
     { to: '/fasilitas', label: 'Fasilitas' },
     { to: '/inventaris', label: 'Inventaris' },
     { to: '/pinjam', label: 'Pinjam' },
+    { to: '/agenda', label: 'Agenda' },
     { to: '/laporan', label: 'Laporan' },
     { to: '/riwayat', label: 'Riwayat' },
     { to: '/tentang', label: 'Tentang' },

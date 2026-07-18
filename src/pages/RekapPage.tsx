@@ -1,313 +1,247 @@
 import { useEffect, useState, useMemo } from 'react';
+import { Calendar, Search, Loader2, MapPin, User, Filter, Table } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
-import { supabase } from '../lib/supabase';
-import {
-  BarChart3, Package, Building2, ClipboardList, Loader2,
-  Calendar, TrendingUp, Clock, CheckCircle, XCircle, AlertCircle,
-} from 'lucide-react';
 
-interface Stats {
-  totalInventory: number;
-  totalFacilities: number;
-  totalBorrowings: number;
-  pendingCount: number;
-  approvedCount: number;
-  rejectedCount: number;
-  returnedCount: number;
-  completedCount: number;
-  cancelledCount: number;
+interface Agenda {
+  id: string;
+  title: string;
+  category: string | null;
+  event_date: string;
+  location: string | null;
+  organizer: string | null;
+  penyelenggara: string | null;
+  organisasi_jurusan: string | null;
+  penanggung_jawab: string | null;
+  status: string | null;
+  created_at: string;
 }
 
-interface DailyBorrowing {
-  date: string;
-  count: number;
+interface Borrowing {
+  id: string;
+  borrower_name: string | null;
+  borrower_class: string | null;
+  borrow_date: string | null;
+  status: string | null;
+  purpose: string | null;
+  item_type: string | null;
+  current_status_label: string | null;
+  created_at: string;
+  borrowing_items: { item_name: string | null; item_type: string | null }[] | null;
 }
 
-const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
-  pending: { label: 'Menunggu', color: 'bg-amber-500', icon: Clock },
-  approved: { label: 'Disetujui', color: 'bg-green-500', icon: CheckCircle },
-  rejected: { label: 'Ditolak', color: 'bg-red-500', icon: XCircle },
-  returned: { label: 'Dikembalikan', color: 'bg-blue-500', icon: Package },
-  completed: { label: 'Selesai', color: 'bg-emerald-500', icon: CheckCircle },
-  cancelled: { label: 'Dibatalkan', color: 'bg-slate-500', icon: XCircle },
+interface RekapRow {
+  id: string;
+  tanggal: string;
+  jenis: 'Agenda' | 'Peminjaman';
+  namaKegiatan: string;
+  organisasi: string;
+  penanggungJawab: string;
+  status: string;
+  lokasi: string;
+}
+
+const statusColors: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  completed: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
+  cancelled: 'bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300',
+  draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300',
+  terjadwal: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  berlangsung: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  selesai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  dibatalkan: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
 };
 
+const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
 export default function RekapPage() {
-  const [stats, setStats] = useState<Stats>({
-    totalInventory: 0,
-    totalFacilities: 0,
-    totalBorrowings: 0,
-    pendingCount: 0,
-    approvedCount: 0,
-    rejectedCount: 0,
-    returnedCount: 0,
-    completedCount: 0,
-    cancelledCount: 0,
-  });
-  const [dailyBorrowings, setDailyBorrowings] = useState<DailyBorrowing[]>([]);
+  const [rows, setRows] = useState<RekapRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [search, setSearch] = useState('');
+  const [jenisFilter, setJenisFilter] = useState('all');
+  const [bulanFilter, setBulanFilter] = useState('all');
+  const [tahunFilter, setTahunFilter] = useState('all');
+  const [tanggalFilter, setTanggalFilter] = useState('');
 
   useEffect(() => {
-    // Default to last 30 days
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
-    setStartDate(start.toISOString().split('T')[0]);
-    setEndDate(end.toISOString().split('T')[0]);
-  }, []);
-
-  const fetchData = async (start: string, end: string) => {
-    setLoading(true);
-    try {
-      const [invRes, facRes, allBorRes] = await Promise.all([
-        supabase.from('inventory').select('id', { count: 'exact', head: true }),
-        supabase.from('facilities').select('id', { count: 'exact', head: true }),
-        supabase.from('borrowings').select('id, status, created_at, borrow_date'),
+    (async () => {
+      const [ag, bor] = await Promise.all([
+        supabase.from('agendas').select('*').order('event_date', { ascending: false }),
+        supabase.from('borrowings').select('*, borrowing_items(item_name, item_type)').order('borrow_date', { ascending: false }),
       ]);
 
-      let borrowings = (allBorRes.data as any[]) || [];
+      const agendaRows: RekapRow[] = ((ag.data as unknown as Agenda[]) || []).map(a => ({
+        id: a.id,
+        tanggal: a.event_date,
+        jenis: 'Agenda',
+        namaKegiatan: a.title,
+        organisasi: a.organisasi_jurusan || a.organizer || a.penyelenggara || '-',
+        penanggungJawab: a.penanggung_jawab || '-',
+        status: a.status || 'draft',
+        lokasi: a.location || '-',
+      }));
 
-      // Filter by date range if provided
-      if (start && end) {
-        borrowings = borrowings.filter(b => {
-          const d = b.borrow_date || b.created_at?.split('T')[0];
-          return d && d >= start && d <= end;
-        });
-      }
-
-      const statusCounts: Record<string, number> = {};
-      borrowings.forEach(b => {
-        statusCounts[b.status] = (statusCounts[b.status] || 0) + 1;
+      const borrowingRows: RekapRow[] = ((bor.data as unknown as Borrowing[]) || []).map(b => {
+        const items = b.borrowing_items || [];
+        const itemName = items.length > 0 ? items.map(i => i.item_name || 'Item').join(', ') : b.purpose || 'Peminjaman';
+        return {
+          id: b.id,
+          tanggal: b.borrow_date || b.created_at,
+          jenis: 'Peminjaman' as const,
+          namaKegiatan: b.purpose || itemName,
+          organisasi: b.borrower_class || '-',
+          penanggungJawab: b.borrower_name || '-',
+          status: b.current_status_label || b.status || 'pending',
+          lokasi: '-',
+        };
       });
 
-      setStats({
-        totalInventory: invRes.count ?? 0,
-        totalFacilities: facRes.count ?? 0,
-        totalBorrowings: borrowings.length,
-        pendingCount: statusCounts['pending'] || 0,
-        approvedCount: statusCounts['approved'] || 0,
-        rejectedCount: statusCounts['rejected'] || 0,
-        returnedCount: statusCounts['returned'] || 0,
-        completedCount: statusCounts['completed'] || 0,
-        cancelledCount: statusCounts['cancelled'] || 0,
-      });
-
-      // Daily borrowings for chart (last 7 days within range)
-      const dailyMap: Record<string, number> = {};
-      borrowings.forEach(b => {
-        const d = (b.borrow_date || b.created_at?.split('T')[0]) ?? '';
-        if (d) dailyMap[d] = (dailyMap[d] || 0) + 1;
-      });
-
-      // Generate last 7 days
-      const days: DailyBorrowing[] = [];
-      const endD = end ? new Date(end) : new Date();
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(endD);
-        d.setDate(d.getDate() - i);
-        const ds = d.toISOString().split('T')[0];
-        days.push({ date: ds, count: dailyMap[ds] || 0 });
-      }
-      setDailyBorrowings(days);
-    } catch (e) {
-      console.error(e);
-    } finally {
+      const combined = [...agendaRows, ...borrowingRows].sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+      setRows(combined);
       setLoading(false);
-    }
+    })();
+  }, []);
+
+  const years = useMemo(() => {
+    const ys = new Set(rows.map(r => new Date(r.tanggal).getFullYear().toString()));
+    return Array.from(ys).sort((a, b) => Number(b) - Number(a));
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    return rows.filter(r => {
+      if (jenisFilter !== 'all' && r.jenis !== jenisFilter) return false;
+      if (tanggalFilter && r.tanggal.slice(0, 10) !== tanggalFilter) return false;
+      const d = new Date(r.tanggal);
+      if (bulanFilter !== 'all' && (d.getMonth() + 1) !== Number(bulanFilter)) return false;
+      if (tahunFilter !== 'all' && d.getFullYear().toString() !== tahunFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return (
+          r.namaKegiatan?.toLowerCase().includes(q) ||
+          r.organisasi?.toLowerCase().includes(q) ||
+          r.penanggungJawab?.toLowerCase().includes(q) ||
+          r.lokasi?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [rows, jenisFilter, bulanFilter, tahunFilter, tanggalFilter, search]);
+
+  const clearFilters = () => {
+    setJenisFilter('all'); setBulanFilter('all'); setTahunFilter('all'); setTanggalFilter(''); setSearch('');
   };
-
-  useEffect(() => {
-    if (startDate && endDate) {
-      fetchData(startDate, endDate);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
-
-  const maxDaily = useMemo(() => Math.max(...dailyBorrowings.map(d => d.count), 1), [dailyBorrowings]);
-
-  const statusBreakdown = [
-    { key: 'pending', count: stats.pendingCount },
-    { key: 'approved', count: stats.approvedCount },
-    { key: 'rejected', count: stats.rejectedCount },
-    { key: 'returned', count: stats.returnedCount },
-    { key: 'completed', count: stats.completedCount },
-    { key: 'cancelled', count: stats.cancelledCount },
-  ];
-
-  const maxStatus = Math.max(...statusBreakdown.map(s => s.count), 1);
-
-  const summaryCards = [
-    { label: 'Total Inventaris', value: stats.totalInventory, icon: Package, color: 'from-blue-500 to-blue-600', iconBg: 'bg-blue-100 dark:bg-blue-900/30', iconColor: 'text-blue-600 dark:text-blue-400' },
-    { label: 'Total Fasilitas', value: stats.totalFacilities, icon: Building2, color: 'from-cyan-500 to-cyan-600', iconBg: 'bg-cyan-100 dark:bg-cyan-900/30', iconColor: 'text-cyan-600 dark:text-cyan-400' },
-    { label: 'Total Peminjaman', value: stats.totalBorrowings, icon: ClipboardList, color: 'from-indigo-500 to-indigo-600', iconBg: 'bg-indigo-100 dark:bg-indigo-900/30', iconColor: 'text-indigo-600 dark:text-indigo-400' },
-  ];
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Header */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-blue-500" /> Rekap & Statistik
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Ringkasan aktivitas sarana dan prasarana</p>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Rekap Kegiatan</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Gabungan agenda dan peminjaman dalam satu tabel (read-only)</p>
         </div>
 
-        {/* Date Range Filter */}
-        <div className="card p-4 mb-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-              <Calendar className="w-4 h-4 text-blue-500" /> Rentang Tanggal:
+        {/* Filters */}
+        <div className="card p-4 mb-6 space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Cari kegiatan, organisasi, atau penanggung jawab..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
             </div>
-            <div className="flex flex-1 flex-col sm:flex-row gap-3 w-full">
-              <div className="flex-1">
-                <label className="text-xs text-slate-400 dark:text-slate-500 block mb-1">Dari</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={e => setStartDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="text-xs text-slate-400 dark:text-slate-500 block mb-1">Sampai</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={e => setEndDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-            </div>
+            <select value={jenisFilter} onChange={e => setJenisFilter(e.target.value)}
+              className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
+              <option value="all">Semua Jenis</option>
+              <option value="Agenda">Agenda</option>
+              <option value="Peminjaman">Peminjaman</option>
+            </select>
+            <input type="date" value={tanggalFilter} onChange={e => setTanggalFilter(e.target.value)}
+              className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none" />
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <select value={bulanFilter} onChange={e => setBulanFilter(e.target.value)}
+              className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
+              <option value="all">Semua Bulan</option>
+              {monthNames.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <select value={tahunFilter} onChange={e => setTahunFilter(e.target.value)}
+              className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
+              <option value="all">Semua Tahun</option>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <button onClick={clearFilters} className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1.5">
+              <Filter className="w-4 h-4" /> Reset
+            </button>
           </div>
         </div>
 
+        {/* Table */}
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-          </div>
+          <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Table} title="Tidak ada data rekap" description="Coba ubah filter pencarian." />
         ) : (
           <>
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-              {summaryCards.map(card => {
-                const Icon = card.icon;
-                return (
-                  <div key={card.label} className="card p-5">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">{card.label}</p>
-                        <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{card.value}</p>
-                      </div>
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${card.iconBg}`}>
-                        <Icon className={`w-6 h-6 ${card.iconColor}`} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Daily Borrowings Chart */}
-              <div className="card p-6">
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-blue-500" /> Peminjaman 7 Hari Terakhir
-                </h2>
-                {dailyBorrowings.every(d => d.count === 0) ? (
-                  <EmptyState icon={BarChart3} title="Tidak ada data" description="Belum ada peminjaman dalam rentang ini" />
-                ) : (
-                  <div className="space-y-2">
-                    {dailyBorrowings.map(d => (
-                      <div key={d.date} className="flex items-center gap-3">
-                        <span className="text-xs text-slate-500 dark:text-slate-400 w-24 flex-shrink-0">
-                          {new Date(d.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                        </span>
-                        <div className="flex-1 h-8 bg-slate-100 dark:bg-slate-700/30 rounded-lg overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg flex items-center justify-end pr-2 transition-all"
-                            style={{ width: `${(d.count / maxDaily) * 100}%` }}
-                          >
-                            {d.count > 0 && (
-                              <span className="text-xs font-bold text-white">{d.count}</span>
-                            )}
+            <div className="mb-3 text-sm text-slate-500 dark:text-slate-400">Menampilkan {filtered.length} dari {rows.length} catatan</div>
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-700/40 text-left text-xs font-medium text-slate-500 dark:text-slate-300 uppercase tracking-wider">
+                      <th className="px-4 py-3">Tanggal</th>
+                      <th className="px-4 py-3">Jenis</th>
+                      <th className="px-4 py-3">Nama Kegiatan</th>
+                      <th className="px-4 py-3">Organisasi</th>
+                      <th className="px-4 py-3">Penanggung Jawab</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">Lokasi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {filtered.map(r => (
+                      <tr key={`${r.jenis}-${r.id}`} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                            {new Date(r.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </div>
-                        </div>
-                      </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${r.jenis === 'Agenda' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'}`}>
+                            {r.jenis}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-900 dark:text-white font-medium max-w-xs">{r.namaKegiatan}</td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{r.organisasi}</td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                          <div className="flex items-center gap-1.5"><User className="w-3.5 h-3.5 text-slate-400" />{r.penanggungJawab}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[r.status] || 'bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300'}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                          {r.lokasi !== '-' ? <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" />{r.lokasi}</div> : '-'}
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Status Breakdown */}
-              <div className="card p-6">
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-blue-500" /> Status Peminjaman
-                </h2>
-                {stats.totalBorrowings === 0 ? (
-                  <EmptyState icon={ClipboardList} title="Tidak ada data" description="Belum ada peminjaman dalam rentang ini" />
-                ) : (
-                  <div className="space-y-3">
-                    {statusBreakdown.map(s => {
-                      const cfg = statusConfig[s.key];
-                      const Icon = cfg.icon;
-                      const pct = stats.totalBorrowings > 0 ? (s.count / stats.totalBorrowings) * 100 : 0;
-                      return (
-                        <div key={s.key}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                              <Icon className="w-3.5 h-3.5" /> {cfg.label}
-                            </span>
-                            <span className="text-sm font-bold text-slate-900 dark:text-white">{s.count}</span>
-                          </div>
-                          <div className="h-3 bg-slate-100 dark:bg-slate-700/30 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${cfg.color} rounded-full transition-all`}
-                              style={{ width: `${(s.count / maxStatus) * 100}%` }}
-                            />
-                          </div>
-                          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{pct.toFixed(1)}% dari total</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Overall Summary */}
-            <div className="card p-6 mt-6">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Ringkasan Periode</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="text-center p-4 rounded-xl bg-slate-50 dark:bg-slate-700/30">
-                  <p className="text-2xl font-bold text-slate-900 dark:text-white">{stats.totalBorrowings}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Total Peminjaman</p>
-                </div>
-                <div className="text-center p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20">
-                  <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{stats.approvedCount + stats.completedCount}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Disetujui/Selesai</p>
-                </div>
-                <div className="text-center p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20">
-                  <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.pendingCount}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Menunggu</p>
-                </div>
-                <div className="text-center p-4 rounded-xl bg-red-50 dark:bg-red-900/20">
-                  <p className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.rejectedCount + stats.cancelledCount}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Ditolak/Dibatalkan</p>
-                </div>
+                  </tbody>
+                </table>
               </div>
             </div>
           </>
         )}
-      </div>
-
-      <div className="flex-1" />
+      </main>
       <Footer />
     </div>
   );

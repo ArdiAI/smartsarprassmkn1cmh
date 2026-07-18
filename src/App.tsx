@@ -14,6 +14,7 @@ import ReportPage from './pages/ReportPage';
 import AboutPage from './pages/AboutPage';
 import BorrowPage from './pages/BorrowPage';
 import RekapPage from './pages/RekapPage';
+import AgendaPage from './pages/AgendaPage';
 
 import AdminLayout from './layouts/AdminLayout';
 import DashboardPage from './pages/admin/DashboardPage';
@@ -25,6 +26,8 @@ import TeamAdminPage from './pages/admin/TeamAdminPage';
 import AnnouncementsAdminPage from './pages/admin/AnnouncementsAdminPage';
 import AspirasiAdminPage from './pages/admin/AspirasiAdminPage';
 import StatisticsPage from './pages/admin/StatisticsPage';
+import AgendaAdminPage from './pages/admin/AgendaAdminPage';
+import RekapDataAdminPage from './pages/admin/RekapDataAdminPage';
 
 import UserManagementPage from './pages/admin/superadmin/UserManagementPage';
 import RolesPermissionsPage from './pages/admin/superadmin/RolesPermissionsPage';
@@ -96,10 +99,13 @@ export default function App() {
         <Route path="/tentang" element={<RequireAuth><AboutPage /></RequireAuth>} />
         <Route path="/pinjam" element={<RequireAuth><BorrowPage /></RequireAuth>} />
         <Route path="/rekap" element={<RequireAuth><RekapPage /></RequireAuth>} />
+        <Route path="/agenda" element={<RequireAuth><AgendaPage /></RequireAuth>} />
 
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
           <Route index element={<DashboardPage />} />
           <Route path="borrowings" element={<PermissionRoute permission={{ module: 'borrowings', action: 'read' }}><BorrowingsAdminPage /></PermissionRoute>} />
+          <Route path="agendas" element={<PermissionRoute permission={{ module: 'agendas', action: 'read' }}><AgendaAdminPage /></PermissionRoute>} />
+          <Route path="rekap-data" element={<PermissionRoute permission={{ module: 'rekap_data', action: 'read' }}><RekapDataAdminPage /></PermissionRoute>} />
           <Route path="inventory" element={<PermissionRoute permission={{ module: 'inventory', action: 'read' }}><InventoryAdminPage /></PermissionRoute>} />
           <Route path="facilities" element={<PermissionRoute permission={{ module: 'facilities', action: 'read' }}><FacilitiesAdminPage /></PermissionRoute>} />
           <Route path="reports" element={<PermissionRoute permission={{ module: 'reports', action: 'read' }}><ReportsAdminPage /></PermissionRoute>} />

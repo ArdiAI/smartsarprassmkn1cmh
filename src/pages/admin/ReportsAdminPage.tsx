@@ -2,16 +2,15 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
 import {
-  Wrench, Loader2, Search, X, AlertTriangle, MapPin, User, Mail, Phone, Clock,
+  Loader2, Search, FileText, X, AlertTriangle, CheckCircle, Clock, Wrench,
 } from 'lucide-react';
 
 interface DamageReport {
   id: string;
   inventory_id: string | null;
   reporter_name: string;
-  description: string | null;
+  description: string;
   image_url: string | null;
   severity: string;
   status: string;
@@ -24,31 +23,22 @@ interface DamageReport {
   location: string | null;
 }
 
-interface InventoryLookup {
+interface Inventory {
   id: string;
   name: string;
+  code: string;
 }
 
 const severityConfig: Record<string, { label: string; color: string }> = {
-  minor: { label: 'Ringan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  minor: { label: 'Minor', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
   moderate: { label: 'Sedang', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
   severe: { label: 'Berat', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
 };
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-};
-
-const statusFlow: Record<string, string> = {
-  pending: 'in_progress',
-  in_progress: 'resolved',
-};
-
-const statusActionLabel: Record<string, string> = {
-  pending: 'Proses',
-  in_progress: 'Selesaikan',
+const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
+  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
+  in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Wrench },
+  resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle },
 };
 
 export default function ReportsAdminPage() {
@@ -56,285 +46,257 @@ export default function ReportsAdminPage() {
   const canManage = hasPermission('reports', 'manage');
 
   const [reports, setReports] = useState<DamageReport[]>([]);
-  const [inventoryMap, setInventoryMap] = useState<Record<string, string>>({});
+  const [inventoryMap, setInventoryMap] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [notesModal, setNotesModal] = useState<DamageReport | null>(null);
-  const [notesText, setNotesText] = useState('');
-  const [savingNotes, setSavingNotes] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<DamageReport | null>(null);
+  const [resolutionNotes, setResolutionNotes] = useState('');
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('damage_reports')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      const list = (data as unknown as DamageReport[]) || [];
-      setReports(list);
-
-      // Build inventory lookup
-      const invIds = [...new Set(list.map(r => r.inventory_id).filter(Boolean) as string[])];
-      if (invIds.length > 0) {
-        const { data: invData } = await supabase
-          .from('inventory')
-          .select('id, name')
-          .in('id', invIds);
-        const inv = (invData as unknown as InventoryLookup[]) || [];
-        const map: Record<string, string> = {};
-        for (const i of inv) map[i.id] = i.name;
-        setInventoryMap(map);
-      }
-    } catch (e) {
-      console.error(e);
+    const [repRes, invRes] = await Promise.all([
+      supabase.from('damage_reports').select('*').order('created_at', { ascending: false }),
+      supabase.from('inventory').select('id, name, code'),
+    ]);
+    if (repRes.error) {
       showToast('Gagal memuat laporan kerusakan', 'error');
-    } finally {
-      setLoading(false);
+    } else {
+      setReports((repRes.data as unknown as DamageReport[]) || []);
     }
+    if (!invRes.error && invRes.data) {
+      const m: Record<string, Inventory> = {};
+      (invRes.data as unknown as Inventory[]).forEach((i) => (m[i.id] = i));
+      setInventoryMap(m);
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
 
-  const filtered = reports.filter(r => {
+  const filtered = reports.filter((r) => {
     if (severityFilter !== 'all' && r.severity !== severityFilter) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
+      const invName = r.inventory_id ? (inventoryMap[r.inventory_id]?.name || '') : '';
       return (
         r.reporter_name?.toLowerCase().includes(q) ||
         r.description?.toLowerCase().includes(q) ||
-        r.location?.toLowerCase().includes(q)
+        invName.toLowerCase().includes(q)
       );
     }
     return true;
   });
 
-  const handleAdvanceStatus = async (report: DamageReport) => {
-    if (!canManage) {
-      showToast('Anda tidak memiliki izin untuk mengubah status', 'error');
-      return;
-    }
-    const next = statusFlow[report.status];
-    if (!next) return;
+  const updateStatus = async (report: DamageReport, newStatus: string) => {
+    if (!canManage) return;
     setActionLoading(report.id);
-    try {
-      const payload: Record<string, string | null> = { status: next };
-      if (next === 'resolved') payload.resolved_at = new Date().toISOString();
-      const { error } = await supabase.from('damage_reports').update(payload).eq('id', report.id);
-      if (error) throw error;
-      showToast(`Status diperbarui ke "${statusConfig[next].label}"`, 'success');
-      await fetchReports();
-    } catch (e) {
-      console.error(e);
+    const payload: Record<string, unknown> = {
+      status: newStatus,
+      resolved_at: newStatus === 'resolved' ? new Date().toISOString() : null,
+    };
+    const { error } = await supabase.from('damage_reports').update(payload).eq('id', report.id);
+    if (error) {
       showToast('Gagal memperbarui status', 'error');
-    } finally {
-      setActionLoading(null);
+    } else {
+      showToast('Status diperbarui', 'success');
+      fetchReports();
     }
+    setActionLoading(null);
   };
 
-  const openNotes = (report: DamageReport) => {
-    setNotesModal(report);
-    setNotesText(report.resolution_notes ?? '');
+  const openResolve = (report: DamageReport) => {
+    setEditing(report);
+    setResolutionNotes(report.resolution_notes ?? '');
+    setModalOpen(true);
   };
 
-  const handleSaveNotes = async (e: React.FormEvent) => {
+  const handleResolve = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!notesModal) return;
-    if (!canManage) {
-      showToast('Anda tidak memiliki izin untuk mengelola laporan', 'error');
-      return;
+    if (!editing) return;
+    setActionLoading(editing.id);
+    const { error } = await supabase
+      .from('damage_reports')
+      .update({
+        status: 'resolved',
+        resolution_notes: resolutionNotes || null,
+        resolved_at: new Date().toISOString(),
+      })
+      .eq('id', editing.id);
+    if (error) {
+      showToast('Gagal menyimpan resolusi', 'error');
+    } else {
+      showToast('Laporan diselesaikan', 'success');
+      setModalOpen(false);
+      fetchReports();
     }
-    setSavingNotes(true);
-    try {
-      const { error } = await supabase
-        .from('damage_reports')
-        .update({ resolution_notes: notesText.trim() || null })
-        .eq('id', notesModal.id);
-      if (error) throw error;
-      showToast('Catatan resolusi disimpan', 'success');
-      setNotesModal(null);
-      await fetchReports();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal menyimpan catatan', 'error');
-    } finally {
-      setSavingNotes(false);
-    }
+    setActionLoading(null);
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Laporan Kerusakan</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Tinjau dan kelola laporan kerusakan barang</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola laporan kerusakan barang</p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Cari pelapor, deskripsi, atau lokasi..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-          />
-        </div>
-        <select
-          value={severityFilter}
-          onChange={e => setSeverityFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        >
-          <option value="all">Semua Tingkat</option>
-          <option value="minor">Ringan</option>
-          <option value="moderate">Sedang</option>
-          <option value="severe">Berat</option>
-        </select>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        >
-          <option value="all">Semua Status</option>
-          <option value="pending">Menunggu</option>
-          <option value="in_progress">Diproses</option>
-          <option value="resolved">Selesai</option>
-        </select>
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Wrench className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+      <div className="card p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari pelapor, deskripsi, barang..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+            />
           </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada laporan</p>
-          <p className="text-sm text-slate-400 mt-1">Belum ada laporan kerusakan yang sesuai filter</p>
+          <select
+            value={severityFilter}
+            onChange={(e) => setSeverityFilter(e.target.value)}
+            className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+          >
+            <option value="all">Semua Tingkat</option>
+            <option value="minor">Minor</option>
+            <option value="moderate">Sedang</option>
+            <option value="severe">Berat</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+          >
+            <option value="all">Semua Status</option>
+            <option value="pending">Menunggu</option>
+            <option value="in_progress">Diproses</option>
+            <option value="resolved">Selesai</option>
+          </select>
         </div>
-      ) : (
-        <div className="space-y-4">
-          {filtered.map(r => {
-            const sev = severityConfig[r.severity] || severityConfig.minor;
-            const sc = statusConfig[r.status] || statusConfig.pending;
-            const itemName = r.inventory_id ? (inventoryMap[r.inventory_id] ?? 'Barang tidak ditemukan') : null;
-            const nextStatus = statusFlow[r.status];
-            return (
-              <div key={r.id} className="card p-5">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.reporter_name ?? 'Anonim'}</h3>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sev.color)}>{sev.label}</span>
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
+
+        <div className="text-sm text-slate-500 dark:text-slate-400">
+          Menampilkan {filtered.length} dari {reports.length} laporan
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+              <FileText className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada laporan</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((r) => {
+              const sevCfg = severityConfig[r.severity] || severityConfig.minor;
+              const stCfg = statusConfig[r.status] || statusConfig.pending;
+              const StIcon = stCfg.icon;
+              const invName = r.inventory_id ? (inventoryMap[r.inventory_id]?.name || '-') : '-';
+              return (
+                <div key={r.id} className="rounded-2xl border border-slate-200/50 dark:border-slate-700/50 p-4 bg-white dark:bg-slate-800">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <h3 className="font-semibold text-slate-900 dark:text-white">{r.reporter_name}</h3>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sevCfg.color}`}>{sevCfg.label}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 ${stCfg.color}`}>
+                          <StIcon className="w-3 h-3" /> {stCfg.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-300">{r.description}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 mt-2">
+                        <span>Barang: {invName}</span>
+                        {r.reporter_unit && <span>Unit: {r.reporter_unit}</span>}
+                        {r.location && <span>Lokasi: {r.location}</span>}
+                        <span>{new Date(r.created_at).toLocaleDateString('id-ID')}</span>
+                      </div>
+                      {r.resolution_notes && (
+                        <div className="mt-2 p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-sm text-emerald-700 dark:text-emerald-300">
+                          <strong>Catatan resolusi:</strong> {r.resolution_notes}
+                        </div>
+                      )}
                     </div>
-                    {itemName && (
-                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Barang: {itemName}</p>
-                    )}
-                    {r.description && (
-                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{r.description}</p>
-                    )}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 text-sm text-slate-500 dark:text-slate-400">
-                      {r.reporter_unit && (
-                        <div className="flex items-center gap-1.5"><User className="w-4 h-4" /> {r.reporter_unit}</div>
-                      )}
-                      {r.reporter_email && (
-                        <div className="flex items-center gap-1.5"><Mail className="w-4 h-4" /> {r.reporter_email}</div>
-                      )}
-                      {r.reporter_phone && (
-                        <div className="flex items-center gap-1.5"><Phone className="w-4 h-4" /> {r.reporter_phone}</div>
-                      )}
-                      {r.location && (
-                        <div className="flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {r.location}</div>
-                      )}
-                      <div className="flex items-center gap-1.5"><Clock className="w-4 h-4" /> {new Date(r.created_at).toLocaleString('id-ID')}</div>
-                    </div>
-                    {r.image_url && (
-                      <a href={r.image_url} target="_blank" rel="noreferrer" className="inline-block mt-3 text-sm text-blue-500 hover:underline">
-                        Lihat foto kerusakan
-                      </a>
-                    )}
-                    {r.resolution_notes && (
-                      <div className="mt-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30 text-sm text-slate-600 dark:text-slate-300">
-                        <span className="font-medium">Catatan resolusi:</span> {r.resolution_notes}
+                    {canManage && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {r.status === 'pending' && (
+                          <button
+                            onClick={() => updateStatus(r, 'in_progress')}
+                            disabled={actionLoading === r.id}
+                            className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                          >
+                            Proses
+                          </button>
+                        )}
+                        {r.status === 'in_progress' && (
+                          <button
+                            onClick={() => openResolve(r)}
+                            disabled={actionLoading === r.id}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                          >
+                            Selesaikan
+                          </button>
+                        )}
+                        {r.status === 'pending' && (
+                          <button
+                            onClick={() => openResolve(r)}
+                            disabled={actionLoading === r.id}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                          >
+                            Selesaikan
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
-                  {canManage && (
-                    <div className="flex flex-col gap-2 flex-shrink-0">
-                      {nextStatus && (
-                        <button
-                          onClick={() => handleAdvanceStatus(r)}
-                          disabled={actionLoading === r.id}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                        >
-                          {actionLoading === r.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
-                          {statusActionLabel[r.status]}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => openNotes(r)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                      >
-                        <Wrench className="w-4 h-4" /> Catatan
-                      </button>
-                    </div>
-                  )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-      {/* Notes Modal */}
-      {notesModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg">
+      {/* Resolution modal */}
+      {modalOpen && editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Catatan Resolusi</h2>
-              <button onClick={() => setNotesModal(null)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" /> Selesaikan Laporan
+              </h2>
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSaveNotes} className="p-5 space-y-4">
+            <form onSubmit={handleResolve} className="p-5 space-y-4">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-700/30 text-sm">
+                <p className="font-medium text-slate-900 dark:text-white">{editing.reporter_name}</p>
+                <p className="text-slate-600 dark:text-slate-300">{editing.description}</p>
+              </div>
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan</label>
+                <label className="label">Catatan Resolusi</label>
                 <textarea
-                  value={notesText}
-                  onChange={e => setNotesText(e.target.value)}
-                  rows={4}
-                  placeholder="Tulis catatan resolusi untuk laporan ini..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  className="input min-h-[100px]"
+                  value={resolutionNotes}
+                  onChange={(e) => setResolutionNotes(e.target.value)}
+                  placeholder="Jelaskan tindakan yang diambil..."
+                  required
                 />
               </div>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setNotesModal(null)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingNotes}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  {savingNotes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
-                  Simpan
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
+                <button type="submit" disabled={actionLoading === editing.id} className="btn-primary flex items-center gap-2">
+                  {actionLoading === editing.id && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Selesaikan
                 </button>
               </div>
             </form>

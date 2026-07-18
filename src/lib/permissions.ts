@@ -25,16 +25,6 @@ export interface AdminRoleAssignment {
   role_level: number;
 }
 
-/**
- * Fetch the full set of permissions for a user by joining:
- *   auth.users.id  ->  admin_users.user_id
- *   admin_users.id ->  admin_user_roles.admin_user_id
- *   admin_user_roles.role_id -> role_permissions.role_id
- *   role_permissions.permission_id -> permissions.id
- *
- * Fallback: if no admin_user_roles rows exist, use the legacy
- * admin_users.role text column to resolve a single role.
- */
 export async function fetchUserPermissions(
   userId: string,
 ): Promise<{
@@ -46,7 +36,6 @@ export async function fetchUserPermissions(
   const permissions = new Set<PermissionKey>();
   const roles: AdminRoleAssignment[] = [];
 
-  // STEP 1: Find the active admin_users row for this auth user.
   const { data: adminByUserId } = await supabase
     .from('admin_users')
     .select('id, user_id, email, name, role, is_active')
@@ -56,7 +45,6 @@ export async function fetchUserPermissions(
 
   let adminRow: AdminProfile | null = (adminByUserId as unknown as AdminProfile) || null;
 
-  // Fallback: try by email (covers accounts created before user_id was linked).
   if (!adminRow) {
     const { data: userData } = await supabase.auth.getUser();
     const email = userData?.user?.email;
@@ -81,7 +69,6 @@ export async function fetchUserPermissions(
     return { permissions, roles, primaryRole: null, adminProfile: null };
   }
 
-  // STEP 2: Look up role assignments via admin_user_roles.
   const { data: roleLinks } = await supabase
     .from('admin_user_roles')
     .select('role_id, roles!role_id(id, name, level, is_system, is_active)')
@@ -98,7 +85,6 @@ export async function fetchUserPermissions(
     }
   }
 
-  // STEP 3: Fallback — if no admin_user_roles rows, use the legacy role text column.
   if (activeRoleIds.length === 0 && adminRow.role) {
     const { data: roleByName } = await supabase
       .from('roles')
@@ -115,7 +101,6 @@ export async function fetchUserPermissions(
     }
   }
 
-  // STEP 4: Fetch all permissions for the user's active role(s).
   if (activeRoleIds.length > 0) {
     const { data: rpRows } = await supabase
       .from('role_permissions')

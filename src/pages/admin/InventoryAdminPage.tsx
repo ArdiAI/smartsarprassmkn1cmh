@@ -1,10 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
 import {
-  Package, Plus, Pencil, Trash2, Loader2, Search, X, UserCircle,
+  Plus, Pencil, Trash2, Search, Loader2, Package, X, AlertCircle,
 } from 'lucide-react';
 
 interface Inventory {
@@ -30,6 +29,7 @@ interface Category {
   id: string;
   name: string;
   description: string | null;
+  created_at: string;
 }
 
 interface AdminUser {
@@ -40,7 +40,7 @@ interface AdminUser {
 }
 
 interface InventoryWithManager extends Inventory {
-  admin_users?: { name: string; email: string } | null;
+  manager?: { name: string; email: string } | null;
 }
 
 const conditionConfig: Record<string, { label: string; color: string }> = {
@@ -50,14 +50,17 @@ const conditionConfig: Record<string, { label: string; color: string }> = {
 };
 
 const emptyForm = {
-  name: '',
   code: '',
-  description: '',
+  name: '',
   category_id: '',
   quantity: '',
   available_quantity: '',
   condition: 'good',
   location: '',
+  description: '',
+  image_url: '',
+  purchase_date: '',
+  price: '',
   manager_id: '',
 };
 
@@ -72,235 +75,218 @@ export default function InventoryAdminPage() {
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<InventoryWithManager | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try {
-      const [invRes, catRes, adminRes] = await Promise.all([
-        supabase
-          .from('inventory')
-          .select('*, admin_users!manager_id(name, email)')
-          .order('created_at', { ascending: false }),
-        supabase.from('categories').select('id, name, description').order('name'),
-        supabase.from('admin_users').select('id, name, email, role').eq('is_active', true).order('name'),
-      ]);
+    const [invRes, catRes, adminRes] = await Promise.all([
+      supabase.from('inventory').select('*, admin_users!manager_id(name, email)').order('created_at', { ascending: false }),
+      supabase.from('categories').select('*').order('name'),
+      supabase.from('admin_users').select('id, name, email, role').eq('is_active', true).order('name'),
+    ]);
 
-      if (invRes.error) throw invRes.error;
-      if (catRes.error) throw catRes.error;
-      if (adminRes.error) throw adminRes.error;
-
-      setItems((invRes.data as unknown as InventoryWithManager[]) || []);
-      setCategories((catRes.data as unknown as Category[]) || []);
-      setAdminUsers((adminRes.data as unknown as AdminUser[]) || []);
-    } catch (e) {
-      console.error(e);
+    if (invRes.error) {
       showToast('Gagal memuat data inventaris', 'error');
-    } finally {
-      setLoading(false);
+    } else {
+      const rows = (invRes.data as unknown as (Inventory & { admin_users: { name: string; email: string } | null })[]) || [];
+      setItems(rows.map((r) => ({ ...r, manager: r.admin_users })));
     }
+    if (!catRes.error) setCategories((catRes.data as unknown as Category[]) || []);
+    if (!adminRes.error) setAdminUsers((adminRes.data as unknown as AdminUser[]) || []);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  const filtered = items.filter(item => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      item.name?.toLowerCase().includes(q) ||
-      item.code?.toLowerCase().includes(q) ||
-      item.location?.toLowerCase().includes(q)
-    );
-  });
+  const categoryMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    categories.forEach((c) => (m[c.id] = c.name));
+    return m;
+  }, [categories]);
 
-  const openCreate = () => {
-    setEditing(null);
+  const filtered = useMemo(() => {
+    return items.filter((it) => {
+      if (categoryFilter !== 'all' && it.category_id !== categoryFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return (
+          it.name?.toLowerCase().includes(q) ||
+          it.code?.toLowerCase().includes(q) ||
+          it.location?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [items, search, categoryFilter]);
+
+  const openAdd = () => {
+    setEditingId(null);
     setForm({ ...emptyForm });
     setModalOpen(true);
   };
 
-  const openEdit = (item: InventoryWithManager) => {
-    setEditing(item);
+  const openEdit = (it: Inventory) => {
+    setEditingId(it.id);
     setForm({
-      name: item.name ?? '',
-      code: item.code ?? '',
-      description: item.description ?? '',
-      category_id: item.category_id ?? '',
-      quantity: item.quantity?.toString() ?? '',
-      available_quantity: item.available_quantity?.toString() ?? '',
-      condition: item.condition ?? 'good',
-      location: item.location ?? '',
-      manager_id: item.manager_id ?? '',
+      code: it.code ?? '',
+      name: it.name ?? '',
+      category_id: it.category_id ?? '',
+      quantity: String(it.quantity ?? ''),
+      available_quantity: String(it.available_quantity ?? ''),
+      condition: it.condition ?? 'good',
+      location: it.location ?? '',
+      description: it.description ?? '',
+      image_url: it.image_url ?? '',
+      purchase_date: it.purchase_date ?? '',
+      price: it.price != null ? String(it.price) : '',
+      manager_id: it.manager_id ?? '',
     });
     setModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.code.trim()) {
+    if (!form.name || !form.code) {
       showToast('Nama dan kode wajib diisi', 'warning');
       return;
     }
-    const isEdit = !!editing;
-    if (isEdit && !canUpdate) {
-      showToast('Anda tidak memiliki izin untuk mengubah data', 'error');
-      return;
-    }
-    if (!isEdit && !canCreate) {
-      showToast('Anda tidak memiliki izin untuk menambah data', 'error');
-      return;
-    }
-
     setSaving(true);
-    try {
-      const payload = {
-        name: form.name.trim(),
-        code: form.code.trim(),
-        description: form.description.trim() || null,
-        category_id: form.category_id || null,
-        quantity: form.quantity ? Number(form.quantity) : 0,
-        available_quantity: form.available_quantity ? Number(form.available_quantity) : 0,
-        condition: form.condition,
-        location: form.location.trim() || null,
-        manager_id: form.manager_id || null,
-      };
+    const payload = {
+      code: form.code,
+      name: form.name,
+      category_id: form.category_id || null,
+      quantity: Number(form.quantity) || 0,
+      available_quantity: Number(form.available_quantity) || 0,
+      condition: form.condition,
+      location: form.location,
+      description: form.description || null,
+      image_url: form.image_url || null,
+      purchase_date: form.purchase_date || null,
+      price: form.price ? Number(form.price) : null,
+      manager_id: form.manager_id || null,
+    };
 
-      if (isEdit && editing) {
-        const { error } = await supabase.from('inventory').update(payload).eq('id', editing.id);
-        if (error) throw error;
-        showToast('Inventaris berhasil diperbarui', 'success');
-      } else {
-        const { error } = await supabase.from('inventory').insert(payload);
-        if (error) throw error;
-        showToast('Inventaris berhasil ditambahkan', 'success');
-      }
-      setModalOpen(false);
-      await fetchData();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal menyimpan inventaris', 'error');
-    } finally {
-      setSaving(false);
+    if (editingId) {
+      const { error } = await supabase.from('inventory').update(payload).eq('id', editingId);
+      if (error) showToast('Gagal memperbarui inventaris', 'error');
+      else showToast('Inventaris diperbarui', 'success');
+    } else {
+      const { error } = await supabase.from('inventory').insert(payload);
+      if (error) showToast('Gagal menambah inventaris', 'error');
+      else showToast('Inventaris ditambahkan', 'success');
     }
+    setSaving(false);
+    setModalOpen(false);
+    fetchData();
   };
 
-  const handleDelete = async (item: InventoryWithManager) => {
-    if (!canDelete) {
-      showToast('Anda tidak memiliki izin untuk menghapus data', 'error');
-      return;
-    }
-    if (!confirm(`Hapus inventaris "${item.name}"?`)) return;
-    setDeletingId(item.id);
-    try {
-      const { error } = await supabase.from('inventory').delete().eq('id', item.id);
-      if (error) throw error;
-      showToast('Inventaris berhasil dihapus', 'success');
-      await fetchData();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal menghapus inventaris', 'error');
-    } finally {
-      setDeletingId(null);
-    }
+  const handleDelete = async (id: string) => {
+    if (!confirm('Hapus item inventaris ini?')) return;
+    const { error } = await supabase.from('inventory').delete().eq('id', id);
+    if (error) showToast('Gagal menghapus inventaris', 'error');
+    else showToast('Inventaris dihapus', 'success');
+    fetchData();
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data barang dan penanggung jawab</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data barang inventaris</p>
         </div>
         {canCreate && (
           <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
           >
             <Plus className="w-4 h-4" /> Tambah
           </button>
         )}
       </div>
 
-      <div className="relative">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Cari nama, kode, atau lokasi..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        />
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+      <div className="card p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari nama, kode, lokasi..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+            />
           </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada inventaris</p>
-          <p className="text-sm text-slate-400 mt-1">Belum ada barang yang ditambahkan</p>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+          >
+            <option value="all">Semua Kategori</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-      ) : (
-        <div className="card overflow-hidden">
+
+        <div className="text-sm text-slate-500 dark:text-slate-400">
+          Menampilkan {filtered.length} dari {items.length} item
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+              <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada data inventaris</p>
+          </div>
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Kode</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Nama</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Kategori</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Qty</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Kondisi</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Lokasi</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">PJ Barang</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Aksi</th>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Kode</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Nama</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Kategori</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Jumlah</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Kondisi</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Lokasi</th>
+                  <th className="text-left py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">PJ Barang</th>
+                  <th className="text-right py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                {filtered.map(item => {
-                  const cc = conditionConfig[item.condition] || conditionConfig.good;
-                  const cat = categories.find(c => c.id === item.category_id);
-                  const pjName = item.admin_users?.name ?? item.manager_name ?? null;
+              <tbody>
+                {filtered.map((it) => {
+                  const cfg = conditionConfig[it.condition] || conditionConfig.good;
                   return (
-                    <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                      <td className="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300">{item.code ?? ''}</td>
-                      <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">{item.name ?? ''}</td>
-                      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{cat?.name ?? '—'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{item.quantity ?? 0}</td>
-                      <td className="px-4 py-3">
-                        <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', cc.color)}>{cc.label}</span>
+                    <tr key={it.id} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300 font-mono text-xs">{it.code}</td>
+                      <td className="py-3 px-3 text-slate-900 dark:text-white font-medium">{it.name}</td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">{it.category_id ? (categoryMap[it.category_id] || '-') : '-'}</td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">{it.available_quantity}/{it.quantity}</td>
+                      <td className="py-3 px-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{item.location ?? '—'}</td>
-                      <td className="px-4 py-3">
-                        {pjName ? (
-                          <div className="flex items-center gap-1.5">
-                            <UserCircle className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                            <span className="text-sm text-slate-700 dark:text-slate-300">{pjName}</span>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-slate-400">—</span>
-                        )}
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">{it.location || '-'}</td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                        {it.manager?.name || it.manager_name || '-'}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="py-3 px-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           {canUpdate && (
                             <button
-                              onClick={() => openEdit(item)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                              onClick={() => openEdit(it)}
+                              className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                               title="Edit"
                             >
                               <Pencil className="w-4 h-4" />
@@ -308,12 +294,11 @@ export default function InventoryAdminPage() {
                           )}
                           {canDelete && (
                             <button
-                              onClick={() => handleDelete(item)}
-                              disabled={deletingId === item.id}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                              onClick={() => handleDelete(it.id)}
+                              className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                               title="Hapus"
                             >
-                              {deletingId === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -324,148 +309,98 @@ export default function InventoryAdminPage() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setModalOpen(false)}>
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {editing ? 'Edit Inventaris' : 'Tambah Inventaris'}
+                {editingId ? 'Edit Inventaris' : 'Tambah Inventaris'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Nama <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={e => setForm({ ...form, name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    required
-                  />
+                  <label className="label">Kode</label>
+                  <input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="INV-001" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Kode <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={form.code}
-                    onChange={e => setForm({ ...form, code: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    required
-                  />
+                  <label className="label">Nama Barang</label>
+                  <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nama barang" />
                 </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Deskripsi</label>
-                <textarea
-                  value={form.description}
-                  onChange={e => setForm({ ...form, description: e.target.value })}
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Kategori</label>
-                  <select
-                    value={form.category_id}
-                    onChange={e => setForm({ ...form, category_id: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  >
-                    <option value="">Pilih Kategori</option>
-                    {categories.map(c => (
+                  <label className="label">Kategori</label>
+                  <select className="input" value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                    <option value="">Pilih kategori</option>
+                    {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Kondisi</label>
-                  <select
-                    value={form.condition}
-                    onChange={e => setForm({ ...form, condition: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  >
+                  <label className="label">Penanggung Jawab Barang</label>
+                  <select className="input" value={form.manager_id} onChange={(e) => setForm({ ...form, manager_id: e.target.value })}>
+                    <option value="">Pilih PJ Barang</option>
+                    {adminUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Jumlah</label>
+                  <input type="number" className="input" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="0" />
+                </div>
+                <div>
+                  <label className="label">Jumlah Tersedia</label>
+                  <input type="number" className="input" value={form.available_quantity} onChange={(e) => setForm({ ...form, available_quantity: e.target.value })} placeholder="0" />
+                </div>
+                <div>
+                  <label className="label">Kondisi</label>
+                  <select className="input" value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })}>
                     <option value="good">Baik</option>
                     <option value="fair">Cukup</option>
                     <option value="poor">Rusak</option>
                   </select>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Jumlah</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.quantity}
-                    onChange={e => setForm({ ...form, quantity: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <label className="label">Lokasi</label>
+                  <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Lokasi penyimpanan" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Jumlah Tersedia</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.available_quantity}
-                    onChange={e => setForm({ ...form, available_quantity: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <label className="label">URL Gambar</label>
+                  <input className="input" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." />
+                </div>
+                <div>
+                  <label className="label">Tanggal Pembelian</label>
+                  <input type="date" className="input" value={form.purchase_date} onChange={(e) => setForm({ ...form, purchase_date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Harga</label>
+                  <input type="number" className="input" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0" />
                 </div>
               </div>
-
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Lokasi</label>
-                <input
-                  type="text"
-                  value={form.location}
-                  onChange={e => setForm({ ...form, location: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+                <label className="label">Deskripsi</label>
+                <textarea className="input min-h-[80px]" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Deskripsi barang" />
               </div>
-
-              {/* PJ Barang dropdown */}
-              <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Penanggung Jawab Barang</label>
-                <select
-                  value={form.manager_id}
-                  onChange={e => setForm({ ...form, manager_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                >
-                  <option value="">Pilih PJ Barang</option>
-                  {adminUsers.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} — {u.role} ({u.email})
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <AlertCircle className="w-4 h-4" />
+                PJ Barang akan ditugaskan untuk item ini.
               </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {editing ? 'Simpan' : 'Tambah'}
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
+                <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
+                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {editingId ? 'Simpan' : 'Tambah'}
                 </button>
               </div>
             </form>
