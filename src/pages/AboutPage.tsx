@@ -6,109 +6,129 @@ import {
   Users,
   Mail,
   Phone,
-  Loader2,
+  Sparkles,
   ShieldCheck,
+  CalendarRange,
+  ClipboardList,
   Package,
   Building2,
-  ClipboardList,
-  CalendarRange,
-  Sparkles,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { brand } from '../brand/config';
+import Navbar from '../components/Navbar';
+import Footer from '../components/Footer';
 import AnimatedBackground from '../components/AnimatedBackground';
 import EmptyState from '../components/EmptyState';
+import { showToast } from '../components/Toast';
+import { supabase } from '../lib/supabase';
+import { brand } from '../brand/config';
 import { cn } from '../utils/cn';
 
 interface TeamMember {
   id: string;
   name: string;
-  position: string | null;
+  position: string;
   role: string | null;
   photo_url: string | null;
   description: string | null;
   email: string | null;
   phone: string | null;
+  order: number;
+  is_active: boolean;
 }
 
 interface AboutSettings {
   id: string;
   section: string;
-  content: { visi?: string; misi?: string[]; [key: string]: unknown } | null;
+  content: unknown;
 }
 
 const features = [
-  { icon: Package, title: 'Manajemen Inventaris', desc: 'Kelola semua barang sekolah dengan pelacakan stok dan kondisi real-time.' },
-  { icon: Building2, title: 'Pemesanan Fasilitas', desc: 'Pesan fasilitas sekolah seperti aula, lapangan, dan ruang kelas dengan mudah.' },
-  { icon: ClipboardList, title: 'Pengajuan Peminjaman', desc: 'Ajukan peminjaman barang dengan alur persetujuan yang transparan.' },
-  { icon: CalendarRange, title: 'Agenda & Timeline', desc: 'Catat kegiatan sekolah dan lihat semua agenda dalam kalender interaktif.' },
-  { icon: ShieldCheck, title: 'Pelaporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan foto dan tingkat keparahan.' },
-  { icon: Sparkles, title: 'Notifikasi Otomatis', desc: 'Pemberitahuan otomatis untuk status pengajuan dan persetujuan.' },
+  { icon: Package, title: 'Manajemen Inventaris', desc: 'Kelola semua barang sekolah dengan pelacakan kondisi dan ketersediaan real-time.' },
+  { icon: Building2, title: 'Pemesanan Fasilitas', desc: 'Pesan dan jadwalkan penggunaan fasilitas sekolah dengan mudah.' },
+  { icon: ClipboardList, title: 'Pengajuan Peminjaman', desc: 'Ajukan peminjaman barang dengan alur persetujuan yang jelas.' },
+  { icon: CalendarRange, title: 'Timeline Kegiatan', desc: 'Pantau seluruh kegiatan dan peminjaman dalam satu kalender terpadu.' },
+  { icon: AlertCircle, title: 'Laporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan upload foto sebagai bukti.' },
+  { icon: ShieldCheck, title: 'Sistem Workflow', desc: 'Alur persetujuan bertingkat untuk setiap pengajuan peminjaman.' },
 ];
 
-const FALLBACK_AVATAR = 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=400';
+const AVATAR_FALLBACK = 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=400';
 
 export default function AboutPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
-  const [settings, setSettings] = useState<AboutSettings[]>([]);
+  const [vision, setVision] = useState<string>('');
+  const [mission, setMission] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
       try {
-        const [teamRes, settingsRes] = await Promise.all([
+        const [{ data: teamData, error: teamErr }, { data: settingsData, error: settingsErr }] = await Promise.all([
           supabase
             .from('team_members')
-            .select('id, name, position, role, photo_url, description, email, phone')
+            .select('id, name, position, role, photo_url, description, email, phone, order, is_active')
             .eq('is_active', true)
             .order('order', { ascending: true }),
           supabase.from('about_settings').select('id, section, content'),
         ]);
-        setTeam((teamRes.data as unknown as TeamMember[]) ?? []);
-        setSettings((settingsRes.data as unknown as AboutSettings[]) ?? []);
+        if (teamErr) throw teamErr;
+        if (settingsErr) throw settingsErr;
+
+        setTeam((teamData as unknown as TeamMember[]) ?? []);
+
+        const settings = (settingsData as unknown as AboutSettings[]) ?? [];
+        const visionSetting = settings.find((s) => s.section === 'vision');
+        const missionSetting = settings.find((s) => s.section === 'mission');
+        if (visionSetting && typeof visionSetting.content === 'object' && visionSetting.content) {
+          const c = visionSetting.content as Record<string, unknown>;
+          setVision((c.text as string) ?? (c.value as string) ?? '');
+        }
+        if (missionSetting && typeof missionSetting.content === 'object' && missionSetting.content) {
+          const c = missionSetting.content as Record<string, unknown>;
+          const items = c.items ?? c.list ?? c.points;
+          if (Array.isArray(items)) {
+            setMission(items.map((i) => String(i)));
+          }
+        }
       } catch {
-        /* noop */
+        showToast('Gagal memuat data', 'error');
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  const visiSetting = settings.find((s) => s.section === 'visi' || s.section === 'vision');
-  const misiSetting = settings.find((s) => s.section === 'misi' || s.section === 'mission');
-  const visi: string | undefined = (visiSetting?.content as { visi?: string } | null)?.visi ?? (visiSetting?.content as { vision?: string } | null)?.vision ?? undefined;
-  const misi: string[] | undefined = (misiSetting?.content as { misi?: string[] } | null)?.misi ?? (misiSetting?.content as { mission?: string[] } | null)?.mission ?? undefined;
-
   return (
-    <div>
+    <div className="relative min-h-screen bg-slate-50 dark:bg-slate-950">
+      <Navbar />
+      <AnimatedBackground />
+
       {/* Hero */}
-      <section className="relative overflow-hidden border-b border-slate-200 dark:border-slate-800">
-        <AnimatedBackground />
-        <div className="relative mx-auto max-w-4xl px-4 py-16 text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
-            <Info className="h-4 w-4" />
+      <section className="relative mx-auto max-w-7xl px-4 pt-16 pb-12">
+        <div className="mx-auto max-w-3xl text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-300">
+            <Sparkles className="h-4 w-4" />
             Tentang Kami
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-5xl">
             <span className="bg-gradient-to-r from-brand-600 to-cyan-500 bg-clip-text text-transparent">
               {brand.name}
             </span>
           </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-base text-slate-600 dark:text-slate-300">
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-300">
             {brand.description}
           </p>
         </div>
       </section>
 
       {/* Features */}
-      <section className="mx-auto max-w-7xl px-4 py-12">
-        <h2 className="mb-6 text-center text-xl font-bold text-slate-900 dark:text-white">Fitur Utama</h2>
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="relative mx-auto max-w-7xl px-4 py-8">
+        <h2 className="mb-6 text-center text-2xl font-bold text-slate-900 dark:text-white">Fitur Utama</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((f) => (
-            <div key={f.title} className="card">
-              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-cyan-500 text-white">
-                <f.icon className="h-5 w-5" />
+            <div key={f.title} className="card group transition hover:border-brand-300 hover:shadow-md dark:hover:border-brand-700">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-900/30">
+                <f.icon className="h-6 w-6 text-brand-600 dark:text-brand-400" />
               </div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">{f.title}</h3>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{f.desc}</p>
@@ -118,53 +138,51 @@ export default function AboutPage() {
       </section>
 
       {/* Vision & Mission */}
-      <section className="mx-auto max-w-4xl px-4 py-8">
-        <div className="grid gap-5 md:grid-cols-2">
+      <section className="relative mx-auto max-w-7xl px-4 py-8">
+        <div className="grid gap-6 lg:grid-cols-2">
           <div className="card">
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
-                <Eye className="h-5 w-5" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 dark:bg-cyan-900/30">
+                <Eye className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
               </div>
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Visi</h3>
             </div>
-            {loading ? (
-              <div className="flex items-center py-4"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
-            ) : visi ? (
-              <p className="text-sm text-slate-600 dark:text-slate-300">{visi}</p>
+            {vision ? (
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">{vision}</p>
             ) : (
-              <p className="text-sm text-slate-400">Menjadi platform terdepan dalam pengelolaan sarana dan prasarana sekolah yang efisien dan transparan.</p>
+              <p className="text-sm text-slate-400">Menjadi platform terdepan dalam manajemen sarana dan prasarana sekolah yang efisien, transparan, dan terpadu.</p>
             )}
           </div>
           <div className="card">
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-300">
-                <Target className="h-5 w-5" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-900/30">
+                <Target className="h-5 w-5 text-brand-600 dark:text-brand-400" />
               </div>
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Misi</h3>
             </div>
-            {loading ? (
-              <div className="flex items-center py-4"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
-            ) : misi && misi.length > 0 ? (
+            {mission.length > 0 ? (
               <ul className="space-y-2">
-                {misi.map((m, i) => (
+                {mission.map((m, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                    <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-500" />
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
                     {m}
                   </li>
                 ))}
               </ul>
             ) : (
               <ul className="space-y-2">
-                {[
-                  'Menyediakan sistem terpadu untuk pengelolaan sarana dan prasarana sekolah.',
-                  'Meningkatkan efisiensi dan transparansi dalam peminjaman dan pemesanan.',
-                  'Mempermudah pelaporan dan penanganan kerusakan sarana.',
-                ].map((m, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                    <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-500" />
-                    {m}
-                  </li>
-                ))}
+                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+                  Memberikan platform terpadu untuk seluruh kebutuhan sarana dan prasarana sekolah.
+                </li>
+                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+                  Meningkatkan efisiensi dan transparansi pengelolaan peminjaman dan pelaporan.
+                </li>
+                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+                  Memfasilitasi komunikasi yang baik antara warga sekolah dan pengelola sarana.
+                </li>
               </ul>
             )}
           </div>
@@ -172,62 +190,45 @@ export default function AboutPage() {
       </section>
 
       {/* Team */}
-      <section className="mx-auto max-w-7xl px-4 py-12">
+      <section className="relative mx-auto max-w-7xl px-4 py-8 pb-16">
         <div className="mb-6 flex items-center gap-2">
           <Users className="h-6 w-6 text-brand-600" />
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Tim Kami</h2>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim Pengembang</h2>
         </div>
         {loading ? (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="card animate-pulse">
-                <div className="mx-auto mb-3 h-24 w-24 rounded-full bg-slate-200 dark:bg-slate-800" />
-                <div className="mx-auto mb-2 h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-800" />
-                <div className="mx-auto h-3 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
-              </div>
-            ))}
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
           </div>
         ) : team.length === 0 ? (
-          <EmptyState
-            title="Belum ada anggota tim"
-            description="Anggota tim akan ditampilkan di sini."
-            icon={<Users className="h-8 w-8 text-slate-400" />}
-          />
+          <EmptyState icon={<Users className="h-8 w-8 text-slate-400" />} title="Belum ada anggota tim" description="Anggota tim akan ditampilkan di sini." />
         ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {team.map((m) => (
               <div key={m.id} className="card text-center">
-                <div className="mx-auto mb-3 h-24 w-24 overflow-hidden rounded-full border-2 border-brand-100 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
-                  <img
-                    src={m.photo_url || FALLBACK_AVATAR}
-                    alt={m.name}
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_AVATAR; }}
-                  />
-                </div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">{m.name}</h3>
-                {m.position && (
-                  <p className="text-sm font-medium text-brand-600 dark:text-brand-400">{m.position}</p>
-                )}
-                {m.role && (
-                  <p className="text-xs text-slate-400">{m.role}</p>
-                )}
+                <img
+                  src={m.photo_url || AVATAR_FALLBACK}
+                  alt={m.name}
+                  className="mx-auto mb-3 h-24 w-24 rounded-full object-cover border-2 border-brand-200 dark:border-brand-800"
+                  onError={(e) => { (e.target as HTMLImageElement).src = AVATAR_FALLBACK; }}
+                />
+                <h3 className="font-bold text-slate-900 dark:text-white">{m.name}</h3>
+                <p className="text-sm font-medium text-brand-600 dark:text-brand-400">{m.position}</p>
+                {m.role && <p className="text-xs text-slate-400">{m.role}</p>}
                 {m.description && (
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{m.description}</p>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 line-clamp-3">{m.description}</p>
                 )}
-                <div className="mt-3 flex justify-center gap-3 text-xs text-slate-400">
+                <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 dark:border-slate-800">
                   {m.email && (
-                    <a href={`mailto:${m.email}`} className="flex items-center gap-1 hover:text-brand-600">
+                    <a href={`mailto:${m.email}`} className="flex items-center justify-center gap-1.5 text-xs text-slate-500 hover:text-brand-600 dark:text-slate-400">
                       <Mail className="h-3.5 w-3.5" />
-                      Email
+                      {m.email}
                     </a>
                   )}
                   {m.phone && (
-                    <a href={`tel:${m.phone}`} className="flex items-center gap-1 hover:text-brand-600">
+                    <p className="flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                       <Phone className="h-3.5 w-3.5" />
-                      Telepon
-                    </a>
+                      {m.phone}
+                    </p>
                   )}
                 </div>
               </div>
@@ -235,6 +236,8 @@ export default function AboutPage() {
           </div>
         )}
       </section>
+
+      <Footer />
     </div>
   );
 }
