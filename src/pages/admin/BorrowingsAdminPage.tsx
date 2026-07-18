@@ -10,11 +10,11 @@ import {
   notifyNextApprover,
   filterBorrowingsForAdmin,
   fetchRoleById,
+  resolveItemApprover,
   type WorkflowTemplate,
   type AdminUser,
 } from '../../lib/workflow';
 import { showToast } from '../../components/Toast';
-import AccessDenied from '../../components/AccessDenied';
 import {
   CheckCircle, XCircle, Loader2, Package, Calendar, User, Mail, Phone,
   FileText, ChevronDown, ChevronUp, ArrowRight, History,
@@ -107,11 +107,9 @@ export default function BorrowingsAdminPage() {
 
   const adminUser: AdminUser | null = adminProfile;
 
-  // Permission flags for action buttons
   const canApprove = hasPermission('borrowings', 'approve');
   const canReject = hasPermission('borrowings', 'reject');
   const canManage = hasPermission('borrowings', 'manage');
-  // Returning an item is treated as a "manage" action on borrowings.
   const canReturn = canManage;
 
   const fetchBorrowings = useCallback(async () => {
@@ -244,18 +242,23 @@ export default function BorrowingsAdminPage() {
 
       if (!isLast && nextStep) {
         const { role, approver } = await fetchNextApprover(template.steps, currentStepNum);
-        if (approver && role) {
+        const itemApprover = await resolveItemApprover(item);
+        const notifyEmail = itemApprover.approverEmail || approver?.approver_email;
+        const notifyName = itemApprover.approverName || approver?.approver_name;
+        const notifyRole = itemApprover.roleName || role?.name;
+
+        if (notifyEmail && notifyName) {
           await notifyNextApprover({
             type: 'next_approver',
             borrowing_id: borrowing.id,
             borrower_name: borrowing.borrower_name,
             borrower_email: borrowing.borrower_email,
-            next_approver_email: approver.approver_email,
-            next_approver_name: approver.approver_name,
+            next_approver_email: notifyEmail,
+            next_approver_name: notifyName,
             next_step_label: nextStep.step_label,
-            next_role_name: role.name,
+            next_role_name: notifyRole || '',
           });
-          showToast(`Notifikasi dikirim ke ${approver.approver_name} (${role.name})`, 'success');
+          showToast(`Notifikasi dikirim ke ${notifyName} (${notifyRole || 'approver'})`, 'success');
         } else {
           showToast('Disetujui. Email approver berikutnya belum dikonfigurasi.', 'warning');
         }
@@ -584,6 +587,9 @@ export default function BorrowingsAdminPage() {
                                     <span className="font-medium text-slate-900 dark:text-white">{item.item_name}</span>
                                     <span className="text-sm text-slate-500">×{item.quantity}</span>
                                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${itemSc.color}`}>{itemSc.label}</span>
+                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                                      {item.item_type === 'barang' ? 'Barang' : 'Fasilitas'}
+                                    </span>
                                   </div>
                                   {item.current_status_label && (
                                     <p className="text-xs text-slate-500 mt-1">Status: {item.current_status_label}</p>

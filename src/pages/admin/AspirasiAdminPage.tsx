@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
 import {
-  MessageSquare, Loader2, Search, X, Mail, Calendar, Send, Tag, User,
+  MessageSquare, Loader2, Mail, User, Tag, X, Send, Clock,
 } from 'lucide-react';
 
 interface Aspirasi {
@@ -14,7 +14,7 @@ interface Aspirasi {
   email: string | null;
   kategori: string | null;
   judul: string;
-  isi: string;
+  isi: string | null;
   status: string;
   tanggapan: string | null;
   created_at: string;
@@ -39,179 +39,172 @@ export default function AspirasiAdminPage() {
   const { hasPermission } = useAuth();
   const canUpdate = hasPermission('aspirasi', 'update');
 
-  const [aspirasi, setAspirasi] = useState<Aspirasi[]>([]);
+  const [aspirasiList, setAspirasiList] = useState<Aspirasi[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [replyModal, setReplyModal] = useState<Aspirasi | null>(null);
-  const [replyText, setReplyText] = useState('');
+  const [replyId, setReplyId] = useState<string | null>(null);
+  const [tanggapan, setTanggapan] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchAspirasi = useCallback(async () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase.from('aspirasi').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      setAspirasi((data as unknown as Aspirasi[]) || []);
-    } catch {
+    const { data, error } = await supabase
+      .from('aspirasi')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) {
       showToast('Gagal memuat aspirasi', 'error');
-    } finally {
       setLoading(false);
+      return;
     }
+    setAspirasiList((data as unknown as Aspirasi[]) || []);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchAspirasi();
+  }, [fetchAspirasi]);
 
-  const filtered = aspirasi.filter((a) => {
-    const q = search.toLowerCase();
-    const matchSearch =
-      !q ||
-      a.nama?.toLowerCase().includes(q) ||
-      a.judul?.toLowerCase().includes(q) ||
-      a.isi?.toLowerCase().includes(q) ||
-      a.kategori?.toLowerCase().includes(q);
-    const matchStatus = statusFilter === 'all' || a.status === statusFilter;
-    return matchSearch && matchStatus;
+  const filtered = aspirasiList.filter(a => {
+    if (statusFilter !== 'all' && a.status !== statusFilter) return false;
+    return true;
   });
 
-  const handleStatusChange = async (a: Aspirasi, newStatus: string) => {
-    setActionLoading(a.id);
-    try {
-      const { error } = await supabase
-        .from('aspirasi')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq('id', a.id);
-      if (error) throw error;
-      showToast('Status diperbarui', 'success');
-      await fetchData();
-    } catch (err: any) {
-      showToast(err.message ?? 'Gagal memperbarui status', 'error');
-    } finally {
-      setActionLoading(null);
-    }
+  const openReply = (item: Aspirasi) => {
+    setReplyId(item.id);
+    setTanggapan(item.tanggapan ?? '');
   };
 
-  const openReply = (a: Aspirasi) => {
-    setReplyModal(a);
-    setReplyText(a.tanggapan ?? '');
-  };
-
-  const handleSendReply = async () => {
-    if (!replyModal) return;
-    if (!replyText.trim()) {
-      showToast('Tanggapan tidak boleh kosong', 'warning');
-      return;
-    }
-    setActionLoading(replyModal.id);
+  const handleReply = async (item: Aspirasi) => {
+    setSaving(true);
     try {
       const { error } = await supabase
         .from('aspirasi')
         .update({
-          tanggapan: replyText.trim(),
-          status: replyModal.status === 'pending' ? 'in_progress' : replyModal.status,
+          tanggapan: tanggapan || null,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', replyModal.id);
+        .eq('id', item.id);
       if (error) throw error;
       showToast('Tanggapan dikirim', 'success');
-      setReplyModal(null);
-      await fetchData();
-    } catch (err: any) {
-      showToast(err.message ?? 'Gagal mengirim tanggapan', 'error');
+      setReplyId(null);
+      await fetchAspirasi();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal mengirim tanggapan', 'error');
     } finally {
-      setActionLoading(null);
+      setSaving(false);
     }
   };
+
+  const handleStatusChange = async (item: Aspirasi, newStatus: string) => {
+    setStatusUpdating(item.id);
+    try {
+      const { error } = await supabase
+        .from('aspirasi')
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', item.id);
+      if (error) throw error;
+      showToast('Status diperbarui', 'success');
+      await fetchAspirasi();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal memperbarui status', 'error');
+    } finally {
+      setStatusUpdating(null);
+    }
+  };
+
+  const replyingItem = aspirasiList.find(a => a.id === replyId);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aspirasi</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola aspirasi dan keluhan</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola aspirasi dan saran dari pengguna</p>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari nama, judul, kategori..."
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input sm:w-48">
           <option value="all">Semua Status</option>
-          {statusOptions.map((s) => (
-            <option key={s.value} value={s.value}>{s.label}</option>
-          ))}
+          <option value="pending">Menunggu</option>
+          <option value="in_progress">Diproses</option>
+          <option value="resolved">Selesai</option>
+          <option value="rejected">Ditolak</option>
         </select>
       </div>
 
-      {/* List */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
-          <MessageSquare className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada aspirasi</p>
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <MessageSquare className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada aspirasi</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((a) => {
-            const st = statusConfig[a.status] || statusConfig.pending;
+        <div className="space-y-4">
+          {filtered.map(item => {
+            const sc = statusConfig[item.status] || statusConfig.pending;
             return (
-              <div key={a.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4">
-                <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
-                    <MessageSquare className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  </div>
+              <div key={item.id} className="card p-5">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{a.judul}</h3>
-                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', st.color)}>{st.label}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{item.judul}</h3>
+                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">{a.isi}</p>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="flex items-center gap-1"><User className="w-3 h-3" /> {a.nama}</span>
-                      {a.kelas_unit && <span>{a.kelas_unit}</span>}
-                      {a.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {a.email}</span>}
-                      {a.kategori && <span className="flex items-center gap-1"><Tag className="w-3 h-3" /> {a.kategori}</span>}
-                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {new Date(a.created_at).toLocaleDateString('id-ID')}</span>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{item.isi ?? '-'}</p>
+                    <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400 mt-3 flex-wrap">
+                      <span className="flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5" /> {item.nama}
+                      </span>
+                      {item.kelas_unit && (
+                        <span className="flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5" /> {item.kelas_unit}
+                        </span>
+                      )}
+                      {item.email && (
+                        <span className="flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5" /> {item.email}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" /> {new Date(item.created_at).toLocaleDateString('id-ID')}
+                      </span>
                     </div>
-                    {a.tanggapan && (
-                      <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-sm text-slate-700 dark:text-slate-300">
-                        <span className="font-medium text-blue-700 dark:text-blue-400">Tanggapan: </span>{a.tanggapan}
+                    {item.tanggapan && (
+                      <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50">
+                        <p className="text-sm text-slate-600 dark:text-slate-300">
+                          <span className="font-medium text-blue-600 dark:text-blue-400">Tanggapan: </span>{item.tanggapan}
+                        </p>
                       </div>
                     )}
                   </div>
                   {canUpdate && (
-                    <div className="flex flex-col gap-2 sm:w-36">
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       <select
-                        value={a.status}
-                        onChange={(e) => handleStatusChange(a, e.target.value)}
-                        disabled={actionLoading === a.id}
-                        className="px-3 py-1.5 rounded-lg text-sm bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        value={item.status}
+                        onChange={e => handleStatusChange(item, e.target.value)}
+                        disabled={statusUpdating === item.id}
+                        className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
                       >
-                        {statusOptions.map((s) => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
+                        {statusOptions.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
                       <button
-                        onClick={() => openReply(a)}
-                        className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-blue-500 text-white hover:bg-blue-600 font-medium"
+                        onClick={() => openReply(item)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
                       >
-                        <Send className="w-3.5 h-3.5" /> Tanggapi
+                        <MessageSquare className="w-4 h-4" /> Tanggapi
                       </button>
                     </div>
                   )}
@@ -223,54 +216,48 @@ export default function AspirasiAdminPage() {
       )}
 
       {/* Reply Modal */}
-      {replyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setReplyModal(null)}>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      {replyingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="card w-full max-w-lg">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-blue-500" />
-                Tanggapi Aspirasi
-              </h2>
-              <button onClick={() => setReplyModal(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tanggapi Aspirasi</h2>
+              <button onClick={() => setReplyId(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Dari</p>
-                <p className="font-medium text-slate-900 dark:text-white">{replyModal.nama} {replyModal.kelas_unit ? `(${replyModal.kelas_unit})` : ''}</p>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30">
+                <p className="font-medium text-slate-900 dark:text-white text-sm">{replyingItem.judul}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{replyingItem.isi ?? '-'}</p>
+                <p className="text-xs text-slate-400 mt-2">— {replyingItem.nama}</p>
               </div>
               <div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Judul</p>
-                <p className="font-medium text-slate-900 dark:text-white">{replyModal.judul}</p>
-              </div>
-              <div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Isi Aspirasi</p>
-                <p className="text-slate-700 dark:text-slate-300">{replyModal.isi}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tanggapan</label>
+                <label className="label">Tanggapan</label>
                 <textarea
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  rows={4}
-                  placeholder="Tulis tanggapan..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={tanggapan}
+                  onChange={e => setTanggapan(e.target.value)}
+                  rows={5}
+                  placeholder="Tulis tanggapan untuk aspirasi ini..."
+                  className="input"
+                  autoFocus
                 />
               </div>
-            </div>
-            <div className="flex justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setReplyModal(null)} className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 font-medium">
-                Batal
-              </button>
-              <button
-                onClick={handleSendReply}
-                disabled={actionLoading === replyModal.id}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {actionLoading === replyModal.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Kirim
-              </button>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setReplyId(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => handleReply(replyingItem)}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Kirim Tanggapan
+                </button>
+              </div>
             </div>
           </div>
         </div>

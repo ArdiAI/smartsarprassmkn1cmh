@@ -18,6 +18,8 @@ interface AuthContextType {
   adminRole: string | null;
   roles: AdminRoleAssignment[];
   permissions: Set<PermissionKey>;
+  /** Derived purely from permissions: any user with at least one permission is an admin. */
+  isAdmin: boolean;
   hasPermission: (module: string, action: string) => boolean;
   hasAnyPermission: (checks: Array<{ module: string; action: string }>) => boolean;
   refreshAdminProfile: () => Promise<void>;
@@ -37,21 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<Set<PermissionKey>>(new Set());
 
   const loadProfile = useCallback(async (uid: string) => {
-    const { permissions: perms, roles: roleList, primaryRole } = await fetchUserPermissions(uid);
+    const {
+      permissions: perms,
+      roles: roleList,
+      primaryRole,
+      adminProfile: profile,
+    } = await fetchUserPermissions(uid);
     setPermissions(perms);
     setRoles(roleList);
-
-    const { data: adminRow } = await supabase
-      .from('admin_users')
-      .select('id, user_id, email, name, role, is_active')
-      .eq('user_id', uid)
-      .eq('is_active', true)
-      .single();
-    if (adminRow) {
-      setAdminProfile({
-        ...(adminRow as any),
-        role: primaryRole ?? (adminRow as any).role,
-      });
+    if (profile) {
+      setAdminProfile({ ...profile, role: primaryRole ?? profile.role });
     } else {
       setAdminProfile(null);
     }
@@ -116,6 +113,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPermissions(new Set());
   };
 
+  // isAdmin is derived from permissions, not from a boolean column or a role string.
+  const isAdmin = permissions.size > 0;
+
   const value = useMemo<AuthContextType>(() => ({
     user,
     session,
@@ -124,13 +124,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     adminRole: adminProfile?.role ?? null,
     roles,
     permissions,
+    isAdmin,
     hasPermission: (module: string, action: string) => hasPerm(permissions, module, action),
     hasAnyPermission: (checks: Array<{ module: string; action: string }>) => hasAnyPermission(permissions, checks),
     refreshAdminProfile,
     signIn,
     signUp,
     signOut,
-  }), [user, session, loading, adminProfile, roles, permissions, refreshAdminProfile]);
+  }), [user, session, loading, adminProfile, roles, permissions, isAdmin, refreshAdminProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

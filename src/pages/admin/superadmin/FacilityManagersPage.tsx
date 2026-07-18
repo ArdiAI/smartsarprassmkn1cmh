@@ -4,55 +4,47 @@ import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../../components/Toast';
 import { cn } from '../../../utils/cn';
 import {
-  Loader2, Plus, Trash2, Building2, UserCog, Star, Info,
+  Plus, Trash2, Loader2, UserCog, Building2, Star, Info,
 } from 'lucide-react';
 
-interface FacilityManagerRow {
+interface FacilityManager {
   id: string;
   facility_id: string;
   admin_user_id: string;
-  is_primary: boolean;
+  is_primary: boolean | null;
   notes: string | null;
-  assigned_at: string;
-  facilities?: { id: string; name: string } | null;
-  admin_users?: { id: string; name: string; email: string } | null;
+  assigned_at: string | null;
+  facility?: { id: string; name: string } | null;
+  admin_user?: { id: string; name: string | null; email: string | null } | null;
 }
 
-interface FacilityRow {
+interface Facility {
   id: string;
   name: string;
 }
 
-interface AdminUserRow {
+interface AdminUser {
   id: string;
-  name: string;
-  email: string;
+  name: string | null;
+  email: string | null;
 }
-
-interface ManagerForm {
-  facility_id: string;
-  admin_user_id: string;
-  is_primary: boolean;
-  notes: string;
-}
-
-const emptyForm: ManagerForm = { facility_id: '', admin_user_id: '', is_primary: false, notes: '' };
 
 export default function FacilityManagersPage() {
   const { hasPermission } = useAuth();
   const canCreate = hasPermission('facility_managers', 'create');
   const canDelete = hasPermission('facility_managers', 'delete');
-  // NOTE: No `facility_managers:update` permission exists in the permissions table,
-  // so edit is intentionally not offered here — only add and delete.
 
-  const [managers, setManagers] = useState<FacilityManagerRow[]>([]);
-  const [facilities, setFacilities] = useState<FacilityRow[]>([]);
-  const [admins, setAdmins] = useState<AdminUserRow[]>([]);
+  const [managers, setManagers] = useState<FacilityManager[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState<ManagerForm>(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  const [formFacilityId, setFormFacilityId] = useState('');
+  const [formAdminUserId, setFormAdminUserId] = useState('');
+  const [formIsPrimary, setFormIsPrimary] = useState(false);
+  const [formNotes, setFormNotes] = useState('');
 
   const fetchManagers = useCallback(async () => {
     setLoading(true);
@@ -60,25 +52,25 @@ export default function FacilityManagersPage() {
       .from('facility_managers')
       .select(`
         id, facility_id, admin_user_id, is_primary, notes, assigned_at,
-        facilities:facility_id ( id, name ),
-        admin_users:admin_user_id ( id, name, email )
+        facility:facilities(id, name),
+        admin_user:admin_users(id, name, email)
       `)
       .order('assigned_at', { ascending: false });
     if (error) {
-      showToast('Gagal memuat data penanggung jawab', 'error');
+      showToast('Gagal memuat data PJ Fasilitas', 'error');
     } else {
-      setManagers((data as unknown as FacilityManagerRow[]) || []);
+      setManagers((data as unknown as FacilityManager[]) || []);
     }
     setLoading(false);
   }, []);
 
   const fetchOptions = useCallback(async () => {
-    const [{ data: facData }, { data: admData }] = await Promise.all([
+    const [facRes, adminRes] = await Promise.all([
       supabase.from('facilities').select('id, name').order('name', { ascending: true }),
-      supabase.from('admin_users').select('id, name, email').eq('is_active', true).order('name', { ascending: true }),
+      supabase.from('admin_users').select('id, name, email').order('name', { ascending: true }),
     ]);
-    setFacilities((facData as unknown as FacilityRow[]) || []);
-    setAdmins((admData as unknown as AdminUserRow[]) || []);
+    if (facRes.data) setFacilities((facRes.data as unknown as Facility[]) || []);
+    if (adminRes.data) setAdmins((adminRes.data as unknown as AdminUser[]) || []);
   }, []);
 
   useEffect(() => {
@@ -86,51 +78,63 @@ export default function FacilityManagersPage() {
     fetchOptions();
   }, [fetchManagers, fetchOptions]);
 
-  const openAdd = () => {
-    setForm(emptyForm);
-    setShowModal(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.facility_id || !form.admin_user_id) {
+  const handleAdd = async () => {
+    if (!canCreate) {
+      showToast('Anda tidak memiliki izin untuk menambah PJ Fasilitas', 'error');
+      return;
+    }
+    if (!formFacilityId || !formAdminUserId) {
       showToast('Fasilitas dan admin wajib dipilih', 'warning');
       return;
     }
-    setSaving(true);
+    setActionLoading('add');
     try {
-      const payload = {
-        facility_id: form.facility_id,
-        admin_user_id: form.admin_user_id,
-        is_primary: form.is_primary,
-        notes: form.notes.trim() || null,
-      };
-      const { error } = await supabase.from('facility_managers').insert(payload);
+      const { error } = await supabase.from('facility_managers').insert({
+        facility_id: formFacilityId,
+        admin_user_id: formAdminUserId,
+        is_primary: formIsPrimary,
+        notes: formNotes.trim() || null,
+      });
       if (error) {
-        showToast('Gagal menambahkan penanggung jawab: ' + error.message, 'error');
-        setSaving(false);
-        return;
+        showToast(`Gagal menambah PJ Fasilitas: ${error.message}`, 'error');
+      } else {
+        showToast('PJ Fasilitas berhasil ditambahkan', 'success');
+        setShowModal(false);
+        setFormFacilityId('');
+        setFormAdminUserId('');
+        setFormIsPrimary(false);
+        setFormNotes('');
+        await fetchManagers();
       }
-      showToast('Penanggung jawab ditambahkan', 'success');
-      setShowModal(false);
-      await fetchManagers();
     } catch (e) {
+      console.error(e);
       showToast('Terjadi kesalahan', 'error');
     } finally {
-      setSaving(false);
+      setActionLoading(null);
     }
   };
 
-  const handleDelete = async (m: FacilityManagerRow) => {
-    if (!confirm('Hapus penanggung jawab ini?')) return;
-    setDeletingId(m.id);
-    const { error } = await supabase.from('facility_managers').delete().eq('id', m.id);
-    if (error) {
-      showToast('Gagal menghapus: ' + error.message, 'error');
-    } else {
-      showToast('Penanggung jawab dihapus', 'success');
-      await fetchManagers();
+  const handleDelete = async (manager: FacilityManager) => {
+    if (!canDelete) {
+      showToast('Anda tidak memiliki izin untuk menghapus PJ Fasilitas', 'error');
+      return;
     }
-    setDeletingId(null);
+    if (!confirm('Hapus penugasan PJ Fasilitas ini?')) return;
+    setActionLoading(`del-${manager.id}`);
+    try {
+      const { error } = await supabase.from('facility_managers').delete().eq('id', manager.id);
+      if (error) {
+        showToast(`Gagal menghapus: ${error.message}`, 'error');
+      } else {
+        showToast('PJ Fasilitas berhasil dihapus', 'success');
+        await fetchManagers();
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan', 'error');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   if (loading) {
@@ -145,151 +149,157 @@ export default function FacilityManagersPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Penanggung Jawab Fasilitas</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <UserCog className="w-6 h-6 text-blue-500" /> PJ Fasilitas
+          </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Kelola penugasan admin ke fasilitas (PIC)
+            Kelola penanggung jawab fasilitas
           </p>
         </div>
         {canCreate && (
           <button
-            onClick={openAdd}
+            onClick={() => setShowModal(true)}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
           >
-            <Plus className="w-4 h-4" />
-            Tambah Penanggung Jawab
+            <Plus className="w-4 h-4" /> Tambah PJ
           </button>
         )}
       </div>
 
-      <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-        <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+      <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+        <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
         <p className="text-sm text-blue-700 dark:text-blue-300">
-          Penanggung jawab fasilitas ditambahkan dan dihapus saja. Untuk mengubah, hapus lalu tambah kembali.
+          Untuk menugaskan PJ Barang Inventaris, buka halaman Inventaris dan pilih PJ pada barang yang bersangkutan.
         </p>
       </div>
 
       {managers.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <Building2 className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+            <UserCog className="w-8 h-8 text-slate-300 dark:text-slate-500" />
           </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Belum ada penanggung jawab</p>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Belum ada PJ Fasilitas</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {managers.map(m => {
-            const facName = m.facilities?.name ?? 'Fasilitas tidak ditemukan';
-            const admName = m.admin_users?.name ?? 'Admin tidak ditemukan';
-            const admEmail = m.admin_users?.email ?? '';
-            return (
-              <div key={m.id} className="card p-5 space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300 flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{facName}</h3>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">ID: {m.facility_id}</p>
-                    </div>
-                  </div>
-                  {m.is_primary && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex items-center gap-1 flex-shrink-0">
-                      <Star className="w-3 h-3" /> Utama
-                    </span>
-                  )}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {managers.map(m => (
+            <div key={m.id} className="card p-5 rounded-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-blue-500" />
+                  <h3 className="font-semibold text-slate-900 dark:text-white">
+                    {m.facility?.name ?? 'Fasilitas tidak dikenal'}
+                  </h3>
                 </div>
-
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                  <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center flex-shrink-0">
-                    <UserCog className="w-4 h-4 text-slate-500" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{admName}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{admEmail}</p>
-                  </div>
-                </div>
-
-                {m.notes && (
-                  <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{m.notes}</p>
-                )}
-
-                <p className="text-xs text-slate-400 dark:text-slate-500">
-                  Ditugaskan: {new Date(m.assigned_at).toLocaleDateString('id-ID')}
-                </p>
-
-                {canDelete && (
-                  <div className="flex pt-2 border-t border-slate-100 dark:border-slate-700">
-                    <button
-                      onClick={() => handleDelete(m)}
-                      disabled={deletingId === m.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-                    >
-                      {deletingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                      Hapus
-                    </button>
-                  </div>
+                {m.is_primary && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                    <Star className="w-3 h-3" /> Utama
+                  </span>
                 )}
               </div>
-            );
-          })}
+
+              <div className="mt-3 space-y-1">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  {m.admin_user?.name ?? '(tanpa nama)'}
+                </p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {m.admin_user?.email ?? '-'}
+                </p>
+              </div>
+
+              {m.notes && (
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 line-clamp-2">
+                  {m.notes}
+                </p>
+              )}
+
+              {m.assigned_at && (
+                <p className="text-xs text-slate-400 mt-2">
+                  Ditugaskan: {new Date(m.assigned_at).toLocaleDateString('id-ID')}
+                </p>
+              )}
+
+              {canDelete && (
+                <div className="flex items-center mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                  <button
+                    onClick={() => handleDelete(m)}
+                    disabled={actionLoading === `del-${m.id}`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-300 text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === `del-${m.id}` ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                    Hapus
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-800 shadow-xl p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tambah Penanggung Jawab</h2>
-            <div className="space-y-3">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Tambah PJ Fasilitas</h2>
+            <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Fasilitas *</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Fasilitas <span className="text-red-500">*</span>
+                </label>
                 <select
-                  value={form.facility_id}
-                  onChange={e => setForm({ ...form, facility_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formFacilityId}
+                  onChange={e => setFormFacilityId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 >
-                  <option value="">Pilih fasilitas...</option>
+                  <option value="">Pilih fasilitas</option>
                   {facilities.map(f => (
                     <option key={f.id} value={f.id}>{f.name}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Admin *</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Admin / PJ <span className="text-red-500">*</span>
+                </label>
                 <select
-                  value={form.admin_user_id}
-                  onChange={e => setForm({ ...form, admin_user_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formAdminUserId}
+                  onChange={e => setFormAdminUserId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 >
-                  <option value="">Pilih admin...</option>
+                  <option value="">Pilih admin</option>
                   {admins.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.email})</option>
+                    <option key={a.id} value={a.id}>
+                      {a.name ?? '(tanpa nama)'}{a.email ? ` — ${a.email}` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={form.is_primary}
-                  onChange={e => setForm({ ...form, is_primary: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500"
+                  checked={formIsPrimary}
+                  onChange={e => setFormIsPrimary(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-500 focus:ring-blue-500"
                 />
-                <span className="text-sm text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                  <Star className="w-3.5 h-3.5 text-amber-500" /> Penanggung jawab utama
-                </span>
+                <span className="text-sm text-slate-700 dark:text-slate-300">PJ Utama</span>
               </label>
               <div>
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Catatan
+                </label>
                 <textarea
-                  value={form.notes}
-                  onChange={e => setForm({ ...form, notes: e.target.value })}
+                  value={formNotes}
+                  onChange={e => setFormNotes(e.target.value)}
                   rows={2}
-                  placeholder="Catatan penugasan (opsional)"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Catatan (opsional)..."
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 mt-6">
               <button
                 onClick={() => setShowModal(false)}
                 className="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
@@ -297,12 +307,12 @@ export default function FacilityManagersPage() {
                 Batal
               </button>
               <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                onClick={handleAdd}
+                disabled={actionLoading === 'add'}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                Simpan
+                {actionLoading === 'add' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Tambah
               </button>
             </div>
           </div>

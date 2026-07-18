@@ -4,8 +4,20 @@ import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
 import {
-  Plus, Search, Pencil, Trash2, Package, X, Loader2, MapPin, Tag,
+  Package, Plus, Pencil, Trash2, X, Loader2, Search, MapPin, User,
 } from 'lucide-react';
+
+interface Category {
+  id: string;
+  name: string;
+}
+
+interface AdminUserOption {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
 
 interface Inventory {
   id: string;
@@ -13,21 +25,19 @@ interface Inventory {
   name: string;
   category_id: string | null;
   quantity: number;
-  condition: 'good' | 'fair' | 'poor';
-  location: string;
+  available_quantity: number | null;
+  condition: string;
+  location: string | null;
   image_url: string | null;
   purchase_date: string | null;
   price: number | null;
   description: string | null;
   created_at: string;
-  available_quantity: number | null;
   manager_name: string | null;
   manager_role: string | null;
-}
-
-interface Category {
-  id: string;
-  name: string;
+  manager_id: string | null;
+  category?: Category | null;
+  admin_users?: { name: string; email: string } | null;
 }
 
 interface FormData {
@@ -37,8 +47,9 @@ interface FormData {
   category_id: string;
   quantity: string;
   available_quantity: string;
-  condition: 'good' | 'fair' | 'poor';
+  condition: string;
   location: string;
+  manager_id: string;
 }
 
 const emptyForm: FormData = {
@@ -50,6 +61,7 @@ const emptyForm: FormData = {
   available_quantity: '',
   condition: 'good',
   location: '',
+  manager_id: '',
 };
 
 const conditionConfig: Record<string, { label: string; color: string }> = {
@@ -66,55 +78,61 @@ export default function InventoryAdminPage() {
 
   const [items, setItems] = useState<Inventory[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUserOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Inventory | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     setLoading(true);
-    try {
-      const [invRes, catRes] = await Promise.all([
-        supabase.from('inventory').select('*').order('created_at', { ascending: false }),
-        supabase.from('categories').select('id, name').order('name', { ascending: true }),
-      ]);
-      if (invRes.error) throw invRes.error;
-      if (catRes.error) throw catRes.error;
-      setItems((invRes.data as unknown as Inventory[]) || []);
-      setCategories((catRes.data as unknown as Category[]) || []);
-    } catch {
+    const { data, error } = await supabase
+      .from('inventory')
+      .select('*, categories(id, name), admin_users!manager_id(name, email)')
+      .order('created_at', { ascending: false });
+    if (error) {
       showToast('Gagal memuat data inventaris', 'error');
-    } finally {
       setLoading(false);
+      return;
     }
+    setItems((data as unknown as Inventory[]) || []);
+    setLoading(false);
+  }, []);
+
+  const fetchCategories = useCallback(async () => {
+    const { data } = await supabase.from('categories').select('id, name').order('name');
+    setCategories((data as unknown as Category[]) || []);
+  }, []);
+
+  const fetchAdminUsers = useCallback(async () => {
+    const { data } = await supabase
+      .from('admin_users')
+      .select('id, name, email, role')
+      .eq('is_active', true)
+      .order('name');
+    setAdminUsers((data as unknown as AdminUserOption[]) || []);
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchItems();
+    fetchCategories();
+    fetchAdminUsers();
+  }, [fetchItems, fetchCategories, fetchAdminUsers]);
 
-  const categoryName = (id: string | null) => {
-    if (!id) return '-';
-    const c = categories.find((c) => c.id === id);
-    return c?.name ?? '-';
-  };
-
-  const filtered = items.filter((it) => {
+  const filtered = items.filter(item => {
+    if (!search) return true;
     const q = search.toLowerCase();
-    const matchSearch =
-      !q ||
-      it.name?.toLowerCase().includes(q) ||
-      it.code?.toLowerCase().includes(q) ||
-      it.location?.toLowerCase().includes(q);
-    const matchCat = categoryFilter === 'all' || it.category_id === categoryFilter;
-    return matchSearch && matchCat;
+    return (
+      item.name?.toLowerCase().includes(q) ||
+      item.code?.toLowerCase().includes(q) ||
+      item.location?.toLowerCase().includes(q)
+    );
   });
 
-  const openCreate = () => {
+  const openAdd = () => {
     setEditing(null);
     setForm(emptyForm);
     setModalOpen(true);
@@ -127,31 +145,35 @@ export default function InventoryAdminPage() {
       code: item.code ?? '',
       description: item.description ?? '',
       category_id: item.category_id ?? '',
-      quantity: String(item.quantity ?? 0),
-      available_quantity: String(item.available_quantity ?? 0),
+      quantity: item.quantity != null ? String(item.quantity) : '',
+      available_quantity: item.available_quantity != null ? String(item.available_quantity) : '',
       condition: item.condition ?? 'good',
       location: item.location ?? '',
+      manager_id: item.manager_id ?? '',
     });
     setModalOpen(true);
   };
 
-  const handleSave = async () => {
-    if (!form.name.trim() || !form.code.trim()) {
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name || !form.code) {
       showToast('Nama dan kode wajib diisi', 'warning');
       return;
     }
     setSaving(true);
+    const payload = {
+      name: form.name,
+      code: form.code,
+      description: form.description || null,
+      category_id: form.category_id || null,
+      quantity: form.quantity ? Number(form.quantity) : 0,
+      available_quantity: form.available_quantity ? Number(form.available_quantity) : 0,
+      condition: form.condition,
+      location: form.location || null,
+      manager_id: form.manager_id || null,
+    };
+
     try {
-      const payload = {
-        name: form.name.trim(),
-        code: form.code.trim(),
-        description: form.description.trim() || null,
-        category_id: form.category_id || null,
-        quantity: Number(form.quantity) || 0,
-        available_quantity: Number(form.available_quantity) || 0,
-        condition: form.condition,
-        location: form.location.trim() || null,
-      };
       if (editing) {
         const { error } = await supabase.from('inventory').update(payload).eq('id', editing.id);
         if (error) throw error;
@@ -162,124 +184,126 @@ export default function InventoryAdminPage() {
         showToast('Inventaris ditambahkan', 'success');
       }
       setModalOpen(false);
-      await fetchData();
-    } catch (err: any) {
-      showToast(err.message ?? 'Gagal menyimpan inventaris', 'error');
+      await fetchItems();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal menyimpan inventaris', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (item: Inventory) => {
-    if (!confirm(`Hapus "${item.name}"?`)) return;
-    setDeletingId(item.id);
+  const handleDelete = async (id: string) => {
     try {
-      const { error } = await supabase.from('inventory').delete().eq('id', item.id);
+      const { error } = await supabase.from('inventory').delete().eq('id', id);
       if (error) throw error;
       showToast('Inventaris dihapus', 'success');
-      await fetchData();
-    } catch (err: any) {
-      showToast(err.message ?? 'Gagal menghapus inventaris', 'error');
-    } finally {
-      setDeletingId(null);
+      setDeleteId(null);
+      await fetchItems();
+    } catch (e) {
+      console.error(e);
+      showToast('Gagal menghapus inventaris', 'error');
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventaris</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data sarana dan prasarana</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data barang dan inventaris</p>
         </div>
         {canCreate && (
           <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium hover:opacity-90 transition-opacity shadow-sm"
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
           >
             <Plus className="w-4 h-4" /> Tambah
           </button>
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari nama, kode, lokasi..."
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="all">Semua Kategori</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Cari nama, kode, atau lokasi..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="input pl-10"
+        />
       </div>
 
-      {/* Table */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
           </div>
-        ) : filtered.length === 0 ? (
-          <p className="text-slate-500 dark:text-slate-400 text-center py-16">Tidak ada data inventaris</p>
-        ) : (
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada inventaris</p>
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300">
+              <thead className="bg-slate-50 dark:bg-slate-700/30 text-left text-slate-600 dark:text-slate-300">
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium">Kode</th>
-                  <th className="text-left px-4 py-3 font-medium">Nama</th>
-                  <th className="text-left px-4 py-3 font-medium">Kategori</th>
-                  <th className="text-left px-4 py-3 font-medium">Jumlah</th>
-                  <th className="text-left px-4 py-3 font-medium">Kondisi</th>
-                  <th className="text-left px-4 py-3 font-medium">Lokasi</th>
-                  <th className="text-right px-4 py-3 font-medium">Aksi</th>
+                  <th className="px-4 py-3 font-medium">Kode</th>
+                  <th className="px-4 py-3 font-medium">Nama</th>
+                  <th className="px-4 py-3 font-medium">Kategori</th>
+                  <th className="px-4 py-3 font-medium">Jumlah</th>
+                  <th className="px-4 py-3 font-medium">Kondisi</th>
+                  <th className="px-4 py-3 font-medium">Lokasi</th>
+                  <th className="px-4 py-3 font-medium">PJ Barang</th>
+                  <th className="px-4 py-3 font-medium text-right">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                {filtered.map((it) => {
-                  const cond = conditionConfig[it.condition] || conditionConfig.good;
+              <tbody className="divide-y divide-slate-200/50 dark:divide-slate-700/50">
+                {filtered.map(item => {
+                  const cc = conditionConfig[item.condition] || conditionConfig.good;
                   return (
-                    <tr key={it.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
-                      <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{it.code}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{it.name}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{categoryName(it.category_id)}</td>
+                    <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                      <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">{item.code}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{item.name}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.category?.name ?? '-'}</td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                        {it.available_quantity ?? 0}/{it.quantity ?? 0}
+                        {item.quantity} <span className="text-slate-400">(tersedia: {item.available_quantity ?? 0})</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', cond.color)}>{cond.label}</span>
+                        <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', cc.color)}>{cc.label}</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{it.location || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.location ?? '-'}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                        {item.admin_users?.name ? (
+                          <span className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                            {item.admin_users.name}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
                           {canUpdate && (
                             <button
-                              onClick={() => openEdit(it)}
-                              className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                              onClick={() => openEdit(item)}
+                              className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                              title="Edit"
                             >
                               <Pencil className="w-4 h-4" />
                             </button>
                           )}
                           {canDelete && (
                             <button
-                              onClick={() => handleDelete(it)}
-                              disabled={deletingId === it.id}
-                              className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                              onClick={() => setDeleteId(item.id)}
+                              className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+                              title="Hapus"
                             >
-                              {deletingId === it.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -290,123 +314,181 @@ export default function InventoryAdminPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Modal */}
+      {/* Add/Edit Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
-          <div
-            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                <Package className="w-5 h-5 text-blue-500" />
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                 {editing ? 'Edit Inventaris' : 'Tambah Inventaris'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={handleSave} className="p-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nama *</label>
+                  <label className="label">Nama Barang</label>
                   <input
+                    type="text"
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                    className="input"
+                    required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Kode *</label>
+                  <label className="label">Kode</label>
                   <input
+                    type="text"
                     value={form.code}
-                    onChange={(e) => setForm({ ...form, code: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={e => setForm(f => ({ ...f, code: e.target.value }))}
+                    className="input"
+                    required
                   />
                 </div>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Deskripsi</label>
+                <label className="label">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                   rows={2}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Kategori</label>
-                <select
-                  value={form.category_id}
-                  onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">- Pilih Kategori -</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Jumlah</label>
-                  <input
-                    type="number"
-                    value={form.quantity}
-                    onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <label className="label">Kategori</label>
+                  <select
+                    value={form.category_id}
+                    onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
+                    className="input"
+                  >
+                    <option value="">Pilih Kategori</option>
+                    {categories.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tersedia</label>
-                  <input
-                    type="number"
-                    value={form.available_quantity}
-                    onChange={(e) => setForm({ ...form, available_quantity: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Kondisi</label>
+                  <label className="label">Kondisi</label>
                   <select
                     value={form.condition}
-                    onChange={(e) => setForm({ ...form, condition: e.target.value as 'good' | 'fair' | 'poor' })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={e => setForm(f => ({ ...f, condition: e.target.value }))}
+                    className="input"
                   >
                     <option value="good">Baik</option>
                     <option value="fair">Cukup</option>
                     <option value="poor">Rusak</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Lokasi</label>
+                  <label className="label">Jumlah</label>
                   <input
-                    value={form.location}
-                    onChange={(e) => setForm({ ...form, location: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    type="number"
+                    min="0"
+                    value={form.quantity}
+                    onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label className="label">Jumlah Tersedia</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.available_quantity}
+                    onChange={e => setForm(f => ({ ...f, available_quantity: e.target.value }))}
+                    className="input"
                   />
                 </div>
               </div>
+
+              <div>
+                <label className="label">Lokasi</label>
+                <input
+                  type="text"
+                  value={form.location}
+                  onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                  className="input"
+                  placeholder="Lokasi penyimpanan"
+                />
+              </div>
+
+              {/* PJ Barang Dropdown */}
+              <div>
+                <label className="label">Penanggung Jawab Barang</label>
+                <select
+                  value={form.manager_id}
+                  onChange={e => setForm(f => ({ ...f, manager_id: e.target.value }))}
+                  className="input"
+                >
+                  <option value="">Pilih PJ Barang</option>
+                  {adminUsers.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({u.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                  {editing ? 'Simpan' : 'Tambah'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation */}
+      {deleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="card w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/30 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Hapus Inventaris?</h3>
             </div>
-            <div className="flex justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+              Tindakan ini tidak dapat dibatalkan. Yakin ingin menghapus item ini?
+            </p>
+            <div className="flex justify-end gap-3">
               <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 font-medium"
+                onClick={() => setDeleteId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
               >
                 Batal
               </button>
               <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-medium hover:opacity-90 disabled:opacity-50"
+                onClick={() => handleDelete(deleteId)}
+                className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
               >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {editing ? 'Simpan' : 'Tambah'}
+                Hapus
               </button>
             </div>
           </div>

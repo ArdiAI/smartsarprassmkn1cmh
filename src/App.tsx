@@ -56,18 +56,19 @@ function RedirectIfAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// AdminRoute: grants access to the admin shell only if the user has at least one permission.
-// No more boolean isAdmin / string "superadmin" checks.
+// AdminRoute: access granted purely based on permissions (isAdmin = permissions.size > 0).
+// No boolean column, no role string check. Any user with at least one permission is an admin.
 function AdminRoute({ children }: { children: ReactNode }) {
-  const { user, loading, permissions } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (permissions.size === 0) return <AccessDenied message="Akun Anda tidak memiliki permission admin. Hubungi Super Admin untuk memberikan role." />;
+  if (!isAdmin) {
+    return <AccessDenied message="Akun Anda tidak memiliki permission admin. Hubungi Super Admin untuk memberikan role." />;
+  }
   return <>{children}</>;
 }
 
 // PermissionRoute: gate a single admin page by required permission(s).
-// Renders AccessDenied (not a redirect) when the user lacks the permission.
 function PermissionRoute({ permission, children }: { permission: { module: string; action: string }; children: ReactNode }) {
   const { hasPermission } = useAuth();
   if (!hasPermission(permission.module, permission.action)) {

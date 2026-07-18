@@ -89,9 +89,7 @@ export default function AuthPage() {
             <button
               onClick={() => setMode('login')}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                mode === 'login'
-                  ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm'
-                  : 'text-slate-500'
+                mode === 'login' ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm' : 'text-slate-500'
               }`}
             >
               Masuk
@@ -99,9 +97,7 @@ export default function AuthPage() {
             <button
               onClick={() => setMode('register')}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                mode === 'register'
-                  ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm'
-                  : 'text-slate-500'
+                mode === 'register' ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm' : 'text-slate-500'
               }`}
             >
               Daftar

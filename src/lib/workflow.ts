@@ -49,7 +49,7 @@ export async function fetchWorkflowTemplate(templateId: string): Promise<Workflo
     .from('workflow_templates')
     .select('*')
     .eq('id', templateId)
-    .single();
+    .maybeSingle();
   if (!template) return null;
   const { data: steps } = await supabase
     .from('workflow_steps')
@@ -66,7 +66,7 @@ export async function getDefaultWorkflow(): Promise<WorkflowTemplate | null> {
     .eq('is_active', true)
     .order('created_at', { ascending: true })
     .limit(1)
-    .single();
+    .maybeSingle();
   if (!template) return null;
   return fetchWorkflowTemplate(template.id);
 }
@@ -91,9 +91,76 @@ export async function fetchRoleById(roleId: string): Promise<Role | null> {
     .from('roles')
     .select('*')
     .eq('id', roleId)
-    .single();
+    .maybeSingle();
   if (error || !data) return null;
   return data as unknown as Role;
+}
+
+export async function fetchRoleByName(name: string): Promise<Role | null> {
+  const { data, error } = await supabase
+    .from('roles')
+    .select('*')
+    .eq('name', name)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as unknown as Role;
+}
+
+/**
+ * Resolve the approver for a borrowing item based on its type:
+ *  - "barang"  -> the PJ Barang assigned as manager_id on the inventory row
+ *  - "fasilitas" -> the PJ Fasilitas assigned as manager_name on the facility row
+ * Falls back to the workflow step's role-based approver when no specific
+ * manager is assigned, preserving the existing approval workflow.
+ */
+export async function resolveItemApprover(
+  item: { item_type: string; inventory_id: string | null; facility_id: string | null },
+): Promise<{ approverEmail: string | null; approverName: string | null; roleName: string | null; source: string }> {
+  if (item.item_type === 'barang' && item.inventory_id) {
+    const { data: inv } = await supabase
+      .from('inventory')
+      .select('id, name, manager_id, admin_users!manager_id(id, email, name, role)')
+      .eq('id', item.inventory_id)
+      .maybeSingle();
+    const manager = (inv as any)?.admin_users;
+    if (manager && manager.email) {
+      return {
+        approverEmail: manager.email,
+        approverName: manager.name,
+        roleName: manager.role || 'PJ Barang',
+        source: 'inventory.manager_id',
+      };
+    }
+  }
+
+  if (item.item_type === 'fasilitas' && item.facility_id) {
+    const { data: fac } = await supabase
+      .from('facilities')
+      .select('id, name, manager_name, manager_role')
+      .eq('id', item.facility_id)
+      .maybeSingle();
+    const facData = fac as any;
+    if (facData && facData.manager_name) {
+      let approverEmail: string | null = null;
+      const { data: adminByManager } = await supabase
+        .from('admin_users')
+        .select('email, name, role')
+        .eq('name', facData.manager_name)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (adminByManager) approverEmail = (adminByManager as any).email;
+      return {
+        approverEmail,
+        approverName: facData.manager_name,
+        roleName: facData.manager_role || 'PJ Fasilitas',
+        source: 'facilities.manager_name',
+      };
+    }
+  }
+
+  return { approverEmail: null, approverName: null, roleName: null, source: 'none' };
 }
 
 export async function fetchNextApprover(
@@ -113,7 +180,7 @@ export async function fetchNextApprover(
       .eq('role_id', role.id)
       .eq('is_active', true)
       .limit(1)
-      .single();
+      .maybeSingle();
     if (data) approver = data as unknown as RoleApproverEmail;
   }
 
@@ -148,28 +215,40 @@ export async function filterBorrowingsForAdmin(
   if (!adminUser) return [];
   if (adminUser.role === 'superadmin') return borrowings;
 
-  const { data: adminRecord } = await supabase
-    .from('admin_users')
-    .select('role')
-    .eq('user_id', adminUser.user_id)
-    .eq('is_active', true)
-    .single();
-  const adminRole = adminRecord?.role;
-  if (adminRole === 'superadmin') return borrowings;
-
   const result: any[] = [];
   for (const b of borrowings) {
+    const items = b.borrowing_items || [];
     const templateId = b.workflow_template_id;
     if (!templateId) continue;
     const template = await fetchWorkflowTemplate(templateId);
     if (!template) continue;
-    const currentStep = getCurrentStep(template.steps, b.current_step ?? 1);
-    if (!currentStep) continue;
-    const stepRole = await fetchRoleById(currentStep.role_id);
-    if (!stepRole) continue;
-    if (adminRole === currentStep.role_id || adminRole === stepRole.name) {
-      result.push(b);
+
+    let include = false;
+    for (const item of items) {
+      const currentStepNum = item.current_step ?? 1;
+      const currentStep = getCurrentStep(template.steps, currentStepNum);
+      if (!currentStep) continue;
+      const stepRole = await fetchRoleById(currentStep.role_id);
+      if (!stepRole) continue;
+
+      if (adminUser.role === currentStep.role_id || adminUser.role === stepRole.name) {
+        include = true;
+        break;
+      }
+
+      if (item.item_type === 'barang' && item.inventory_id) {
+        const { data: inv } = await supabase
+          .from('inventory')
+          .select('manager_id')
+          .eq('id', item.inventory_id)
+          .maybeSingle();
+        if (inv && (inv as any).manager_id === adminUser.id) {
+          include = true;
+          break;
+        }
+      }
     }
+    if (include) result.push(b);
   }
   return result;
 }

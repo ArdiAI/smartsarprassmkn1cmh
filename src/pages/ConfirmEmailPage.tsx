@@ -52,10 +52,7 @@ export default function ConfirmEmailPage() {
           </div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-3">Verifikasi Gagal</h1>
           <p className="text-slate-600 dark:text-slate-400 mb-6">{error || 'Link konfirmasi tidak valid.'}</p>
-          <Link
-            to="/auth"
-            className="inline-block px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-          >
+          <Link to="/auth" className="inline-block px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors">
             Kembali ke Login
           </Link>
         </div>
@@ -74,10 +71,7 @@ export default function ConfirmEmailPage() {
           <p className="text-slate-600 dark:text-slate-400 mb-6">
             Email Anda telah terverifikasi. Silakan kembali ke website SMART SARPRAS untuk masuk.
           </p>
-          <Link
-            to="/auth"
-            className="inline-block px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors w-full"
-          >
+          <Link to="/auth" className="inline-block px-6 py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors w-full">
             Kembali ke Website SMART SARPRAS
           </Link>
         </div>

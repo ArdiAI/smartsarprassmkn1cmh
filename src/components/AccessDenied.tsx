@@ -11,10 +11,7 @@ export default function AccessDenied({ message }: { message?: string }) {
       <p className="text-slate-500 dark:text-slate-400 max-w-md mb-6">
         {message || 'Anda tidak memiliki izin untuk mengakses halaman ini. Hubungi Super Admin jika Anda merasa ini adalah kesalahan.'}
       </p>
-      <Link
-        to="/admin"
-        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-      >
+      <Link to="/admin" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors">
         <ArrowLeft className="w-4 h-4" /> Kembali ke Dashboard
       </Link>
     </div>
