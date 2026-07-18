@@ -7,9 +7,18 @@ import { brandConfig } from '../brand/config';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, isAdmin, permissions, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+
+  console.group('%c[DEBUG] Navbar RENDER', 'color:#ef4444;font-weight:bold;font-size:13px');
+  console.log('[DEBUG] Navbar — hasUser:', !!user);
+  console.log('[DEBUG] Navbar — isAdmin (from useAuth):', isAdmin);
+  console.log('[DEBUG] Navbar — permissions.size:', permissions.size);
+  console.log('[DEBUG] Navbar — permissions content:', Array.from(permissions));
+  console.log('[DEBUG] Navbar — menu Admin akan tampil?', user && isAdmin);
+  console.log('[DEBUG] Navbar — alasan:', !user ? 'user belum login' : !isAdmin ? `permissions.size=${permissions.size} (harus > 0)` : 'permissions.size > 0 → isAdmin=true');
+  console.groupEnd();
 
   const handleSignOut = async () => {
     await signOut();

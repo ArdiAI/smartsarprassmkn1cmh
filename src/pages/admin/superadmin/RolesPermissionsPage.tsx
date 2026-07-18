@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
-import { showToast } from '../../../components/Toast';
 import { useAuth } from '../../../context/AuthContext';
+import { supabase } from '../../../lib/supabase';
+import { showToast } from '../../../components/Toast';
+import { cn } from '../../../utils/cn';
 import {
-  Shield, Plus, Trash2, Edit3, Loader2, X, CheckCircle2, Lock, Crown,
+  Plus, Pencil, Trash2, Loader2, Shield, ShieldCheck, X, Check, Lock,
 } from 'lucide-react';
 
 interface Role {
@@ -17,15 +17,6 @@ interface Role {
   created_at: string;
 }
 
-interface RoleForm {
-  name: string;
-  description: string;
-  level: number;
-  is_active: boolean;
-}
-
-const emptyForm: RoleForm = { name: '', description: '', level: 0, is_active: true };
-
 export default function RolesPermissionsPage() {
   const { hasPermission } = useAuth();
   const canCreate = hasPermission('roles', 'create');
@@ -34,11 +25,14 @@ export default function RolesPermissionsPage() {
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Role | null>(null);
-  const [form, setForm] = useState<RoleForm>(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [formName, setFormName] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formLevel, setFormLevel] = useState('1');
+  const [formActive, setFormActive] = useState(true);
 
   const fetchRoles = useCallback(async () => {
     setLoading(true);
@@ -61,64 +55,60 @@ export default function RolesPermissionsPage() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm(emptyForm);
+    setFormName('');
+    setFormDescription('');
+    setFormLevel('1');
+    setFormActive(true);
     setShowModal(true);
   };
 
   const openEdit = (role: Role) => {
     setEditing(role);
-    setForm({
-      name: role.name,
-      description: role.description ?? '',
-      level: role.level,
-      is_active: role.is_active,
-    });
+    setFormName(role.name ?? '');
+    setFormDescription(role.description ?? '');
+    setFormLevel(String(role.level ?? 1));
+    setFormActive(role.is_active);
     setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
+    if (!formName.trim()) {
       showToast('Nama role wajib diisi', 'warning');
       return;
     }
-    setSaving(true);
+    setActionLoading('save');
     try {
       const payload = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        level: Number(form.level) || 0,
-        is_active: form.is_active,
+        name: formName.trim(),
+        description: formDescription.trim() || null,
+        level: Number(formLevel) || 1,
+        is_active: formActive,
       };
 
       if (editing) {
         const { error } = await supabase.from('roles').update(payload).eq('id', editing.id);
         if (error) {
-          showToast(`Gagal update role: ${error.message}`, 'error');
-          setSaving(false);
+          showToast('Gagal memperbarui role: ' + error.message, 'error');
+          setActionLoading(null);
           return;
         }
-        setRoles(prev => prev.map(r => (r.id === editing.id ? { ...r, ...payload, description: payload.description ?? '' } : r)));
         showToast('Role berhasil diperbarui', 'success');
       } else {
-        const { data, error } = await supabase
-          .from('roles')
-          .insert({ ...payload, is_system: false })
-          .select('id, name, description, level, is_system, is_active, created_at')
-          .single();
+        const { error } = await supabase.from('roles').insert({ ...payload, is_system: false });
         if (error) {
-          showToast(`Gagal menambah role: ${error.message}`, 'error');
-          setSaving(false);
+          showToast('Gagal menambah role: ' + error.message, 'error');
+          setActionLoading(null);
           return;
         }
-        const newRow = data as unknown as Role;
-        setRoles(prev => [newRow, ...prev]);
         showToast('Role berhasil ditambahkan', 'success');
       }
       setShowModal(false);
-      setForm(emptyForm);
-      setEditing(null);
+      await fetchRoles();
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan', 'error');
     } finally {
-      setSaving(false);
+      setActionLoading(null);
     }
   };
 
@@ -127,108 +117,124 @@ export default function RolesPermissionsPage() {
       showToast('Role sistem tidak dapat dihapus', 'warning');
       return;
     }
-    if (!confirm(`Hapus role "${role.name}"?`)) return;
-    setDeletingId(role.id);
+    if (!confirm(`Hapus role "${role.name}"? Tindakan ini tidak dapat dibatalkan.`)) return;
+    setActionLoading(`delete-${role.id}`);
     try {
       const { error } = await supabase.from('roles').delete().eq('id', role.id);
       if (error) {
-        showToast(`Gagal menghapus role: ${error.message}`, 'error');
-        setDeletingId(null);
+        showToast('Gagal menghapus role: ' + error.message, 'error');
+        setActionLoading(null);
         return;
       }
-      setRoles(prev => prev.filter(r => r.id !== role.id));
       showToast('Role berhasil dihapus', 'success');
+      await fetchRoles();
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan', 'error');
     } finally {
-      setDeletingId(null);
+      setActionLoading(null);
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Shield className="w-6 h-6 text-blue-500" />
-            Roles & Permissions
+            <Shield className="w-6 h-6 text-blue-500" /> Role & Permission
           </h1>
-          <p className="text-sm text-slate-500 mt-1">Kelola role dan tingkat akses admin</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            Kelola daftar role admin dan levelnya
+          </p>
         </div>
         {canCreate && (
           <button
             onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium shadow-md hover:shadow-lg transition-all"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm"
           >
             <Plus className="w-4 h-4" /> Tambah Role
           </button>
         )}
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      ) : roles.length === 0 ? (
-        <div className="text-center py-20 text-slate-400">
-          <Shield className="w-12 h-12 mx-auto mb-3 opacity-50" />
-          <p>Belum ada role</p>
+      {roles.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada role</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {roles.map(role => (
-            <div
-              key={role.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 flex flex-col"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                  {role.is_system ? <Lock className="w-5 h-5 text-white" /> : <Shield className="w-5 h-5 text-white" />}
+            <div key={role.id} className="card p-5 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {role.is_system ? (
+                    <Lock className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                  ) : (
+                    <ShieldCheck className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                  )}
+                  <h3 className="font-semibold text-slate-900 dark:text-white truncate">{role.name ?? 'Tanpa Nama'}</h3>
                 </div>
-                <div className="flex items-center gap-1">
-                  {role.level >= 90 && <Crown className="w-4 h-4 text-amber-500" />}
-                  <span className="text-xs font-medium text-slate-400">Level {role.level}</span>
-                </div>
-              </div>
-              <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                {role.name}
-                {role.is_system && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500">SISTEM</span>
-                )}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1 flex-1 line-clamp-2">
-                {role.description ?? 'Tidak ada deskripsi'}
-              </p>
-              <div className="flex items-center justify-between mt-4">
                 <span
                   className={cn(
-                    'inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium',
+                    'px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
                     role.is_active
-                      ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300'
-                      : 'bg-slate-100 dark:bg-slate-700/50 text-slate-500'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
                   )}
                 >
                   {role.is_active ? 'Aktif' : 'Nonaktif'}
                 </span>
-                <div className="flex items-center gap-1">
-                  {canUpdate && (
-                    <button
-                      onClick={() => openEdit(role)}
-                      className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                      title="Edit"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-                  )}
-                  {canDelete && !role.is_system && (
-                    <button
-                      onClick={() => handleDelete(role)}
-                      disabled={deletingId === role.id}
-                      className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
-                      title="Hapus"
-                    >
-                      {deletingId === role.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                    </button>
-                  )}
-                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+                  Level {role.level ?? 0}
+                </span>
+                {role.is_system && (
+                  <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                    Sistem
+                  </span>
+                )}
+              </div>
+
+              <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 min-h-[2.5rem]">
+                {role.description ?? 'Tidak ada deskripsi'}
+              </p>
+
+              <div className="flex items-center gap-2 pt-1">
+                {canUpdate && (
+                  <button
+                    onClick={() => openEdit(role)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Edit
+                  </button>
+                )}
+                {canDelete && !role.is_system && (
+                  <button
+                    onClick={() => handleDelete(role)}
+                    disabled={actionLoading === `delete-${role.id}`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 text-sm font-medium hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === `delete-${role.id}` ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                    Hapus
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -236,70 +242,74 @@ export default function RolesPermissionsPage() {
       )}
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                 {editing ? 'Edit Role' : 'Tambah Role'}
               </h2>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Nama Role *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="Contoh: Operator"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Deskripsi</label>
-                <textarea
-                  value={form.description}
-                  onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Deskripsi singkat role"
-                  rows={3}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Level (angka, makin tinggi makin kuat)</label>
-                <input
-                  type="number"
-                  value={form.level}
-                  onChange={e => setForm(prev => ({ ...prev, level: Number(e.target.value) }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.is_active}
-                  onChange={e => setForm(prev => ({ ...prev, is_active: e.target.checked }))}
-                  className="w-4 h-4 rounded text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700 dark:text-slate-200">Role aktif</span>
-              </label>
+            <div>
+              <label className="label">Nama Role <span className="text-red-500">*</span></label>
+              <input
+                type="text"
+                value={formName}
+                onChange={e => setFormName(e.target.value)}
+                placeholder="Contoh: Sarpras Admin"
+                className="input"
+                disabled={editing?.is_system}
+              />
             </div>
-            <div className="flex gap-2 mt-6">
+            <div>
+              <label className="label">Deskripsi</label>
+              <textarea
+                value={formDescription}
+                onChange={e => setFormDescription(e.target.value)}
+                rows={3}
+                placeholder="Deskripsi singkat role"
+                className="input"
+              />
+            </div>
+            <div>
+              <label className="label">Level</label>
+              <input
+                type="number"
+                value={formLevel}
+                onChange={e => setFormLevel(e.target.value)}
+                min="0"
+                className="input"
+              />
+              <p className="text-xs text-slate-400 mt-1">Level lebih tinggi = otoritas lebih besar.</p>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formActive}
+                onChange={e => setFormActive(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500"
+              />
+              <span className="text-sm text-slate-700 dark:text-slate-300">Role aktif</span>
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowModal(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700"
+                className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
               >
                 Batal
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium shadow-md disabled:opacity-60 flex items-center justify-center gap-2"
+                disabled={actionLoading === 'save'}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {editing ? 'Simpan' : 'Tambah'}
+                {actionLoading === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                Simpan
               </button>
             </div>
           </div>

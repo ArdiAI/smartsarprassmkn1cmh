@@ -1,29 +1,43 @@
 import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
-import { showToast } from '../../../components/Toast';
 import { useAuth } from '../../../context/AuthContext';
+import { supabase } from '../../../lib/supabase';
+import { showToast } from '../../../components/Toast';
+import { cn } from '../../../utils/cn';
 import {
-  Settings, Loader2, Save, CheckCircle2, Hash, Type, ToggleLeft, AlertCircle,
+  Save, Loader2, Settings, Search, ToggleLeft, ToggleRight, Type, Hash,
 } from 'lucide-react';
 
 interface SystemConfig {
   id: string;
   key: string;
-  value: any;
+  value: unknown; // jsonb
   label: string | null;
   description: string | null;
   config_group: string | null;
   updated_at: string | null;
 }
 
-type ValueType = 'boolean' | 'number' | 'string' | 'unknown';
+type ValueType = 'boolean' | 'number' | 'string';
 
-function detectType(value: any): ValueType {
-  if (typeof value === 'boolean') return 'boolean';
-  if (typeof value === 'number') return 'number';
-  if (typeof value === 'string') return 'string';
-  return 'unknown';
+function detectType(v: unknown): ValueType {
+  if (typeof v === 'boolean') return 'boolean';
+  if (typeof v === 'number') return 'number';
+  return 'string';
+}
+
+function stringifyValue(v: unknown, type: ValueType): string {
+  if (type === 'boolean') return v ? 'true' : 'false';
+  if (v === null || v === undefined) return '';
+  return String(v);
+}
+
+function parseValue(raw: string, type: ValueType): unknown {
+  if (type === 'boolean') return raw === 'true' || raw === '1';
+  if (type === 'number') {
+    const n = Number(raw);
+    return Number.isNaN(n) ? 0 : n;
+  }
+  return raw;
 }
 
 export default function SystemConfigPage() {
@@ -32,7 +46,8 @@ export default function SystemConfigPage() {
 
   const [configs, setConfigs] = useState<SystemConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [drafts, setDrafts] = useState<Record<string, any>>({});
+  const [search, setSearch] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const fetchConfigs = useCallback(async () => {
@@ -46,13 +61,13 @@ export default function SystemConfigPage() {
       setLoading(false);
       return;
     }
-    const rows = (data as unknown as SystemConfig[]) || [];
-    setConfigs(rows);
-    const draftMap: Record<string, any> = {};
-    rows.forEach(r => {
-      draftMap[r.id] = r.value;
-    });
-    setDrafts(draftMap);
+    const list = (data as unknown as SystemConfig[]) || [];
+    setConfigs(list);
+    const initDrafts: Record<string, string> = {};
+    for (const c of list) {
+      initDrafts[c.id] = stringifyValue(c.value, detectType(c.value));
+    }
+    setDrafts(initDrafts);
     setLoading(false);
   }, []);
 
@@ -60,166 +75,170 @@ export default function SystemConfigPage() {
     fetchConfigs();
   }, [fetchConfigs]);
 
-  const handleSave = async (cfg: SystemConfig) => {
-    setSavingId(cfg.id);
+  const filtered = configs.filter(c => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      c.key?.toLowerCase().includes(q) ||
+      c.label?.toLowerCase().includes(q) ||
+      c.config_group?.toLowerCase().includes(q)
+    );
+  });
+
+  // Group by config_group for nicer display.
+  const grouped: Record<string, SystemConfig[]> = {};
+  for (const c of filtered) {
+    const g = c.config_group ?? 'Umum';
+    if (!grouped[g]) grouped[g] = [];
+    grouped[g].push(c);
+  }
+
+  const handleSave = async (c: SystemConfig) => {
+    const type = detectType(c.value);
+    const raw = drafts[c.id] ?? '';
+    const newValue = parseValue(raw, type);
+    setSavingId(c.id);
     try {
-      const newValue = drafts[cfg.id];
       const { error } = await supabase
         .from('system_config')
         .update({ value: newValue, updated_at: new Date().toISOString() })
-        .eq('id', cfg.id);
+        .eq('id', c.id);
       if (error) {
-        showToast(`Gagal menyimpan: ${error.message}`, 'error');
+        showToast('Gagal menyimpan konfigurasi: ' + error.message, 'error');
         setSavingId(null);
         return;
       }
-      setConfigs(prev => prev.map(c => (c.id === cfg.id ? { ...c, value: newValue } : c)));
-      showToast(`Konfigurasi "${cfg.label || cfg.key}" disimpan`, 'success');
+      showToast(`Konfigurasi "${c.label ?? c.key}" disimpan`, 'success');
+      await fetchConfigs();
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan', 'error');
     } finally {
       setSavingId(null);
     }
   };
 
-  const grouped: Record<string, SystemConfig[]> = {};
-  configs.forEach(c => {
-    const g = c.config_group || 'Umum';
-    if (!grouped[g]) grouped[g] = [];
-    grouped[g].push(c);
-  });
-
-  const renderEditor = (cfg: SystemConfig) => {
-    const type = detectType(cfg.value);
-    const draft = drafts[cfg.id];
-    const isDirty = JSON.stringify(draft) !== JSON.stringify(cfg.value);
+  const renderEditor = (c: SystemConfig) => {
+    const type = detectType(c.value);
+    const raw = drafts[c.id] ?? '';
 
     if (type === 'boolean') {
+      const isOn = raw === 'true';
       return (
         <button
-          onClick={() => canManage && setDrafts(prev => ({ ...prev, [cfg.id]: !prev[cfg.id] }))}
-          disabled={!canManage}
-          className={cn(
-            'flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors',
-            draft
-              ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300'
-              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
-            !canManage && 'cursor-not-allowed opacity-70'
-          )}
+          onClick={() => setDrafts(prev => ({ ...prev, [c.id]: isOn ? 'false' : 'true' }))}
+          className="flex items-center gap-2"
         >
-          <ToggleLeft className="w-5 h-5" />
-          {draft ? 'Aktif' : 'Nonaktif'}
+          {isOn ? (
+            <ToggleRight className="w-10 h-10 text-emerald-500" />
+          ) : (
+            <ToggleLeft className="w-10 h-10 text-slate-400" />
+          )}
+          <span className={cn('text-sm font-medium', isOn ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500')}>
+            {isOn ? 'Aktif' : 'Nonaktif'}
+          </span>
         </button>
       );
     }
 
-    if (type === 'number') {
-      return (
-        <input
-          type="number"
-          value={typeof draft === 'number' ? draft : (draft ?? '')}
-          onChange={e => setDrafts(prev => ({ ...prev, [cfg.id]: Number(e.target.value) }))}
-          disabled={!canManage}
-          className="w-full sm:w-40 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-        />
-      );
-    }
-
-    if (type === 'string') {
-      return (
-        <input
-          type="text"
-          value={draft ?? ''}
-          onChange={e => setDrafts(prev => ({ ...prev, [cfg.id]: e.target.value }))}
-          disabled={!canManage}
-          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-        />
-      );
-    }
-
+    const isNumeric = type === 'number';
+    const isTextual = type === 'string';
     return (
-      <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-        <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-700 dark:text-amber-300">
-          Tipe nilai tidak dikenali (object/array). Edit langsung di database.
-        </p>
+      <div className="relative">
+        {isNumeric && <Hash className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />}
+        {isTextual && <Type className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />}
+        <input
+          type={isNumeric ? 'number' : 'text'}
+          value={raw}
+          onChange={e => setDrafts(prev => ({ ...prev, [c.id]: e.target.value }))}
+          className={cn('input', (isNumeric || isTextual) && 'pl-10')}
+        />
       </div>
     );
   };
 
-  const typeIcon = (value: any) => {
-    const t = detectType(value);
-    if (t === 'boolean') return <ToggleLeft className="w-3.5 h-3.5" />;
-    if (t === 'number') return <Hash className="w-3.5 h-3.5" />;
-    if (t === 'string') return <Type className="w-3.5 h-3.5" />;
-    return <AlertCircle className="w-3.5 h-3.5" />;
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Settings className="w-6 h-6 text-blue-500" />
-          Konfigurasi Sistem
+          <Settings className="w-6 h-6 text-blue-500" /> Konfigurasi Sistem
         </h1>
-        <p className="text-sm text-slate-500 mt-1">Kelola pengaturan dan parameter sistem</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Atur parameter dan pengaturan aplikasi SMART SARPRAS
+        </p>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      ) : configs.length === 0 ? (
-        <div className="text-center py-20 text-slate-400">
-          <Settings className="w-12 h-12 mx-auto mb-3 opacity-50" />
-          <p>Belum ada konfigurasi</p>
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          placeholder="Cari key, label, atau grup konfigurasi..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="input pl-11"
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Settings className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada konfigurasi</p>
         </div>
       ) : (
         <div className="space-y-6">
           {Object.entries(grouped).map(([group, items]) => (
-            <div key={group}>
-              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">{group}</h2>
+            <div key={group} className="space-y-3">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                {group}
+              </h2>
               <div className="grid gap-4">
-                {items.map(cfg => {
-                  const draft = drafts[cfg.id];
-                  const isDirty = JSON.stringify(draft) !== JSON.stringify(cfg.value);
+                {items.map(c => {
+                  const type = detectType(c.value);
+                  const dirty = (drafts[c.id] ?? '') !== stringifyValue(c.value, type);
                   return (
-                    <div
-                      key={cfg.id}
-                      className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-                        <div className="flex-1 min-w-0">
+                    <div key={c.id} className="card p-5">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-medium text-slate-900 dark:text-white">
-                              {cfg.label || cfg.key}
-                            </h3>
-                            <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500">
-                              {typeIcon(cfg.value)} {detectType(cfg.value)}
+                            <h3 className="font-semibold text-slate-900 dark:text-white">{c.label ?? c.key}</h3>
+                            <code className="px-2 py-0.5 rounded-md text-xs bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300">
+                              {c.key}
+                            </code>
+                            <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+                              {type}
                             </span>
-                            <code className="text-xs text-slate-400 font-mono">{cfg.key}</code>
                           </div>
-                          {cfg.description && (
-                            <p className="text-xs text-slate-500 mt-1">{cfg.description}</p>
-                          )}
-                          {cfg.updated_at && (
-                            <p className="text-xs text-slate-400 mt-1">
-                              Diperbarui: {new Date(cfg.updated_at).toLocaleString('id-ID')}
-                            </p>
+                          {c.description && (
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{c.description}</p>
                           )}
                         </div>
-                        <div className="sm:w-64 flex flex-col gap-2">
-                          {renderEditor(cfg)}
-                          {canManage && isDirty && (
-                            <button
-                              onClick={() => handleSave(cfg)}
-                              disabled={savingId === cfg.id}
-                              className="flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium shadow-md disabled:opacity-60"
-                            >
-                              {savingId === cfg.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                              Simpan
-                            </button>
-                          )}
-                        </div>
+                        {canManage && (
+                          <button
+                            onClick={() => handleSave(c)}
+                            disabled={savingId === c.id || !dirty}
+                            className={cn(
+                              'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                              dirty
+                                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                : 'bg-slate-100 text-slate-400 dark:bg-slate-700/50 dark:text-slate-500 cursor-not-allowed'
+                            )}
+                          >
+                            {savingId === c.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            Simpan
+                          </button>
+                        )}
                       </div>
+                      <div className="mt-3">{renderEditor(c)}</div>
                     </div>
                   );
                 })}

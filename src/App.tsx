@@ -57,9 +57,19 @@ function RedirectIfAuth({ children }: { children: ReactNode }) {
 }
 
 // AdminRoute: access granted purely based on permissions (isAdmin = permissions.size > 0).
-// No boolean column, no role string check. Any user with at least one permission is an admin.
 function AdminRoute({ children }: { children: ReactNode }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, permissions } = useAuth();
+
+  console.group('%c[DEBUG] AdminRoute CHECK', 'color:#dc2626;font-weight:bold;font-size:13px');
+  console.log('[DEBUG] AdminRoute — loading:', loading);
+  console.log('[DEBUG] AdminRoute — hasUser:', !!user);
+  console.log('[DEBUG] AdminRoute — isAdmin:', isAdmin);
+  console.log('[DEBUG] AdminRoute — permissions.size:', permissions.size);
+  console.log('[DEBUG] AdminRoute — permissions content:', Array.from(permissions));
+  console.log('[DEBUG] AdminRoute — permission yang sedang dicek: TIDAK ADA (AdminRoute hanya cek permissions.size > 0)');
+  console.log('[DEBUG] AdminRoute — keputusan:', loading ? 'loading...' : !user ? 'redirect ke /auth' : !isAdmin ? `DITOLAK (permissions.size=${permissions.size}, harus > 0)` : 'DITERIMA (permissions.size > 0)');
+  console.groupEnd();
+
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/auth" replace />;
   if (!isAdmin) {
@@ -70,8 +80,19 @@ function AdminRoute({ children }: { children: ReactNode }) {
 
 // PermissionRoute: gate a single admin page by required permission(s).
 function PermissionRoute({ permission, children }: { permission: { module: string; action: string }; children: ReactNode }) {
-  const { hasPermission } = useAuth();
-  if (!hasPermission(permission.module, permission.action)) {
+  const { hasPermission, permissions } = useAuth();
+  const required = `${permission.module}:${permission.action}`;
+  const granted = hasPermission(permission.module, permission.action);
+
+  console.group('%c[DEBUG] PermissionRoute CHECK', 'color:#0891b2;font-weight:bold;font-size:13px');
+  console.log('[DEBUG] PermissionRoute — permission yang sedang dicek:', required);
+  console.log('[DEBUG] PermissionRoute — granted?', granted);
+  console.log('[DEBUG] PermissionRoute — permissions.size:', permissions.size);
+  console.log('[DEBUG] PermissionRoute — permissions content:', Array.from(permissions));
+  console.log('[DEBUG] PermissionRoute — keputusan:', granted ? 'DITERIMA' : `DITOLAK (butuh ${required})`);
+  console.groupEnd();
+
+  if (!granted) {
     return <AccessDenied message={`Permission "${permission.module}:${permission.action}" diperlukan untuk membuka halaman ini.`} />;
   }
   return <>{children}</>;
