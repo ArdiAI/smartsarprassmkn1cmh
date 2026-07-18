@@ -1,16 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
+import { cn } from '../../../utils/cn';
 import {
-  Building2,
-  Plus,
-  Pencil,
-  Trash2,
-  Star,
-  Loader2,
-  X,
-  UserCog,
+  Building2, Plus, Pencil, Trash2, Loader2, RefreshCw, X, Star, User, Mail, Calendar,
 } from 'lucide-react';
 
 interface FacilityManager {
@@ -24,7 +17,7 @@ interface FacilityManager {
 
 interface Facility {
   id: string;
-  name: string | null;
+  name: string;
 }
 
 interface AdminUser {
@@ -34,9 +27,8 @@ interface AdminUser {
 }
 
 interface ManagerRow extends FacilityManager {
-  facility_name: string;
-  admin_name: string;
-  admin_email: string;
+  facility?: { name: string } | null;
+  admin_user?: { name: string | null; email: string | null } | null;
 }
 
 interface ManagerForm {
@@ -59,53 +51,42 @@ export default function FacilityManagersPage() {
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<FacilityManager | null>(null);
+  const [editing, setEditing] = useState<ManagerRow | null>(null);
   const [form, setForm] = useState<ManagerForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchAll = async () => {
+  const fetchManagers = useCallback(async () => {
     setLoading(true);
-    const [mgrRes, facRes, admRes] = await Promise.all([
-      supabase.from('facility_managers').select('*').order('assigned_at', { ascending: false }),
-      supabase.from('facilities').select('id, name').order('name', { ascending: true }),
-      supabase.from('admin_users').select('id, email, name').order('name', { ascending: true }),
-    ]);
-
-    if (mgrRes.error) {
-      showToast('Gagal memuat facility managers: ' + mgrRes.error.message, 'error');
-      setLoading(false);
-      return;
+    const { data, error } = await supabase
+      .from('facility_managers')
+      .select(`
+        *,
+        facility:facilities(name),
+        admin_user:admin_users(name, email)
+      `)
+      .order('assigned_at', { ascending: false });
+    if (error) {
+      showToast('Gagal memuat data penanggung jawab', 'error');
+    } else {
+      setManagers((data as unknown as ManagerRow[]) || []);
     }
-    if (facRes.error) {
-      showToast('Gagal memuat facilities: ' + facRes.error.message, 'error');
-    }
-    if (admRes.error) {
-      showToast('Gagal memuat admin users: ' + admRes.error.message, 'error');
-    }
-
-    const mgrList = (mgrRes.data ?? []) as unknown as FacilityManager[];
-    const facList = (facRes.data ?? []) as unknown as Facility[];
-    const admList = (admRes.data ?? []) as unknown as AdminUser[];
-
-    setFacilities(facList);
-    setAdmins(admList);
-
-    const facMap = new Map(facList.map(f => [f.id, f.name ?? '-']));
-    const admMap = new Map(admList.map(a => [a.id, { name: a.name ?? '-', email: a.email ?? '-' }]));
-
-    const rows: ManagerRow[] = mgrList.map(m => ({
-      ...m,
-      facility_name: facMap.get(m.facility_id) ?? '-',
-      admin_name: admMap.get(m.admin_user_id)?.name ?? '-',
-      admin_email: admMap.get(m.admin_user_id)?.email ?? '-',
-    }));
-    setManagers(rows);
     setLoading(false);
-  };
+  }, []);
+
+  const fetchOptions = useCallback(async () => {
+    const [facRes, adminRes] = await Promise.all([
+      supabase.from('facilities').select('id, name').order('name', { ascending: true }),
+      supabase.from('admin_users').select('id, name, email').eq('is_active', true).order('name', { ascending: true }),
+    ]);
+    if (facRes.data) setFacilities(facRes.data as unknown as Facility[]);
+    if (adminRes.data) setAdmins(adminRes.data as unknown as AdminUser[]);
+  }, []);
 
   useEffect(() => {
-    fetchAll();
-  }, []);
+    fetchManagers();
+    fetchOptions();
+  }, [fetchManagers, fetchOptions]);
 
   const openAdd = () => {
     setEditing(null);
@@ -116,8 +97,8 @@ export default function FacilityManagersPage() {
   const openEdit = (m: ManagerRow) => {
     setEditing(m);
     setForm({
-      facility_id: m.facility_id,
-      admin_user_id: m.admin_user_id,
+      facility_id: m.facility_id ?? '',
+      admin_user_id: m.admin_user_id ?? '',
       is_primary: m.is_primary ?? false,
       notes: m.notes ?? '',
     });
@@ -125,141 +106,162 @@ export default function FacilityManagersPage() {
   };
 
   const handleSave = async () => {
-    if (!form.facility_id) {
-      showToast('Fasilitas wajib dipilih', 'warning');
-      return;
-    }
-    if (!form.admin_user_id) {
-      showToast('Admin wajib dipilih', 'warning');
+    if (!form.facility_id || !form.admin_user_id) {
+      showToast('Fasilitas dan admin wajib dipilih', 'warning');
       return;
     }
     setSaving(true);
-    const payload = {
-      facility_id: form.facility_id,
-      admin_user_id: form.admin_user_id,
-      is_primary: form.is_primary,
-      notes: form.notes.trim() || null,
-    };
-
-    if (editing) {
-      const { error } = await supabase.from('facility_managers').update(payload).eq('id', editing.id);
-      if (error) {
-        showToast('Gagal memperbarui: ' + error.message, 'error');
+    try {
+      const payload = {
+        facility_id: form.facility_id,
+        admin_user_id: form.admin_user_id,
+        is_primary: form.is_primary,
+        notes: form.notes.trim() || null,
+      };
+      if (editing) {
+        const { error } = await supabase
+          .from('facility_managers')
+          .update(payload)
+          .eq('id', editing.id);
+        if (error) throw error;
+        showToast('Penanggung jawab diperbarui', 'success');
       } else {
-        showToast('Manager berhasil diperbarui', 'success');
-        setShowModal(false);
-        fetchAll();
+        const { error } = await supabase
+          .from('facility_managers')
+          .insert(payload);
+        if (error) throw error;
+        showToast('Penanggung jawab ditambahkan', 'success');
       }
-    } else {
-      const { error } = await supabase.from('facility_managers').insert(payload);
-      if (error) {
-        showToast('Gagal menambah manager: ' + error.message, 'error');
-      } else {
-        showToast('Manager berhasil ditambahkan', 'success');
-        setShowModal(false);
-        fetchAll();
-      }
-    }
-    setSaving(false);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Hapus penunjukan manager ini?')) return;
-    const { error } = await supabase.from('facility_managers').delete().eq('id', id);
-    if (error) {
-      showToast('Gagal menghapus: ' + error.message, 'error');
-    } else {
-      showToast('Manager berhasil dihapus', 'success');
-      fetchAll();
+      setShowModal(false);
+      fetchManagers();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan data';
+      showToast(msg, 'error');
+    } finally {
+      setSaving(false);
     }
   };
+
+  const handleDelete = async (m: ManagerRow) => {
+    if (!confirm('Hapus penanggung jawab ini?')) return;
+    setDeletingId(m.id);
+    try {
+      const { error } = await supabase.from('facility_managers').delete().eq('id', m.id);
+      if (error) throw error;
+      setManagers(prev => prev.filter(x => x.id !== m.id));
+      showToast('Penanggung jawab dihapus', 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menghapus data';
+      showToast(msg, 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const facilityName = (m: ManagerRow) => m.facility?.name ?? 'Fasilitas tidak dikenal';
+  const adminName = (m: ManagerRow) => m.admin_user?.name ?? 'Tanpa Nama';
+  const adminEmail = (m: ManagerRow) => m.admin_user?.email ?? '-';
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Building2 className="w-6 h-6 text-blue-500" />
-            Facility Managers
+            Penanggung Jawab Fasilitas
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Kelola penunjukan manager untuk setiap fasilitas
+            Kelola penugasan admin ke fasilitas
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Tambah Manager
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={fetchManagers}
+            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+            title="Muat ulang"
+          >
+            <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
+          </button>
+          <button
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Tambah Penugasan
+          </button>
+        </div>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
+        <div className="flex justify-center py-16">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
         </div>
       ) : managers.length === 0 ? (
-        <div className="text-center py-12 text-slate-500 dark:text-slate-400">
-          Belum ada manager ditunjuk
+        <div className="text-center py-16 text-slate-400">
+          <Building2 className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p>Belum ada penanggung jawab fasilitas</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-3">
           {managers.map(m => (
             <div
               key={m.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm"
+              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex flex-col sm:flex-row sm:items-center gap-4"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div
-                    className={cn(
-                      'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
-                      m.is_primary
-                        ? 'bg-amber-100 dark:bg-amber-900/30'
-                        : 'bg-blue-100 dark:bg-blue-900/30'
-                    )}
-                  >
-                    {m.is_primary ? (
-                      <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
-                    ) : (
-                      <UserCog className="w-5 h-5 text-blue-500" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-slate-900 dark:text-white">{m.facility_name}</p>
-                      {m.is_primary && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                          Utama
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
-                      {m.admin_name} · <span className="text-slate-500 dark:text-slate-400">{m.admin_email}</span>
-                    </p>
-                    {m.notes && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{m.notes}</p>
-                    )}
-                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                      Ditunjuk: {m.assigned_at ? new Date(m.assigned_at).toLocaleDateString('id-ID') : '-'}
-                    </p>
-                  </div>
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                  <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openEdit(m)}
-                    className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 transition-colors"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(m.id)}
-                    className="p-2 rounded-lg bg-red-100 text-red-600 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 transition-colors"
-                  >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-slate-900 dark:text-white truncate">
+                      {facilityName(m)}
+                    </p>
+                    {m.is_primary && (
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                        <Star className="w-3 h-3" /> Utama
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                    <span className="flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5" /> {adminName(m)}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5" /> {adminEmail(m)}
+                    </span>
+                  </div>
+                  {m.notes && (
+                    <p className="text-xs text-slate-400 mt-1 italic">"{m.notes}"</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Calendar className="w-3.5 h-3.5" />
+                {m.assigned_at ? new Date(m.assigned_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => openEdit(m)}
+                  className="p-2 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition"
+                  title="Edit"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(m)}
+                  disabled={deletingId === m.id}
+                  className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition disabled:opacity-50"
+                  title="Hapus"
+                >
+                  {deletingId === m.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
                     <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                  )}
+                </button>
               </div>
             </div>
           ))}
@@ -267,15 +269,18 @@ export default function FacilityManagersPage() {
       )}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-xl border border-slate-200 dark:border-slate-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowModal(false)}>
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {editing ? 'Edit Manager' : 'Tambah Manager'}
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                {editing ? 'Edit Penugasan' : 'Tambah Penugasan'}
               </h2>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -283,75 +288,73 @@ export default function FacilityManagersPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Fasilitas
+                  Fasilitas <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={form.facility_id}
-                  onChange={e => setForm({ ...form, facility_id: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  onChange={e => setForm(f => ({ ...f, facility_id: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Pilih Fasilitas</option>
+                  <option value="">Pilih fasilitas</option>
                   {facilities.map(f => (
-                    <option key={f.id} value={f.id}>
-                      {f.name ?? '-'}
-                    </option>
+                    <option key={f.id} value={f.id}>{f.name}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Admin
+                  Admin <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={form.admin_user_id}
-                  onChange={e => setForm({ ...form, admin_user_id: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  onChange={e => setForm(f => ({ ...f, admin_user_id: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Pilih Admin</option>
+                  <option value="">Pilih admin</option>
                   {admins.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.name ?? '-'} ({a.email ?? '-'})
+                      {a.name ?? a.email ?? 'Tanpa Nama'}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Catatan
-                </label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Catatan</label>
                 <textarea
                   value={form.notes}
-                  onChange={e => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Catatan (opsional)"
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                   rows={3}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+                  placeholder="Catatan tambahan (opsional)"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={form.is_primary}
-                  onChange={e => setForm({ ...form, is_primary: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-blue-500 focus:ring-blue-500"
+                  onChange={e => setForm(f => ({ ...f, is_primary: e.target.checked }))}
+                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-slate-700 dark:text-slate-300">Manager Utama</span>
+                <span className="text-sm text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                  <Star className="w-4 h-4 text-amber-500" /> Penanggung jawab utama
+                </span>
               </label>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Simpan
-                </button>
-              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition font-medium text-sm"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h--4" />}
+                {editing ? 'Simpan' : 'Tambah'}
+              </button>
             </div>
           </div>
         </div>

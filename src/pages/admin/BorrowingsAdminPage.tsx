@@ -1,34 +1,32 @@
 import { useEffect, useState, useCallback } from 'react';
-import {
-  CheckCircle2,
-  XCircle,
-  Clock,
-  ChevronDown,
-  ChevronUp,
-  Package,
-  Building2,
-  RotateCcw,
-  Loader2,
-} from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
 import {
   fetchWorkflowTemplate,
   getNextActionableStep,
   isLastActionableStep,
   getCurrentStep,
-  type WorkflowStep,
+  fetchNextApprover,
+  notifyNextApprover,
+  filterBorrowingsForAdmin,
+  fetchRoleById,
   type WorkflowTemplate,
+  type WorkflowStep,
+  type AdminUser,
 } from '../../lib/workflow';
+import { showToast } from '../../components/Toast';
+import {
+  CheckCircle, XCircle, Clock, Loader2, Package, Calendar, User, Mail, Phone,
+  FileText, ChevronDown, ChevronUp, AlertCircle, ArrowRight, History,
+} from 'lucide-react';
 
-interface BorrowingItemRow {
+interface BorrowingItem {
   id: string;
   borrowing_id: string;
   inventory_id: string | null;
   facility_id: string | null;
   item_type: string;
-  item_name: string | null;
+  item_name: string;
   quantity: number;
   status: string;
   current_status_label: string | null;
@@ -36,56 +34,87 @@ interface BorrowingItemRow {
   current_step: number | null;
   assigned_approver_name: string | null;
   assigned_approver_role: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
-interface BorrowingRow {
+interface Borrowing {
   id: string;
+  inventory_id: string | null;
   borrower_name: string;
-  borrower_class: string | null;
-  borrower_email: string | null;
-  borrower_phone: string | null;
-  item_type: string;
+  borrower_class: string;
+  borrowed_units: number | null;
+  borrow_date: string;
+  return_date: string;
+  actual_return_date: string | null;
   status: string;
   notes: string | null;
-  admin_notes: string | null;
-  purpose: string | null;
-  borrow_date: string | null;
-  return_date: string | null;
   created_at: string;
-  current_status_label: string | null;
+  borrower_email: string;
+  borrower_phone: string | null;
+  item_type: string;
+  facility_id: string | null;
+  purpose: string;
+  admin_notes: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  document_url: string | null;
+  document_name: string | null;
+  approved_by: string | null;
+  approver_position: string | null;
+  approved_at: string | null;
   workflow_template_id: string | null;
   current_step: number | null;
-  borrowing_items: BorrowingItemRow[];
+  current_status_label: string | null;
+  borrowing_items: BorrowingItem[];
 }
 
-interface InventoryRow {
+interface ApprovalHistoryEntry {
   id: string;
-  name: string;
+  borrowing_id: string;
+  step_order: number;
+  step_label: string;
+  approver_name: string;
+  approver_role: string;
+  status: string;
+  notes: string | null;
+  acted_at: string;
+  borrowing_item_id: string | null;
 }
 
-interface FacilityRow {
-  id: string;
-  name: string;
-}
-
-const statusColors: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  approved: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  completed: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
-  cancelled: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+const statusConfig: Record<string, { label: string; color: string }> = {
+  pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  approved: { label: 'Disetujui', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  returned: { label: 'Dikembalikan', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  completed: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  cancelled: { label: 'Dibatalkan', color: 'bg-slate-100 text-slate-700 dark:bg-slate-700/30 dark:text-slate-300' },
 };
 
 export default function BorrowingsAdminPage() {
-  const [borrowings, setBorrowings] = useState<BorrowingRow[]>([]);
+  const { user } = useAuth();
+  const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
+  const [filteredBorrowings, setFilteredBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [inventoryMap, setInventoryMap] = useState<Record<string, string>>({});
-  const [facilityMap, setFacilityMap] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
   const [workflowCache, setWorkflowCache] = useState<Record<string, WorkflowTemplate>>({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [actionForms, setActionForms] = useState<Record<string, { approverName: string; approverRole: string; notes: string }>>({});
+  const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
+  const [historyByBorrowing, setHistoryByBorrowing] = useState<Record<string, ApprovalHistoryEntry[]>>({});
+
+  const fetchAdminUser = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('admin_users')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .single();
+    if (data) setAdminUser(data as unknown as AdminUser);
+  }, [user]);
 
   const fetchBorrowings = useCallback(async () => {
     setLoading(true);
@@ -93,372 +122,323 @@ export default function BorrowingsAdminPage() {
       .from('borrowings')
       .select('*, borrowing_items(*)')
       .order('created_at', { ascending: false });
-
     if (error) {
       showToast('Gagal memuat data peminjaman', 'error');
       setLoading(false);
       return;
     }
+    const all = (data as unknown as Borrowing[]) || [];
+    setBorrowings(all);
 
-    const rows = (data as unknown as BorrowingRow[]) ?? [];
+    // Role-based filtering: each role only sees requests they're responsible for
+    const filtered = await filterBorrowingsForAdmin(all, adminUser);
+    setFilteredBorrowings(filtered);
 
-    // Fetch inventory and facility names
-    const inventoryIds = new Set<string>();
-    const facilityIds = new Set<string>();
-    rows.forEach(b => {
-      b.borrowing_items?.forEach(item => {
-        if (item.inventory_id) inventoryIds.add(item.inventory_id);
-        if (item.facility_id) facilityIds.add(item.facility_id);
-      });
-    });
-
-    const [invRes, facRes] = await Promise.all([
-      inventoryIds.size > 0
-        ? supabase.from('inventory').select('id, name').in('id', Array.from(inventoryIds))
-        : Promise.resolve({ data: [] }),
-      facilityIds.size > 0
-        ? supabase.from('facilities').select('id, name').in('id', Array.from(facilityIds))
-        : Promise.resolve({ data: [] }),
-    ]);
-
-    const invMap: Record<string, string> = {};
-    ((invRes.data as unknown as InventoryRow[]) ?? []).forEach(i => {
-      invMap[i.id] = i.name;
-    });
-    setInventoryMap(invMap);
-
-    const facMap: Record<string, string> = {};
-    ((facRes.data as unknown as FacilityRow[]) ?? []).forEach(f => {
-      facMap[f.id] = f.name;
-    });
-    setFacilityMap(facMap);
-
-    // Fetch workflow templates
-    const templateIds = new Set<string>();
-    rows.forEach(b => {
-      if (b.workflow_template_id) templateIds.add(b.workflow_template_id);
-      b.borrowing_items?.forEach(item => {
-        if (item.workflow_template_id) templateIds.add(item.workflow_template_id);
-      });
-    });
-
+    // Preload workflow templates
+    const templateIds = [...new Set(all.map(b => b.workflow_template_id).filter(Boolean) as string[])];
     const cache: Record<string, WorkflowTemplate> = { ...workflowCache };
-    for (const tid of Array.from(templateIds)) {
+    for (const tid of templateIds) {
       if (!cache[tid]) {
         const tmpl = await fetchWorkflowTemplate(tid);
         if (tmpl) cache[tid] = tmpl;
       }
     }
     setWorkflowCache(cache);
-
-    setBorrowings(rows);
     setLoading(false);
+  }, [adminUser, workflowCache]);
+
+  const fetchHistory = useCallback(async (borrowingId: string) => {
+    const { data } = await supabase
+      .from('approval_history')
+      .select('*')
+      .eq('borrowing_id', borrowingId)
+      .order('acted_at', { ascending: true });
+    setHistoryByBorrowing(prev => ({ ...prev, [borrowingId]: (data as unknown as ApprovalHistoryEntry[]) || [] }));
   }, []);
 
   useEffect(() => {
-    fetchBorrowings();
-  }, [fetchBorrowings]);
+    fetchAdminUser();
+  }, [fetchAdminUser]);
 
-  const getFormItem = (itemId: string) => {
-    return actionForms[itemId] ?? { approverName: '', approverRole: '', notes: '' };
-  };
+  useEffect(() => {
+    if (adminUser) fetchBorrowings();
+  }, [adminUser, fetchBorrowings]);
 
-  const setFormField = (itemId: string, field: string, value: string) => {
-    setActionForms(prev => ({
-      ...prev,
-      [itemId]: { ...getFormItem(itemId), [field]: value },
-    }));
-  };
-
-  const sendBorrowingEmail = async (borrowingId: string, eventType: string) => {
-    try {
-      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v2/send-borrowing-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ borrowingId, eventType }),
-      });
-    } catch {
-      // Email failures are non-blocking
+  const displayList = (adminUser?.role === 'superadmin' ? borrowings : filteredBorrowings).filter(b => {
+    if (statusFilter !== 'all' && b.status !== statusFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        b.borrower_name?.toLowerCase().includes(q) ||
+        b.borrower_email?.toLowerCase().includes(q) ||
+        b.borrower_class?.toLowerCase().includes(q) ||
+        b.purpose?.toLowerCase().includes(q)
+      );
     }
-  };
+    return true;
+  });
 
-  const handleApprove = async (borrowing: BorrowingRow, item: BorrowingItemRow) => {
-    const form = getFormItem(item.id);
-    if (!form.approverName.trim() || !form.approverRole.trim()) {
-      showToast('Nama dan jabatan approver wajib diisi', 'warning');
-      return;
-    }
-
+  const handleApproveItem = async (borrowing: Borrowing, item: BorrowingItem) => {
+    if (!user) return;
     setActionLoading(item.id);
     try {
-      const templateId = item.workflow_template_id ?? borrowing.workflow_template_id ?? '';
-      const template = templateId ? workflowCache[templateId] : null;
-      const steps: WorkflowStep[] = template?.steps ?? [];
-      const currentStep = item.current_step ?? 0;
-      const currentStepObj = getCurrentStep(steps, currentStep);
-      const stepLabel = currentStepObj?.step_label ?? `Step ${currentStep}`;
+      const templateId = item.workflow_template_id || borrowing.workflow_template_id;
+      if (!templateId) {
+        showToast('Template workflow tidak ditemukan', 'error');
+        setActionLoading(null);
+        return;
+      }
+      const template = workflowCache[templateId] || (await fetchWorkflowTemplate(templateId));
+      if (!template) {
+        showToast('Template workflow tidak ditemukan', 'error');
+        setActionLoading(null);
+        return;
+      }
+
+      const currentStepNum = item.current_step ?? 1;
+      const currentStep = getCurrentStep(template.steps, currentStepNum);
+      const notes = notesByItem[item.id] || '';
+
+      // Determine admin's display name & role for the approval history log
+      const approverName = adminUser?.name || user.email || 'Admin';
+      const stepRole = currentStep ? await fetchRoleById(currentStep.role_id) : null;
+      const approverRole = stepRole?.name || adminUser?.role || 'Admin';
+
+      const nextStep = getNextActionableStep(template.steps, currentStepNum);
+      const isLast = isLastActionableStep(template.steps, currentStepNum);
+
+      let newStatus = 'approved';
+      let newStep = currentStepNum;
+      let newStatusLabel = 'Disetujui';
+
+      if (isLast) {
+        // Final approval — item fully approved
+        newStatus = 'approved';
+        newStatusLabel = 'Disetujui - Selesai';
+      } else if (nextStep) {
+        // Advance to next actionable step
+        newStep = nextStep.step_order;
+        newStatus = 'pending';
+        newStatusLabel = nextStep.step_label;
+      }
+
+      // Update borrowing_items
+      const { error: itemError } = await supabase
+        .from('borrowing_items')
+        .update({
+          status: newStatus,
+          current_step: newStep,
+          current_status_label: newStatusLabel,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', item.id);
+      if (itemError) {
+        showToast('Gagal menyetujui item', 'error');
+        setActionLoading(null);
+        return;
+      }
 
       // Log to approval_history
       await supabase.from('approval_history').insert({
         borrowing_id: borrowing.id,
         borrowing_item_id: item.id,
-        step_order: currentStep,
-        step_label: stepLabel,
-        approver_name: form.approverName,
-        approver_role: form.approverRole,
+        step_order: currentStepNum,
+        step_label: currentStep?.step_label || `Step ${currentStepNum}`,
+        approver_name: approverName,
+        approver_role: approverRole,
         status: 'approved',
-        notes: form.notes,
+        notes,
         acted_at: new Date().toISOString(),
       });
 
-      if (isLastActionableStep(steps, currentStep)) {
-        // Finalize - item approved
-        const newStatusLabel = 'Disetujui';
-        await supabase
-          .from('borrowing_items')
-          .update({
-            status: 'approved',
-            current_status_label: newStatusLabel,
-            assigned_approver_name: form.approverName,
-            assigned_approver_role: form.approverRole,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', item.id);
-
-        // Check if all items are approved to update borrowing
-        const allItems = borrowing.borrowing_items ?? [];
-        const allApproved = allItems.every(
-          it => it.id === item.id || it.status === 'approved' || it.status === 'completed'
-        );
-        if (allApproved) {
-          await supabase
-            .from('borrowings')
-            .update({
-              status: 'approved',
-              current_status_label: newStatusLabel,
-              approved_by: form.approverName,
-              approver_position: form.approverRole,
-              approved_at: new Date().toISOString(),
-            })
-            .eq('id', borrowing.id);
+      // Auto-determine next approver and send notification email
+      if (!isLast && nextStep) {
+        const { role, approver } = await fetchNextApprover(template.steps, currentStepNum);
+        if (approver && role) {
+          await notifyNextApprover({
+            type: 'next_approver',
+            borrowing_id: borrowing.id,
+            borrower_name: borrowing.borrower_name,
+            borrower_email: borrowing.borrower_email,
+            next_approver_email: approver.approver_email,
+            next_approver_name: approver.approver_name,
+            next_step_label: nextStep.step_label,
+            next_role_name: role.name,
+          });
+          showToast(`Notifikasi dikirim ke ${approver.approver_name} (${role.name})`, 'success');
+        } else {
+          showToast('Disetujui. Email approver berikutnya belum dikonfigurasi.', 'warning');
         }
-
-        await sendBorrowingEmail(borrowing.id, 'approved');
-        showToast(`Item "${item.item_name ?? 'item'}" disetujui sepenuhnya`, 'success');
       } else {
-        // Advance to next actionable step
-        const nextStep = getNextActionableStep(steps, currentStep);
-        const nextStepNum = nextStep?.step_order ?? currentStep + 1;
-        const nextLabel = nextStep?.step_label ?? 'Menunggu Persetujuan';
-        await supabase
-          .from('borrowing_items')
-          .update({
-            current_step: nextStepNum,
-            current_status_label: nextLabel,
-            assigned_approver_name: form.approverName,
-            assigned_approver_role: form.approverRole,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', item.id);
-
-        // Update borrowing-level step tracking
-        await supabase
-          .from('borrowings')
-          .update({
-            current_step: nextStepNum,
-            current_status_label: nextLabel,
-          })
-          .eq('id', borrowing.id);
-
-        await sendBorrowingEmail(borrowing.id, 'step_approved');
-        showToast(`Item "${item.item_name ?? 'item'}" lanjut ke: ${nextLabel}`, 'success');
+        showToast('Pengajuan disetujui sepenuhnya', 'success');
       }
 
-      setActionForms(prev => {
-        const copy = { ...prev };
-        delete copy[item.id];
-        return copy;
-      });
-      fetchBorrowings();
-    } catch (err) {
-      showToast('Gagal menyetujui item', 'error');
+      // Update parent borrowing status & current_step
+      const allItems = borrowing.borrowing_items.map(bi =>
+        bi.id === item.id ? { ...bi, status: newStatus, current_step: newStep, current_status_label: newStatusLabel } : bi
+      );
+      const allApproved = allItems.every(bi => bi.status === 'approved' || (bi.id === item.id && newStatus === 'approved'));
+      const anyRejected = allItems.some(bi => bi.status === 'rejected');
+
+      let parentStatus = borrowing.status;
+      let parentStep = borrowing.current_step;
+      let parentLabel = borrowing.current_status_label;
+
+      if (anyRejected) {
+        parentStatus = 'rejected';
+      } else if (allApproved) {
+        parentStatus = 'approved';
+        parentLabel = 'Disetujui - Selesai';
+      } else {
+        parentStatus = 'pending';
+        parentStep = newStep;
+        parentLabel = newStatusLabel;
+      }
+
+      await supabase
+        .from('borrowings')
+        .update({
+          status: parentStatus,
+          current_step: parentStep,
+          current_status_label: parentLabel,
+          approved_by: allApproved ? approverName : borrowing.approved_by,
+          approver_position: allApproved ? approverRole : borrowing.approver_position,
+          approved_at: allApproved ? new Date().toISOString() : borrowing.approved_at,
+        })
+        .eq('id', borrowing.id);
+
+      setNotesByItem(prev => ({ ...prev, [item.id]: '' }));
+      await fetchBorrowings();
+      await fetchHistory(borrowing.id);
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan saat menyetujui', 'error');
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleReject = async (borrowing: BorrowingRow, item: BorrowingItemRow) => {
-    const form = getFormItem(item.id);
-    if (!form.approverName.trim() || !form.approverRole.trim()) {
-      showToast('Nama dan jabatan approver wajib diisi', 'warning');
-      return;
-    }
-
-    setActionLoading(item.id);
+  const handleRejectItem = async (borrowing: Borrowing, item: BorrowingItem) => {
+    if (!user) return;
+    setActionLoading(`reject-${item.id}`);
     try {
-      const templateId = item.workflow_template_id ?? borrowing.workflow_template_id ?? '';
-      const template = templateId ? workflowCache[templateId] : null;
-      const steps: WorkflowStep[] = template?.steps ?? [];
-      const currentStep = item.current_step ?? 0;
-      const currentStepObj = getCurrentStep(steps, currentStep);
-      const stepLabel = currentStepObj?.step_label ?? `Step ${currentStep}`;
+      const templateId = item.workflow_template_id || borrowing.workflow_template_id;
+      const template = templateId ? (workflowCache[templateId] || (await fetchWorkflowTemplate(templateId))) : null;
+      const currentStepNum = item.current_step ?? 1;
+      const currentStep = template ? getCurrentStep(template.steps, currentStepNum) : null;
+      const notes = notesByItem[item.id] || '';
+
+      const approverName = adminUser?.name || user.email || 'Admin';
+      const stepRole = currentStep ? await fetchRoleById(currentStep.role_id) : null;
+      const approverRole = stepRole?.name || adminUser?.role || 'Admin';
+
+      const { error: itemError } = await supabase
+        .from('borrowing_items')
+        .update({
+          status: 'rejected',
+          current_status_label: 'Ditolak',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', item.id);
+      if (itemError) {
+        showToast('Gagal menolak item', 'error');
+        setActionLoading(null);
+        return;
+      }
 
       await supabase.from('approval_history').insert({
         borrowing_id: borrowing.id,
         borrowing_item_id: item.id,
-        step_order: currentStep,
-        step_label: stepLabel,
-        approver_name: form.approverName,
-        approver_role: form.approverRole,
+        step_order: currentStepNum,
+        step_label: currentStep?.step_label || `Step ${currentStepNum}`,
+        approver_name: approverName,
+        approver_role: approverRole,
         status: 'rejected',
-        notes: form.notes,
+        notes,
         acted_at: new Date().toISOString(),
       });
 
-      await supabase
-        .from('borrowing_items')
-        .update({
-          status: 'rejected',
-          current_status_label: 'Ditolak',
-          assigned_approver_name: form.approverName,
-          assigned_approver_role: form.approverRole,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', item.id);
+      // Notify borrower of rejection
+      await notifyNextApprover({
+        type: 'rejected',
+        borrowing_id: borrowing.id,
+        borrower_name: borrowing.borrower_name,
+        borrower_email: borrowing.borrower_email,
+        next_approver_email: borrowing.borrower_email,
+        next_approver_name: borrowing.borrower_name,
+        next_step_label: 'Ditolak',
+        next_role_name: approverRole,
+      });
 
-      // Update borrowing status to rejected
       await supabase
         .from('borrowings')
-        .update({
-          status: 'rejected',
-          current_status_label: 'Ditolak',
-          admin_notes: form.notes,
-        })
+        .update({ status: 'rejected', current_status_label: 'Ditolak' })
         .eq('id', borrowing.id);
 
-      await sendBorrowingEmail(borrowing.id, 'rejected');
-      showToast(`Item "${item.item_name ?? 'item'}" ditolak`, 'info');
-
-      setActionForms(prev => {
-        const copy = { ...prev };
-        delete copy[item.id];
-        return copy;
-      });
-      fetchBorrowings();
-    } catch {
-      showToast('Gagal menolak item', 'error');
+      setNotesByItem(prev => ({ ...prev, [item.id]: '' }));
+      showToast('Pengajuan ditolak', 'info');
+      await fetchBorrowings();
+      await fetchHistory(borrowing.id);
+    } catch (e) {
+      console.error(e);
+      showToast('Terjadi kesalahan saat menolak', 'error');
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleReturn = async (borrowing: BorrowingRow, item: BorrowingItemRow) => {
-    setActionLoading(item.id);
+  const handleMarkReturned = async (borrowing: Borrowing, item: BorrowingItem) => {
+    setActionLoading(`return-${item.id}`);
     try {
       await supabase
         .from('borrowing_items')
-        .update({
-          status: 'returned',
-          current_status_label: 'Dikembalikan',
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: 'returned', current_status_label: 'Dikembalikan', updated_at: new Date().toISOString() })
         .eq('id', item.id);
 
-      // Check all items returned
-      const allItems = borrowing.borrowing_items ?? [];
-      const allReturned = allItems.every(
-        it => it.id === item.id || it.status === 'returned' || it.status === 'completed'
-      );
+      const allReturned = borrowing.borrowing_items.every(bi => bi.id === item.id || bi.status === 'returned');
       if (allReturned) {
         await supabase
           .from('borrowings')
-          .update({
-            status: 'returned',
-            current_status_label: 'Dikembalikan',
-            actual_return_date: new Date().toISOString().split('T')[0],
-          })
+          .update({ status: 'returned', actual_return_date: new Date().toISOString().slice(0, 10), current_status_label: 'Dikembalikan' })
           .eq('id', borrowing.id);
       }
-
-      await sendBorrowingEmail(borrowing.id, 'returned');
-      showToast('Item ditandai sebagai dikembalikan', 'success');
-      fetchBorrowings();
-    } catch {
+      showToast('Item ditandai sudah dikembalikan', 'success');
+      await fetchBorrowings();
+    } catch (e) {
       showToast('Gagal menandai pengembalian', 'error');
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleComplete = async (borrowing: BorrowingRow, item: BorrowingItemRow) => {
-    setActionLoading(item.id);
-    try {
-      await supabase
-        .from('borrowing_items')
-        .update({
-          status: 'completed',
-          current_status_label: 'Selesai',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', item.id);
-
-      const allItems = borrowing.borrowing_items ?? [];
-      const allCompleted = allItems.every(
-        it => it.id === item.id || it.status === 'completed'
-      );
-      if (allCompleted) {
-        await supabase
-          .from('borrowings')
-          .update({
-            status: 'completed',
-            current_status_label: 'Selesai',
-          })
-          .eq('id', borrowing.id);
-      }
-
-      showToast('Item ditandai selesai', 'success');
-      fetchBorrowings();
-    } catch {
-      showToast('Gagal menyelesaikan item', 'error');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const renderWorkflowProgress = (item: BorrowingItemRow) => {
-    const templateId = item.workflow_template_id;
-    const template = templateId ? workflowCache[templateId] : null;
-    const steps: WorkflowStep[] = template?.steps ?? [];
-    if (steps.length === 0) return null;
-
-    const currentStep = item.current_step ?? 0;
+  const renderWorkflowProgress = (borrowing: Borrowing, item: BorrowingItem) => {
+    const templateId = item.workflow_template_id || borrowing.workflow_template_id;
+    if (!templateId) return null;
+    const template = workflowCache[templateId];
+    if (!template) return null;
 
     return (
-      <div className="flex items-center gap-1 flex-wrap mt-2">
-        {steps.map((step, idx) => {
-          const isDone = step.step_order < currentStep;
-          const isCurrent = step.step_order === currentStep;
-          const isPending = step.step_order > currentStep;
+      <div className="flex items-center gap-1 flex-wrap mt-3">
+        {template.steps.map((step, idx) => {
+          const isCurrent = step.step_order === item.current_step;
+          const isPast = (item.current_step ?? 1) > step.step_order;
+          const isRejected = item.status === 'rejected';
           return (
-            <div key={step.id} className="flex items-center gap-1">
+            <div key={step.id} className="flex items-center">
               <div
-                className={cn(
-                  'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium',
-                  isDone && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-                  isCurrent && 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 ring-2 ring-blue-400',
-                  isPending && 'bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-500'
-                )}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium ${
+                  isRejected && isCurrent
+                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                    : isCurrent
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 ring-2 ring-blue-400'
+                    : isPast
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
+                }`}
               >
-                {isDone && <CheckCircle2 className="w-3 h-3" />}
-                {isCurrent && <Clock className="w-3 h-3" />}
-                <span>{step.step_label}</span>
-                {step.is_info_only && (
-                  <span className="text-[9px] opacity-60">(info)</span>
-                )}
+                {step.step_label}
               </div>
-              {idx < steps.length - 1 && (
-                <div className={cn('w-3 h-0.5', isDone ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600')} />
-              )}
+              {idx < template.steps.length - 1 && <ArrowRight className="w-3 h-3 text-slate-300 mx-0.5" />}
             </div>
           );
         })}
@@ -466,247 +446,240 @@ export default function BorrowingsAdminPage() {
     );
   };
 
-  const getItemDisplayName = (item: BorrowingItemRow) => {
-    if (item.item_name) return item.item_name;
-    if (item.item_type === 'facility' && item.facility_id) return facilityMap[item.facility_id] ?? 'Fasilitas';
-    if (item.item_type === 'inventory' && item.inventory_id) return inventoryMap[item.inventory_id] ?? 'Inventaris';
-    return 'Item';
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Peminjaman</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Kelola dan setujui permintaan peminjaman
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Peminjaman</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Kelola pengajuan peminjaman dengan workflow approval otomatis
         </p>
       </div>
 
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-        </div>
-      )}
-
-      {!loading && borrowings.length === 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 border border-slate-200 dark:border-slate-700 text-center">
-          <p className="text-slate-400 dark:text-slate-500">Belum ada data peminjaman</p>
-        </div>
-      )}
-
-      <div className="space-y-4">
-        {borrowings.map(borrowing => {
-          const isExpanded = expandedId === borrowing.id;
-          return (
-            <div
-              key={borrowing.id}
-              className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden"
-            >
-              {/* Borrowing header */}
-              <button
-                onClick={() => setExpandedId(isExpanded ? null : borrowing.id)}
-                className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white flex-shrink-0">
-                    <ClipboardIcon type={borrowing.item_type} />
-                  </div>
-                  <div className="min-w-0 text-left">
-                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">
-                      {borrowing.borrower_name ?? 'N/A'}
-                      {borrowing.borrower_class && (
-                        <span className="text-slate-400 dark:text-slate-500 font-normal">
-                          {' '}• {borrowing.borrower_class}
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500">
-                      {new Date(borrowing.created_at).toLocaleDateString('id-ID', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                      {borrowing.purpose && ` • ${borrowing.purpose}`}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span
-                    className={cn(
-                      'px-2.5 py-1 rounded-lg text-xs font-medium',
-                      statusColors[borrowing.status] ?? statusColors.pending
-                    )}
-                  >
-                    {borrowing.current_status_label ?? borrowing.status}
-                  </span>
-                  {isExpanded ? (
-                    <ChevronUp className="w-5 h-5 text-slate-400" />
-                  ) : (
-                    <ChevronDown className="w-5 h-5 text-slate-400" />
-                  )}
-                </div>
-              </button>
-
-              {/* Expanded items */}
-              {isExpanded && (
-                <div className="border-t border-slate-200 dark:border-slate-700 p-4 space-y-4">
-                  {/* Borrower info */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                    {borrowing.borrower_email && (
-                      <div>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">Email</p>
-                        <p className="text-slate-700 dark:text-slate-200">{borrowing.borrower_email}</p>
-                      </div>
-                    )}
-                    {borrowing.borrower_phone && (
-                      <div>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">Telepon</p>
-                        <p className="text-slate-700 dark:text-slate-200">{borrowing.borrower_phone}</p>
-                      </div>
-                    )}
-                    {borrowing.return_date && (
-                      <div>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">Tgl Kembali</p>
-                        <p className="text-slate-700 dark:text-slate-200">
-                          {new Date(borrowing.return_date).toLocaleDateString('id-ID')}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  {borrowing.notes && (
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50">
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">Catatan Peminjam</p>
-                      <p className="text-sm text-slate-700 dark:text-slate-200">{borrowing.notes}</p>
-                    </div>
-                  )}
-
-                  {/* Items */}
-                  {(borrowing.borrowing_items ?? []).map(item => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-slate-200 dark:border-slate-700 p-4"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                            {item.item_type === 'facility' ? (
-                              <Building2 className="w-4 h-4 text-slate-500" />
-                            ) : (
-                              <Package className="w-4 h-4 text-slate-500" />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-800 dark:text-white">
-                              {getItemDisplayName(item)}
-                            </p>
-                            <p className="text-xs text-slate-400 dark:text-slate-500">
-                              Jumlah: {item.quantity} • {item.item_type}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          className={cn(
-                            'px-2 py-1 rounded-lg text-xs font-medium flex-shrink-0',
-                            statusColors[item.status] ?? statusColors.pending
-                          )}
-                        >
-                          {item.current_status_label ?? item.status}
-                        </span>
-                      </div>
-
-                      {/* Workflow progress */}
-                      {renderWorkflowProgress(item)}
-
-                      {/* Action form for pending items */}
-                      {(item.status === 'pending' || item.status === 'approved') && (
-                        <div className="mt-4 space-y-3">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <input
-                              type="text"
-                              placeholder="Nama Approver"
-                              value={getFormItem(item.id).approverName}
-                              onChange={e => setFormField(item.id, 'approverName', e.target.value)}
-                              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                            <input
-                              type="text"
-                              placeholder="Jabatan Approver"
-                              value={getFormItem(item.id).approverRole}
-                              onChange={e => setFormField(item.id, 'approverRole', e.target.value)}
-                              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                          </div>
-                          <textarea
-                            placeholder="Catatan (opsional)"
-                            value={getFormItem(item.id).notes}
-                            onChange={e => setFormField(item.id, 'notes', e.target.value)}
-                            rows={2}
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                          />
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              onClick={() => handleApprove(borrowing, item)}
-                              disabled={actionLoading === item.id}
-                              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium disabled:opacity-50 transition-colors"
-                            >
-                              {actionLoading === item.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="w-4 h-4" />
-                              )}
-                              Setujui
-                            </button>
-                            <button
-                              onClick={() => handleReject(borrowing, item)}
-                              disabled={actionLoading === item.id}
-                              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-medium disabled:opacity-50 transition-colors"
-                            >
-                              <XCircle className="w-4 h-4" />
-                              Tolak
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Return/Complete buttons for approved items */}
-                      {item.status === 'approved' && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            onClick={() => handleReturn(borrowing, item)}
-                            disabled={actionLoading === item.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white text-xs font-medium disabled:opacity-50 transition-colors"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            Tandai Dikembalikan
-                          </button>
-                          <button
-                            onClick={() => handleComplete(borrowing, item)}
-                            disabled={actionLoading === item.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-600 hover:bg-slate-700 text-white text-xs font-medium disabled:opacity-50 transition-colors"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Tandai Selesai
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          placeholder="Cari nama, email, kelas, atau keperluan..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+        />
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+        >
+          <option value="all">Semua Status</option>
+          <option value="pending">Menunggu</option>
+          <option value="approved">Disetujui</option>
+          <option value="returned">Dikembalikan</option>
+          <option value="rejected">Ditolak</option>
+          <option value="completed">Selesai</option>
+          <option value="cancelled">Dibatalkan</option>
+        </select>
       </div>
-    </div>
-  );
-}
 
-function ClipboardIcon({ type }: { type: string }) {
-  return type === 'facility' ? (
-    <Building2 className="w-5 h-5" />
-  ) : (
-    <Package className="w-5 h-5" />
+      {displayList.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Package className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada pengajuan</p>
+          <p className="text-sm text-slate-400 mt-1">
+            {adminUser?.role === 'superadmin'
+              ? 'Belum ada pengajuan peminjaman'
+              : 'Tidak ada pengajuan yang menjadi tanggung jawab Anda saat ini'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {displayList.map(borrowing => {
+            const isExpanded = expandedId === borrowing.id;
+            const sc = statusConfig[borrowing.status] || statusConfig.pending;
+            const history = historyByBorrowing[borrowing.id] || [];
+            return (
+              <div key={borrowing.id} className="card overflow-hidden">
+                <div
+                  className="p-5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
+                  onClick={() => {
+                    setExpandedId(isExpanded ? null : borrowing.id);
+                    if (!isExpanded) fetchHistory(borrowing.id);
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold text-slate-900 dark:text-white">{borrowing.borrower_name}</h3>
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${sc.color}`}>{sc.label}</span>
+                      </div>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                        {borrowing.borrower_class} · {borrowing.borrower_email}
+                      </p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                        {borrowing.borrow_date} → {borrowing.return_date}
+                        {borrowing.start_time && borrowing.end_time ? ` (${borrowing.start_time}-${borrowing.end_time})` : ''}
+                      </p>
+                      <p className="text-sm text-slate-600 dark:text-slate-300 mt-2 line-clamp-2">{borrowing.purpose}</p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+                    </div>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="border-t border-slate-200 dark:border-slate-700 p-5 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                          <User className="w-4 h-4 text-slate-400" /> {borrowing.borrower_name}
+                        </div>
+                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                          <Mail className="w-4 h-4 text-slate-400" /> {borrowing.borrower_email}
+                        </div>
+                        {borrowing.borrower_phone && (
+                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                            <Phone className="w-4 h-4 text-slate-400" /> {borrowing.borrower_phone}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                          <Calendar className="w-4 h-4 text-slate-400" /> {borrowing.borrow_date} s/d {borrowing.return_date}
+                        </div>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-start gap-2 text-slate-600 dark:text-slate-300">
+                          <FileText className="w-4 h-4 text-slate-400 mt-0.5" />
+                          <span>{borrowing.purpose}</span>
+                        </div>
+                        {borrowing.notes && (
+                          <div className="text-slate-500 dark:text-slate-400">
+                            <span className="font-medium">Catatan:</span> {borrowing.notes}
+                          </div>
+                        )}
+                        {borrowing.document_url && (
+                          <a href={borrowing.document_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline text-sm">
+                            Lihat dokumen pendukung
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Item Dipinjam</h4>
+                      <div className="space-y-3">
+                        {borrowing.borrowing_items.map(item => {
+                          const itemSc = statusConfig[item.status] || statusConfig.pending;
+                          const canApprove = item.status === 'pending';
+                          const canReturn = item.status === 'approved';
+                          return (
+                            <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-medium text-slate-900 dark:text-white">{item.item_name}</span>
+                                    <span className="text-sm text-slate-500">×{item.quantity}</span>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${itemSc.color}`}>{itemSc.label}</span>
+                                  </div>
+                                  {item.current_status_label && (
+                                    <p className="text-xs text-slate-500 mt-1">Status: {item.current_status_label}</p>
+                                  )}
+                                  {renderWorkflowProgress(borrowing, item)}
+                                </div>
+                              </div>
+
+                              {canApprove && (
+                                <div className="mt-3 space-y-3">
+                                  <div>
+                                    <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                                      Catatan (opsional)
+                                    </label>
+                                    <textarea
+                                      value={notesByItem[item.id] || ''}
+                                      onChange={e => setNotesByItem(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                      rows={2}
+                                      placeholder="Catatan untuk approval ini..."
+                                      className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                                    />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleApproveItem(borrowing, item)}
+                                      disabled={actionLoading === item.id}
+                                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                                    >
+                                      {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                      Setujui
+                                    </button>
+                                    <button
+                                      onClick={() => handleRejectItem(borrowing, item)}
+                                      disabled={actionLoading === `reject-${item.id}`}
+                                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+                                    >
+                                      {actionLoading === `reject-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                                      Tolak
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {canReturn && (
+                                <div className="mt-3">
+                                  <button
+                                    onClick={() => handleMarkReturned(borrowing, item)}
+                                    disabled={actionLoading === `return-${item.id}`}
+                                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                                  >
+                                    {actionLoading === `return-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                    Tandai Dikembalikan
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {history.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+                          <History className="w-4 h-4" /> Riwayat Approval
+                        </h4>
+                        <div className="space-y-2">
+                          {history.map(h => (
+                            <div key={h.id} className="flex items-start gap-3 text-sm rounded-lg bg-slate-50 dark:bg-slate-700/30 p-3">
+                              <div className={`w-2 h-2 rounded-full mt-1.5 ${h.status === 'approved' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                              <div className="flex-1">
+                                <p className="text-slate-700 dark:text-slate-300">
+                                  <span className="font-medium">{h.approver_name}</span> ({h.approver_role}) —{' '}
+                                  <span className={h.status === 'approved' ? 'text-emerald-600' : 'text-red-600'}>
+                                    {h.status === 'approved' ? 'Menyetujui' : 'Menolak'}
+                                  </span>
+                                </p>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  {h.step_label} · {new Date(h.acted_at).toLocaleString('id-ID')}
+                                </p>
+                                {h.notes && <p className="text-xs text-slate-500 mt-0.5">"{h.notes}"</p>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

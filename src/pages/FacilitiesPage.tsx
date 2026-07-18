@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from 'react';
-import { Building2, Search, MapPin, Users, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Search, Building2, MapPin, Users, Calendar } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import EmptyState from '../components/EmptyState';
@@ -9,36 +9,47 @@ import { cn } from '../utils/cn';
 interface Facility {
   id: string;
   name: string;
-  description: string | null;
-  location: string | null;
-  capacity: number | null;
-  image_url: string | null;
-  facility_type: string | null;
-  category: string | null;
-  department: string | null;
-  status: string | null;
-  manager_name: string | null;
+  description: string;
+  location: string;
+  capacity: number;
+  image_url: string;
+  facility_type: string;
+  category: string;
+  department: string;
+  status: string;
+  manager_name: string;
+  manager_role: string;
+  created_at: string;
 }
 
-const FALLBACK_IMAGES = [
-  'https://images.pexels.com/photos/20787/pexels-photo.jpg?auto=compress&cs=tinysrgb&w=800',
-  'https://images.pexels.com/photos/256431/pexels-photo-256431.jpeg?auto=compress&cs=tinysrgb&w=800',
-  'https://images.pexels.com/photos/260689/pexels-photo-260689.jpeg?auto=compress&cs=tinysrgb&w=800',
-  'https://images.pexels.com/photos/159775/library-790825_1280.jpg?auto=compress&cs=tinysrgb&w=800',
-  'https://images.pexels.com/photos/256517/pexels-photo-256517.jpeg?auto=compress&cs=tinysrgb&w=800',
+const fallbackImages = [
+  'https://images.pexels.com/photos/207692/pexels-photo-207692.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/256541/pexels-photo-256541.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/1454360/pexels-photo-1454360.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/268415/pexels-photo-268415.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/159306/facility-building-construction-159306.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/210258/pexels-photo-210258.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/380769/pexels-photo-380769.jpeg?auto=compress&cs=tinysrgb&w=600',
+  'https://images.pexels.com/photos/260931/pexels-photo-260931.jpeg?auto=compress&cs=tinysrgb&w=600',
 ];
+
+const statusColors: Record<string, string> = {
+  tersedia: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  digunakan: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  maintenance: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+};
 
 function FacilitySkeleton() {
   return (
     <div className="card overflow-hidden animate-pulse">
-      <div className="h-44 bg-slate-200 dark:bg-slate-700" />
+      <div className="h-48 bg-slate-200 dark:bg-slate-700" />
       <div className="p-5 space-y-3">
-        <div className="h-5 w-2/3 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="h-3 w-full bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="h-3 w-1/2 bg-slate-200 dark:bg-slate-700 rounded" />
-        <div className="flex gap-2 pt-2">
-          <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded-full" />
-          <div className="h-6 w-24 bg-slate-200 dark:bg-slate-700 rounded-full" />
+        <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-full" />
+        <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-2/3" />
+        <div className="flex gap-2">
+          <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded" />
+          <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded" />
         </div>
       </div>
     </div>
@@ -55,12 +66,12 @@ export default function FacilitiesPage() {
       try {
         const { data, error } = await supabase
           .from('facilities')
-          .select('id, name, description, location, capacity, image_url, facility_type, category, department, status, manager_name')
+          .select('*')
           .order('created_at', { ascending: false });
         if (error) throw error;
         setFacilities((data as unknown as Facility[]) || []);
-      } catch (err) {
-        console.error('Failed to fetch facilities:', err);
+      } catch (e) {
+        console.error('Failed to fetch facilities:', e);
       } finally {
         setLoading(false);
       }
@@ -68,27 +79,26 @@ export default function FacilitiesPage() {
     fetchFacilities();
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return facilities;
-    return facilities.filter((f) => f.name?.toLowerCase().includes(q) || f.location?.toLowerCase().includes(q));
-  }, [facilities, search]);
+  const filtered = facilities.filter((f) =>
+    f.name.toLowerCase().includes(search.toLowerCase()) ||
+    f.location?.toLowerCase().includes(search.toLowerCase()) ||
+    f.category?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
       <Navbar />
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center">
               <Building2 className="w-5 h-5 text-white" />
             </div>
-            Fasilitas
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-2 ml-13">
-            Jelajahi daftar fasilitas yang tersedia untuk dipinjam.
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
+          </div>
+          <p className="text-slate-500 dark:text-slate-400 ml-13">
+            Jelajahi fasilitas yang tersedia untuk peminjaman.
           </p>
         </div>
 
@@ -97,7 +107,7 @@ export default function FacilitiesPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
-            placeholder="Cari fasilitas berdasarkan nama atau lokasi..."
+            placeholder="Cari fasilitas..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="input pl-10"
@@ -107,66 +117,75 @@ export default function FacilitiesPage() {
         {/* Grid */}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[0, 1, 2, 3, 4, 5].map((i) => <FacilitySkeleton key={i} />)}
+            {[...Array(6)].map((_, i) => (
+              <FacilitySkeleton key={i} />
+            ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="card p-8">
-            <EmptyState icon={Building2} title="Tidak ada fasilitas ditemukan" description={search ? 'Coba kata kunci lain.' : 'Belum ada fasilitas yang terdaftar.'} />
-          </div>
+          <EmptyState
+            icon={Building2}
+            title="Tidak ada fasilitas ditemukan"
+            description={search ? 'Coba kata kunci lain.' : 'Fasilitas akan muncul di sini.'}
+          />
         ) : (
-          <>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              Menampilkan {filtered.length} fasilitas
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filtered.map((f, idx) => (
-                <div key={f.id} className="card overflow-hidden hover:shadow-md transition-shadow group">
-                  <div className="relative h-44 overflow-hidden bg-slate-100 dark:bg-slate-700">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filtered.map((f, idx) => {
+              const img = f.image_url || fallbackImages[idx % fallbackImages.length];
+              return (
+                <div key={f.id} className="card overflow-hidden group hover:shadow-md transition-all">
+                  <div className="relative h-48 overflow-hidden bg-slate-100 dark:bg-slate-700">
                     <img
-                      src={f.image_url || FALLBACK_IMAGES[idx % FALLBACK_IMAGES.length]}
+                      src={img}
                       alt={f.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = FALLBACK_IMAGES[idx % FALLBACK_IMAGES.length];
+                        (e.target as HTMLImageElement).src = fallbackImages[idx % fallbackImages.length];
                       }}
                     />
-                    {f.facility_type && (
-                      <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full text-xs font-medium bg-white/90 dark:bg-slate-900/90 text-slate-700 dark:text-slate-200 backdrop-blur">
-                        {f.facility_type}
+                    {f.status && (
+                      <span className={cn(
+                        'absolute top-3 right-3 px-2.5 py-1 rounded-lg text-xs font-semibold capitalize',
+                        statusColors[f.status?.toLowerCase()] || 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                      )}>
+                        {f.status}
                       </span>
                     )}
                   </div>
                   <div className="p-5">
-                    <h3 className="font-semibold text-slate-900 dark:text-white text-lg mb-1">{f.name}</h3>
-                    {f.description && (
-                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 mb-3">{f.description}</p>
+                    <h3 className="font-bold text-lg text-slate-900 dark:text-white mb-1">{f.name}</h3>
+                    {f.category && (
+                      <span className="inline-block text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">{f.category}</span>
                     )}
-                    <div className="flex flex-wrap gap-3 text-xs text-slate-500 dark:text-slate-400">
+                    {f.description && (
+                      <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 line-clamp-2">{f.description}</p>
+                    )}
+                    <div className="space-y-1.5 text-sm text-slate-500 dark:text-slate-400">
                       {f.location && (
-                        <span className="inline-flex items-center gap-1">
-                          <MapPin className="w-3.5 h-3.5" /> {f.location}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 flex-shrink-0" />
+                          <span>{f.location}</span>
+                        </div>
                       )}
                       {f.capacity != null && (
-                        <span className="inline-flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5" /> Kapasitas {f.capacity}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 flex-shrink-0" />
+                          <span>Kapasitas: {f.capacity} orang</span>
+                        </div>
+                      )}
+                      {f.manager_name && (
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 flex-shrink-0" />
+                          <span>{f.manager_name}{f.manager_role ? ` • ${f.manager_role}` : ''}</span>
+                        </div>
                       )}
                     </div>
-                    {f.manager_name && (
-                      <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
-                        Penanggung Jawab: <span className="font-medium text-slate-600 dark:text-slate-300">{f.manager_name}</span>
-                      </p>
-                    )}
                   </div>
                 </div>
-              ))}
-            </div>
-          </>
+              );
+            })}
+          </div>
         )}
-      </div>
-
-      <div className="flex-1" />
+      </main>
       <Footer />
     </div>
   );
