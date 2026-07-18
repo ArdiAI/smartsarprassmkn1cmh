@@ -14,6 +14,7 @@ import {
   type AdminUser,
 } from '../../lib/workflow';
 import { showToast } from '../../components/Toast';
+import AccessDenied from '../../components/AccessDenied';
 import {
   CheckCircle, XCircle, Loader2, Package, Calendar, User, Mail, Phone,
   FileText, ChevronDown, ChevronUp, ArrowRight, History,
@@ -91,7 +92,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export default function BorrowingsAdminPage() {
-  const { user, adminProfile } = useAuth();
+  const { user, adminProfile, hasPermission } = useAuth();
   const [borrowings, setBorrowings] = useState<Borrowing[]>([]);
   const [filteredBorrowings, setFilteredBorrowings] = useState<Borrowing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +106,13 @@ export default function BorrowingsAdminPage() {
   const workflowCacheRef = useRef<Record<string, WorkflowTemplate>>({});
 
   const adminUser: AdminUser | null = adminProfile;
+
+  // Permission flags for action buttons
+  const canApprove = hasPermission('borrowings', 'approve');
+  const canReject = hasPermission('borrowings', 'reject');
+  const canManage = hasPermission('borrowings', 'manage');
+  // Returning an item is treated as a "manage" action on borrowings.
+  const canReturn = canManage;
 
   const fetchBorrowings = useCallback(async () => {
     setLoading(true);
@@ -163,6 +171,10 @@ export default function BorrowingsAdminPage() {
 
   const handleApproveItem = async (borrowing: Borrowing, item: BorrowingItem) => {
     if (!user) return;
+    if (!canApprove) {
+      showToast('Anda tidak memiliki izin untuk menyetujui peminjaman', 'error');
+      return;
+    }
     setActionLoading(item.id);
     try {
       const templateId = item.workflow_template_id || borrowing.workflow_template_id;
@@ -297,6 +309,10 @@ export default function BorrowingsAdminPage() {
 
   const handleRejectItem = async (borrowing: Borrowing, item: BorrowingItem) => {
     if (!user) return;
+    if (!canReject) {
+      showToast('Anda tidak memiliki izin untuk menolak peminjaman', 'error');
+      return;
+    }
     setActionLoading(`reject-${item.id}`);
     try {
       const templateId = item.workflow_template_id || borrowing.workflow_template_id;
@@ -364,6 +380,10 @@ export default function BorrowingsAdminPage() {
   };
 
   const handleMarkReturned = async (borrowing: Borrowing, item: BorrowingItem) => {
+    if (!canReturn) {
+      showToast('Anda tidak memiliki izin untuk menandai pengembalian', 'error');
+      return;
+    }
     setActionLoading(`return-${item.id}`);
     try {
       await supabase
@@ -552,8 +572,10 @@ export default function BorrowingsAdminPage() {
                       <div className="space-y-3">
                         {borrowing.borrowing_items.map(item => {
                           const itemSc = statusConfig[item.status] || statusConfig.pending;
-                          const canApprove = item.status === 'pending';
-                          const canReturn = item.status === 'approved';
+                          const canApproveThis = item.status === 'pending' && canApprove;
+                          const canRejectThis = item.status === 'pending' && canReject;
+                          const canReturnThis = item.status === 'approved' && canReturn;
+                          const showActionArea = canApproveThis || canRejectThis || canReturnThis;
                           return (
                             <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
                               <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -570,51 +592,54 @@ export default function BorrowingsAdminPage() {
                                 </div>
                               </div>
 
-                              {canApprove && (
+                              {showActionArea && (
                                 <div className="mt-3 space-y-3">
-                                  <div>
-                                    <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
-                                      Catatan (opsional)
-                                    </label>
-                                    <textarea
-                                      value={notesByItem[item.id] || ''}
-                                      onChange={e => setNotesByItem(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                      rows={2}
-                                      placeholder="Catatan untuk approval ini..."
-                                      className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                                    />
-                                  </div>
+                                  {(canApproveThis || canRejectThis) && (
+                                    <div>
+                                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                                        Catatan (opsional)
+                                      </label>
+                                      <textarea
+                                        value={notesByItem[item.id] || ''}
+                                        onChange={e => setNotesByItem(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                        rows={2}
+                                        placeholder="Catatan untuk approval ini..."
+                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                                      />
+                                    </div>
+                                  )}
                                   <div className="flex gap-2">
-                                    <button
-                                      onClick={() => handleApproveItem(borrowing, item)}
-                                      disabled={actionLoading === item.id}
-                                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
-                                    >
-                                      {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                                      Setujui
-                                    </button>
-                                    <button
-                                      onClick={() => handleRejectItem(borrowing, item)}
-                                      disabled={actionLoading === `reject-${item.id}`}
-                                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
-                                    >
-                                      {actionLoading === `reject-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                                      Tolak
-                                    </button>
+                                    {canApproveThis && (
+                                      <button
+                                        onClick={() => handleApproveItem(borrowing, item)}
+                                        disabled={actionLoading === item.id}
+                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                                      >
+                                        {actionLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                        Setujui
+                                      </button>
+                                    )}
+                                    {canRejectThis && (
+                                      <button
+                                        onClick={() => handleRejectItem(borrowing, item)}
+                                        disabled={actionLoading === `reject-${item.id}`}
+                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+                                      >
+                                        {actionLoading === `reject-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                                        Tolak
+                                      </button>
+                                    )}
+                                    {canReturnThis && (
+                                      <button
+                                        onClick={() => handleMarkReturned(borrowing, item)}
+                                        disabled={actionLoading === `return-${item.id}`}
+                                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+                                      >
+                                        {actionLoading === `return-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                        Tandai Dikembalikan
+                                      </button>
+                                    )}
                                   </div>
-                                </div>
-                              )}
-
-                              {canReturn && (
-                                <div className="mt-3">
-                                  <button
-                                    onClick={() => handleMarkReturned(borrowing, item)}
-                                    disabled={actionLoading === `return-${item.id}`}
-                                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
-                                  >
-                                    {actionLoading === `return-${item.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                                    Tandai Dikembalikan
-                                  </button>
                                 </div>
                               )}
                             </div>

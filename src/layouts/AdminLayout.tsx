@@ -9,40 +9,50 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { brandConfig } from '../brand/config';
 
+interface NavItem {
+  to: string;
+  label: string;
+  icon: any;
+  permission: { module: string; action: string };
+  end?: boolean;
+}
+
 export default function AdminLayout() {
-  const { user, adminProfile, adminRole, signOut } = useAuth();
+  const { user, adminProfile, permissions, hasPermission, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [superOpen, setSuperOpen] = useState(true);
 
-  const isSuperAdmin = adminRole === 'superadmin';
+  const navItems: NavItem[] = [
+    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, permission: { module: '', action: '' }, end: true },
+    { to: '/admin/borrowings', label: 'Peminjaman', icon: Package, permission: { module: 'borrowings', action: 'read' } },
+    { to: '/admin/inventory', label: 'Inventaris', icon: Package, permission: { module: 'inventory', action: 'read' } },
+    { to: '/admin/facilities', label: 'Fasilitas', icon: Building2, permission: { module: 'facilities', action: 'read' } },
+    { to: '/admin/reports', label: 'Laporan', icon: FileText, permission: { module: 'reports', action: 'read' } },
+    { to: '/admin/statistics', label: 'Statistik', icon: BarChart3, permission: { module: 'statistics', action: 'read' } },
+    { to: '/admin/team', label: 'Tim', icon: Users, permission: { module: 'team', action: 'read' } },
+    { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone, permission: { module: 'announcements', action: 'read' } },
+    { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare, permission: { module: 'aspirasi', action: 'read' } },
+  ];
+
+  const superItems: NavItem[] = [
+    { to: '/admin/super/users', label: 'Manajemen User', icon: UserCog, permission: { module: 'users', action: 'read' } },
+    { to: '/admin/super/roles', label: 'Roles & Permissions', icon: Shield, permission: { module: 'roles', action: 'read' } },
+    { to: '/admin/super/facility-managers', label: 'PJ Fasilitas', icon: Users, permission: { module: 'facility_managers', action: 'read' } },
+    { to: '/admin/super/workflows', label: 'Approval Workflow', icon: Workflow, permission: { module: 'workflows', action: 'read' } },
+    { to: '/admin/super/approver-emails', label: 'Email Approver', icon: Mail, permission: { module: 'approver_emails', action: 'read' } },
+    { to: '/admin/super/config', label: 'Konfigurasi', icon: Settings, permission: { module: 'system_config', action: 'read' } },
+  ];
+
+  const visibleNav = navItems.filter(item => !item.permission.module || hasPermission(item.permission.module, item.permission.action));
+  const visibleSuper = superItems.filter(item => hasPermission(item.permission.module, item.permission.action));
+  const hasSuper = visibleSuper.length > 0;
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/auth');
   };
-
-  const navItems = [
-    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/admin/borrowings', label: 'Peminjaman', icon: Package },
-    { to: '/admin/inventory', label: 'Inventaris', icon: Package },
-    { to: '/admin/facilities', label: 'Fasilitas', icon: Building2 },
-    { to: '/admin/reports', label: 'Laporan', icon: FileText },
-    { to: '/admin/statistics', label: 'Statistik', icon: BarChart3 },
-    { to: '/admin/team', label: 'Tim', icon: Users },
-    { to: '/admin/announcements', label: 'Pengumuman', icon: Megaphone },
-    { to: '/admin/aspirasi', label: 'Aspirasi', icon: MessageSquare },
-  ];
-
-  const superItems = [
-    { to: '/admin/super/users', label: 'Manajemen User', icon: UserCog },
-    { to: '/admin/super/roles', label: 'Roles & Permissions', icon: Shield },
-    { to: '/admin/super/facility-managers', label: 'PJ Fasilitas', icon: Users },
-    { to: '/admin/super/workflows', label: 'Approval Workflow', icon: Workflow },
-    { to: '/admin/super/approver-emails', label: 'Email Approver', icon: Mail },
-    { to: '/admin/super/config', label: 'Konfigurasi', icon: Settings },
-  ];
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
@@ -75,7 +85,7 @@ export default function AdminLayout() {
         </div>
 
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {navItems.map(item => {
+          {visibleNav.map(item => {
             const Icon = item.icon;
             return (
               <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={() => setSidebarOpen(false)}>
@@ -85,7 +95,7 @@ export default function AdminLayout() {
             );
           })}
 
-          {isSuperAdmin && (
+          {hasSuper && (
             <>
               <button
                 onClick={() => setSuperOpen(!superOpen)}
@@ -96,7 +106,7 @@ export default function AdminLayout() {
                 <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${superOpen ? 'rotate-180' : ''}`} />
               </button>
               {superOpen &&
-                superItems.map(item => {
+                visibleSuper.map(item => {
                   const Icon = item.icon;
                   return (
                     <NavLink key={item.to} to={item.to} className={linkClass} onClick={() => setSidebarOpen(false)}>
@@ -120,7 +130,9 @@ export default function AdminLayout() {
               <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
                 {adminProfile?.name || user?.email}
               </p>
-              <p className="text-xs text-slate-500 truncate">{adminRole || 'admin'}</p>
+              <p className="text-xs text-slate-500 truncate">
+                {permissions.size > 0 ? `${permissions.size} permissions` : 'admin'}
+              </p>
             </div>
           </div>
           <button

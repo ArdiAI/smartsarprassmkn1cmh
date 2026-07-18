@@ -1,23 +1,25 @@
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode, useMemo } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-
-export interface AdminProfile {
-  id: string;
-  user_id: string;
-  email: string;
-  name: string;
-  role: string;
-  is_active: boolean;
-}
+import {
+  fetchUserPermissions,
+  hasPermission as hasPerm,
+  hasAnyPermission,
+  type AdminProfile,
+  type AdminRoleAssignment,
+  type PermissionKey,
+} from '../lib/permissions';
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  isAdmin: boolean;
   adminProfile: AdminProfile | null;
   adminRole: string | null;
+  roles: AdminRoleAssignment[];
+  permissions: Set<PermissionKey>;
+  hasPermission: (module: string, action: string) => boolean;
+  hasAnyPermission: (checks: Array<{ module: string; action: string }>) => boolean;
   refreshAdminProfile: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation: boolean }>;
@@ -31,24 +33,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
+  const [roles, setRoles] = useState<AdminRoleAssignment[]>([]);
+  const [permissions, setPermissions] = useState<Set<PermissionKey>>(new Set());
 
-  const fetchAdminProfile = useCallback(async (uid: string) => {
-    const { data, error } = await supabase
+  const loadProfile = useCallback(async (uid: string) => {
+    const { permissions: perms, roles: roleList, primaryRole } = await fetchUserPermissions(uid);
+    setPermissions(perms);
+    setRoles(roleList);
+
+    const { data: adminRow } = await supabase
       .from('admin_users')
-      .select('*')
+      .select('id, user_id, email, name, role, is_active')
       .eq('user_id', uid)
       .eq('is_active', true)
       .single();
-    if (error || !data) {
+    if (adminRow) {
+      setAdminProfile({
+        ...(adminRow as any),
+        role: primaryRole ?? (adminRow as any).role,
+      });
+    } else {
       setAdminProfile(null);
-      return;
     }
-    setAdminProfile(data as unknown as AdminProfile);
   }, []);
 
   const refreshAdminProfile = useCallback(async () => {
-    if (user) await fetchAdminProfile(user.id);
-  }, [user, fetchAdminProfile]);
+    if (user) await loadProfile(user.id);
+  }, [user, loadProfile]);
 
   useEffect(() => {
     let mounted = true;
@@ -58,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       setUser(data.session?.user ?? null);
       if (data.session?.user) {
-        await fetchAdminProfile(data.session.user.id);
+        await loadProfile(data.session.user.id);
       }
       setLoading(false);
     });
@@ -68,9 +79,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        await fetchAdminProfile(session.user.id);
+        await loadProfile(session.user.id);
       } else {
         setAdminProfile(null);
+        setRoles([]);
+        setPermissions(new Set());
       }
       setLoading(false);
     });
@@ -79,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [fetchAdminProfile]);
+  }, [loadProfile]);
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -99,21 +112,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut();
     setAdminProfile(null);
+    setRoles([]);
+    setPermissions(new Set());
   };
 
-  // FIX: derive admin access from the role fetched from the database, not from a hardcoded check.
-  // Any active admin_users row grants dashboard access; the specific role (admin, pembina,
-  // wakasek kesiswaan, PJ sarpras, wakasek sarpras, superadmin, etc.) is exposed via adminRole.
-  const isAdmin = !!adminProfile && adminProfile.is_active;
-  const adminRole = adminProfile?.role ?? null;
+  const value = useMemo<AuthContextType>(() => ({
+    user,
+    session,
+    loading,
+    adminProfile,
+    adminRole: adminProfile?.role ?? null,
+    roles,
+    permissions,
+    hasPermission: (module: string, action: string) => hasPerm(permissions, module, action),
+    hasAnyPermission: (checks: Array<{ module: string; action: string }>) => hasAnyPermission(permissions, checks),
+    refreshAdminProfile,
+    signIn,
+    signUp,
+    signOut,
+  }), [user, session, loading, adminProfile, roles, permissions, refreshAdminProfile]);
 
-  return (
-    <AuthContext.Provider
-      value={{ user, session, loading, isAdmin, adminProfile, adminRole, refreshAdminProfile, signIn, signUp, signOut }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

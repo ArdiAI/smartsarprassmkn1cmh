@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Menu, X, Moon, Sun, LogOut, User, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -7,9 +7,11 @@ import { brandConfig } from '../brand/config';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, permissions, hasPermission, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+
+  const canAccessAdmin = permissions.size > 0;
 
   const handleSignOut = async () => {
     await signOut();
@@ -56,7 +58,7 @@ export default function Navbar() {
             </button>
             {user ? (
               <div className="flex items-center gap-2">
-                {isAdmin && (
+                {canAccessAdmin && (
                   <Link
                     to="/admin"
                     className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
@@ -99,7 +101,7 @@ export default function Navbar() {
                 {link.label}
               </Link>
             ))}
-            {isAdmin && (
+            {canAccessAdmin && (
               <Link
                 to="/admin"
                 onClick={() => setIsOpen(false)}

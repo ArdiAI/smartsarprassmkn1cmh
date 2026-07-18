@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ReactNode } from 'react';
 import { useAuth } from './context/AuthContext';
 import Toast from './components/Toast';
+import AccessDenied from './components/AccessDenied';
 
 import AuthPage from './pages/AuthPage';
 import ConfirmEmailPage from './pages/ConfirmEmailPage';
@@ -55,14 +56,23 @@ function RedirectIfAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// FIX: AdminRoute now reads `isAdmin` from AuthContext (which fetches admin_users at login)
-// instead of re-querying admin_users itself. This ensures the role check is consistent
-// with the session and refreshable via refreshAdminProfile().
+// AdminRoute: grants access to the admin shell only if the user has at least one permission.
+// No more boolean isAdmin / string "superadmin" checks.
 function AdminRoute({ children }: { children: ReactNode }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, permissions } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (permissions.size === 0) return <AccessDenied message="Akun Anda tidak memiliki permission admin. Hubungi Super Admin untuk memberikan role." />;
+  return <>{children}</>;
+}
+
+// PermissionRoute: gate a single admin page by required permission(s).
+// Renders AccessDenied (not a redirect) when the user lacks the permission.
+function PermissionRoute({ permission, children }: { permission: { module: string; action: string }; children: ReactNode }) {
+  const { hasPermission } = useAuth();
+  if (!hasPermission(permission.module, permission.action)) {
+    return <AccessDenied message={`Permission "${permission.module}:${permission.action}" diperlukan untuk membuka halaman ini.`} />;
+  }
   return <>{children}</>;
 }
 
@@ -91,20 +101,20 @@ export default function App() {
 
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
           <Route index element={<DashboardPage />} />
-          <Route path="borrowings" element={<BorrowingsAdminPage />} />
-          <Route path="inventory" element={<InventoryAdminPage />} />
-          <Route path="facilities" element={<FacilitiesAdminPage />} />
-          <Route path="reports" element={<ReportsAdminPage />} />
-          <Route path="statistics" element={<StatisticsPage />} />
-          <Route path="team" element={<TeamAdminPage />} />
-          <Route path="announcements" element={<AnnouncementsAdminPage />} />
-          <Route path="aspirasi" element={<AspirasiAdminPage />} />
-          <Route path="super/users" element={<UserManagementPage />} />
-          <Route path="super/roles" element={<RolesPermissionsPage />} />
-          <Route path="super/facility-managers" element={<FacilityManagersPage />} />
-          <Route path="super/workflows" element={<ApprovalWorkflowPage />} />
-          <Route path="super/approver-emails" element={<ApproverEmailsPage />} />
-          <Route path="super/config" element={<SystemConfigPage />} />
+          <Route path="borrowings" element={<PermissionRoute permission={{ module: 'borrowings', action: 'read' }}><BorrowingsAdminPage /></PermissionRoute>} />
+          <Route path="inventory" element={<PermissionRoute permission={{ module: 'inventory', action: 'read' }}><InventoryAdminPage /></PermissionRoute>} />
+          <Route path="facilities" element={<PermissionRoute permission={{ module: 'facilities', action: 'read' }}><FacilitiesAdminPage /></PermissionRoute>} />
+          <Route path="reports" element={<PermissionRoute permission={{ module: 'reports', action: 'read' }}><ReportsAdminPage /></PermissionRoute>} />
+          <Route path="statistics" element={<PermissionRoute permission={{ module: 'statistics', action: 'read' }}><StatisticsPage /></PermissionRoute>} />
+          <Route path="team" element={<PermissionRoute permission={{ module: 'team', action: 'read' }}><TeamAdminPage /></PermissionRoute>} />
+          <Route path="announcements" element={<PermissionRoute permission={{ module: 'announcements', action: 'read' }}><AnnouncementsAdminPage /></PermissionRoute>} />
+          <Route path="aspirasi" element={<PermissionRoute permission={{ module: 'aspirasi', action: 'read' }}><AspirasiAdminPage /></PermissionRoute>} />
+          <Route path="super/users" element={<PermissionRoute permission={{ module: 'users', action: 'read' }}><UserManagementPage /></PermissionRoute>} />
+          <Route path="super/roles" element={<PermissionRoute permission={{ module: 'roles', action: 'read' }}><RolesPermissionsPage /></PermissionRoute>} />
+          <Route path="super/facility-managers" element={<PermissionRoute permission={{ module: 'facility_managers', action: 'read' }}><FacilityManagersPage /></PermissionRoute>} />
+          <Route path="super/workflows" element={<PermissionRoute permission={{ module: 'workflows', action: 'read' }}><ApprovalWorkflowPage /></PermissionRoute>} />
+          <Route path="super/approver-emails" element={<PermissionRoute permission={{ module: 'approver_emails', action: 'read' }}><ApproverEmailsPage /></PermissionRoute>} />
+          <Route path="super/config" element={<PermissionRoute permission={{ module: 'system_config', action: 'read' }}><SystemConfigPage /></PermissionRoute>} />
         </Route>
 
         <Route path="*" element={<CatchAll />} />

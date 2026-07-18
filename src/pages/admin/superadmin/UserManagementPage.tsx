@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '../../../context/AuthContext';
 import { supabase } from '../../../lib/supabase';
-import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
+import { cn } from '../../../utils/cn';
 import {
-  Users, Search, Plus, Trash2, Pencil, Shield, ShieldCheck, ShieldOff,
-  Loader2, X, Mail, User as UserIcon, KeyRound, RefreshCw,
+  Loader2, UserPlus, Trash2, Search, ShieldCheck, ShieldOff,
+  Mail, User as UserIcon, KeyRound, Users,
 } from 'lucide-react';
 
-interface AdminUser {
+interface AdminUserRow {
   id: string;
   user_id: string | null;
   email: string;
@@ -17,41 +18,34 @@ interface AdminUser {
   created_at: string;
 }
 
-interface Role {
+interface RoleRow {
   id: string;
   name: string;
-  level: number | null;
+  level: number;
   is_system: boolean;
   is_active: boolean;
 }
 
-interface FormState {
-  email: string;
-  name: string;
-  role: string;
-  user_id: string;
-}
-
-const emptyForm: FormState = { email: '', name: '', role: '', user_id: '' };
-
 export default function UserManagementPage() {
-  const [admins, setAdmins] = useState<AdminUser[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission('users', 'create');
+  const canUpdate = hasPermission('users', 'update');
+  const canDelete = hasPermission('users', 'delete');
+
+  const [admins, setAdmins] = useState<AdminUserRow[]>([]);
+  const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<AdminUser | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const fetchRoles = useCallback(async () => {
-    const { data } = await supabase
-      .from('roles')
-      .select('id, name, level, is_system, is_active')
-      .order('level', { ascending: true, nullsFirst: false });
-    if (data) setRoles(data as unknown as Role[]);
-  }, []);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addEmail, setAddEmail] = useState('');
+  const [addName, setAddName] = useState('');
+  const [addUserId, setAddUserId] = useState('');
+  const [addRole, setAddRole] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const [roleMenuFor, setRoleMenuFor] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchAdmins = useCallback(async () => {
     setLoading(true);
@@ -61,11 +55,23 @@ export default function UserManagementPage() {
       .order('created_at', { ascending: false });
     if (error) {
       showToast('Gagal memuat data admin', 'error');
-      setLoading(false);
-      return;
+    } else {
+      setAdmins((data as unknown as AdminUserRow[]) || []);
     }
-    setAdmins((data as unknown as AdminUser[]) || []);
     setLoading(false);
+  }, []);
+
+  const fetchRoles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('roles')
+      .select('id, name, level, is_system, is_active')
+      .eq('is_active', true)
+      .order('level', { ascending: true });
+    if (error) {
+      showToast('Gagal memuat daftar role', 'error');
+    } else {
+      setRoles((data as unknown as RoleRow[]) || []);
+    }
   }, []);
 
   useEffect(() => {
@@ -73,410 +79,347 @@ export default function UserManagementPage() {
     fetchRoles();
   }, [fetchAdmins, fetchRoles]);
 
-  // Try to find an existing user_id by email (e.g. a row that was auto-created
-  // when the user signed up via /auth). This lets the Super Admin link a new
-  // admin_users row to the correct auth.users UUID without dashboard access.
-  const lookupUserIdByEmail = async (email: string): Promise<string | null> => {
-    const { data } = await supabase
-      .from('admin_users')
-      .select('user_id')
-      .ilike('email', email.trim())
-      .not('user_id', 'is', null)
-      .limit(1);
-    const row = (data as unknown as Pick<AdminUser, 'user_id'>[] | null)?.[0];
-    return row?.user_id ?? null;
-  };
+  const filtered = admins.filter(a => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      a.email?.toLowerCase().includes(q) ||
+      a.name?.toLowerCase().includes(q) ||
+      a.role?.toLowerCase().includes(q)
+    );
+  });
 
-  const openAdd = () => {
-    setEditing(null);
-    setForm(emptyForm);
-    setShowModal(true);
-  };
-
-  const openEdit = (a: AdminUser) => {
-    setEditing(a);
-    setForm({
-      email: a.email ?? '',
-      name: a.name ?? '',
-      role: a.role ?? '',
-      user_id: a.user_id ?? '',
-    });
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    setEditing(null);
-    setForm(emptyForm);
-  };
-
-  const handleSave = async () => {
-    if (!form.email.trim() || !form.name.trim() || !form.role.trim()) {
+  const handleAdd = async () => {
+    if (!addEmail.trim() || !addName.trim() || !addRole) {
       showToast('Email, nama, dan role wajib diisi', 'warning');
       return;
     }
-
     setSaving(true);
     try {
-      if (editing) {
-        const { error } = await supabase
-          .from('admin_users')
-          .update({
-            email: form.email.trim(),
-            name: form.name.trim(),
-            role: form.role,
-            user_id: form.user_id.trim() || null,
-          })
-          .eq('id', editing.id);
-        if (error) {
-          showToast('Gagal memperbarui admin: ' + error.message, 'error');
-          setSaving(false);
-          return;
-        }
-        showToast('Admin berhasil diperbarui', 'success');
-      } else {
-        // Try to resolve user_id automatically from an existing row with the
-        // same email (e.g. created on signUp). Fall back to the manually pasted
-        // UUID, or null if neither is available.
-        let resolvedUserId = form.user_id.trim() || null;
-        if (!resolvedUserId) {
-          const found = await lookupUserIdByEmail(form.email);
-          if (found) resolvedUserId = found;
-        }
+      let userIdToInsert: string | null = addUserId.trim() || null;
 
-        const { error } = await supabase.from('admin_users').insert({
-          user_id: resolvedUserId,
-          email: form.email.trim(),
-          name: form.name.trim(),
-          role: form.role,
-          is_active: true,
-        });
-        if (error) {
-          showToast('Gagal menambahkan admin: ' + error.message, 'error');
-          setSaving(false);
-          return;
+      if (!userIdToInsert) {
+        const { data: existing } = await supabase
+          .from('admin_users')
+          .select('user_id')
+          .eq('email', addEmail.trim())
+          .not('user_id', 'is', null)
+          .limit(1);
+        const existingRow = (existing as unknown as { user_id: string }[] | null)?.[0];
+        if (existingRow?.user_id) {
+          userIdToInsert = existingRow.user_id;
         }
-        showToast(
-          resolvedUserId
-            ? 'Admin berhasil ditambahkan & terhubung ke akun auth'
-            : 'Admin ditambahkan. user_id kosong — minta user login sekali agar terhubung otomatis.',
-          resolvedUserId ? 'success' : 'info',
-        );
       }
-      closeModal();
+
+      const { error } = await supabase.from('admin_users').insert({
+        user_id: userIdToInsert,
+        email: addEmail.trim(),
+        name: addName.trim(),
+        role: addRole,
+        is_active: true,
+      });
+      if (error) {
+        showToast('Gagal menambahkan admin: ' + error.message, 'error');
+        setSaving(false);
+        return;
+      }
+
+      if (!userIdToInsert) {
+        showToast('Admin ditambahkan tanpa user_id. Minta user login sekali untuk menautkan akun.', 'info');
+      } else {
+        showToast('Admin berhasil ditambahkan', 'success');
+      }
+      setShowAdd(false);
+      setAddEmail('');
+      setAddName('');
+      setAddUserId('');
+      setAddRole('');
       await fetchAdmins();
     } catch (e) {
       showToast('Terjadi kesalahan', 'error');
-      console.error(e);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleActive = async (a: AdminUser) => {
-    setActionLoading(a.id);
-    const next = !a.is_active;
-    const { error } = await supabase
-      .from('admin_users')
-      .update({ is_active: next })
-      .eq('id', a.id);
-    if (error) {
-      showToast('Gagal mengubah status admin', 'error');
-      setActionLoading(null);
-      return;
-    }
-    showToast(`Admin ${next ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
-    await fetchAdmins();
-    setActionLoading(null);
-  };
-
-  const handleDelete = async (a: AdminUser) => {
-    if (!confirm(`Hapus admin "${a.name}"? Tindakan ini tidak membatalkan akun auth-nya.`)) return;
-    setActionLoading(a.id);
-    const { error } = await supabase.from('admin_users').delete().eq('id', a.id);
+  const handleRemove = async (admin: AdminUserRow) => {
+    if (!confirm(`Hapus admin "${admin.name}" (${admin.email})?`)) return;
+    setActionLoading(admin.id);
+    const { error } = await supabase.from('admin_users').delete().eq('id', admin.id);
     if (error) {
       showToast('Gagal menghapus admin', 'error');
-      setActionLoading(null);
-      return;
+    } else {
+      showToast('Admin dihapus', 'success');
+      await fetchAdmins();
     }
-    showToast('Admin berhasil dihapus', 'success');
-    await fetchAdmins();
     setActionLoading(null);
   };
 
-  const filtered = admins.filter(a => {
-    const q = search.toLowerCase();
-    if (!q) return true;
-    return (
-      a.name?.toLowerCase().includes(q) ||
-      a.email?.toLowerCase().includes(q) ||
-      a.role?.toLowerCase().includes(q)
-    );
-  });
-
-  const roleBadgeColor = (role: string) => {
-    if (role === 'superadmin') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300';
-    if (role === 'admin') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
-    return 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-300';
+  const handleToggleActive = async (admin: AdminUserRow) => {
+    setActionLoading(admin.id);
+    const { error } = await supabase
+      .from('admin_users')
+      .update({ is_active: !admin.is_active })
+      .eq('id', admin.id);
+    if (error) {
+      showToast('Gagal mengubah status', 'error');
+    } else {
+      showToast(`Admin ${admin.is_active ? 'dinonaktifkan' : 'diaktifkan'}`, 'success');
+      await fetchAdmins();
+    }
+    setActionLoading(null);
   };
+
+  const handleRoleChange = async (admin: AdminUserRow, newRole: string) => {
+    setActionLoading(admin.id);
+    setRoleMenuFor(null);
+    const { error } = await supabase
+      .from('admin_users')
+      .update({ role: newRole })
+      .eq('id', admin.id);
+    if (error) {
+      showToast('Gagal mengubah role', 'error');
+    } else {
+      showToast('Role diperbarui', 'success');
+      await fetchAdmins();
+    }
+    setActionLoading(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Users className="w-7 h-7 text-cyan-600" />
-            Manajemen Admin
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Kelola akun admin dan rolenya dalam sistem SMART SARPRAS
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Manajemen Admin</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            Kelola akun admin, role, dan status aktif
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-cyan-600 text-white font-medium hover:bg-cyan-700 transition-colors shadow-sm"
-        >
-          <Plus className="w-5 h-5" />
-          Tambah Admin
-        </button>
+        {canCreate && (
+          <button
+            onClick={() => setShowAdd(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+          >
+            <UserPlus className="w-4 h-4" />
+            Tambah Admin
+          </button>
+        )}
       </div>
 
-      {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
         <input
           type="text"
+          placeholder="Cari nama, email, atau role..."
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Cari nama, email, atau role..."
-          className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
         />
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard label="Total Admin" value={admins.length} icon={Users} color="cyan" />
-        <StatCard label="Admin Aktif" value={admins.filter(a => a.is_active).length} icon={ShieldCheck} color="emerald" />
-        <StatCard label="Admin Nonaktif" value={admins.filter(a => !a.is_active).length} icon={ShieldOff} color="amber" />
-        <StatCard label="Terhubung Auth" value={admins.filter(a => !!a.user_id).length} icon={KeyRound} color="blue" />
-      </div>
-
-      {/* List */}
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="w-8 h-8 text-cyan-600 animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-12 text-center">
-          <Users className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">Tidak ada admin ditemukan</p>
+      {filtered.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
+            <Users className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+          </div>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada admin</p>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map(a => (
-            <div
-              key={a.id}
-              className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-2xl bg-cyan-100 dark:bg-cyan-900/30 flex items-center justify-center flex-shrink-0">
-                    <UserIcon className="w-6 h-6 text-cyan-600 dark:text-cyan-400" />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filtered.map(admin => {
+            const roleObj = roles.find(r => r.name === admin.role);
+            return (
+              <div key={admin.id} className="card p-5 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={cn(
+                      'w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0',
+                      admin.is_active
+                        ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300'
+                        : 'bg-slate-100 text-slate-400 dark:bg-slate-700/50'
+                    )}>
+                      <UserIcon className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-slate-900 dark:text-white truncate">{admin.name ?? ''}</h3>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1 truncate">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">{admin.email ?? ''}</span>
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-900 dark:text-white truncate">{a.name || '-'}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
-                      <Mail className="w-3 h-3" /> {a.email || '-'}
-                    </p>
-                  </div>
+                  <span className={cn(
+                    'px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
+                    admin.is_active
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
+                  )}>
+                    {admin.is_active ? 'Aktif' : 'Nonaktif'}
+                  </span>
                 </div>
-                <span className={cn(
-                  'px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0',
-                  a.is_active
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                    : 'bg-slate-100 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400',
-                )}>
-                  {a.is_active ? 'Aktif' : 'Nonaktif'}
-                </span>
-              </div>
 
-              <div className="mt-4 space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">Role</span>
-                  <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', roleBadgeColor(a.role))}>
-                    {a.role || '-'}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+                    <ShieldCheck className="w-3.5 h-3.5 inline mr-1" />
+                    {admin.role ?? ''}
                   </span>
+                  {roleObj && (
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Level {roleObj.level}</span>
+                  )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                    <KeyRound className="w-3.5 h-3.5" /> User ID
-                  </span>
-                  <span className="text-xs font-mono text-slate-600 dark:text-slate-300 max-w-[160px] truncate">
-                    {a.user_id || '— belum terhubung —'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">Dibuat</span>
-                  <span className="text-xs text-slate-600 dark:text-slate-300">
-                    {a.created_at ? new Date(a.created_at).toLocaleDateString('id-ID', {
-                      day: 'numeric', month: 'short', year: 'numeric',
-                    }) : '-'}
-                  </span>
-                </div>
-              </div>
 
-              <div className="mt-4 flex items-center gap-2 pt-4 border-t border-slate-100 dark:border-slate-700">
-                <button
-                  onClick={() => openEdit(a)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5" /> Edit
-                </button>
-                <button
-                  onClick={() => handleToggleActive(a)}
-                  disabled={actionLoading === a.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-50"
-                >
-                  {actionLoading === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
-                    a.is_active ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                  {a.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                </button>
-                <button
-                  onClick={() => handleDelete(a)}
-                  disabled={actionLoading === a.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Hapus
-                </button>
+                {admin.user_id ? (
+                  <p className="text-xs text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                    <KeyRound className="w-3 h-3" /> {admin.user_id}
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-500 dark:text-amber-400 flex items-center gap-1">
+                    <KeyRound className="w-3 h-3" /> Belum terhubung ke akun auth
+                  </p>
+                )}
+
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  Dibuat: {new Date(admin.created_at).toLocaleDateString('id-ID')}
+                </p>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                  {canUpdate && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setRoleMenuFor(roleMenuFor === admin.id ? null : admin.id)}
+                        disabled={actionLoading === admin.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        Ubah Role
+                      </button>
+                      {roleMenuFor === admin.id && (
+                        <div className="absolute z-10 mt-1 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg max-h-60 overflow-y-auto">
+                          {roles.map(r => (
+                            <button
+                              key={r.id}
+                              onClick={() => handleRoleChange(admin, r.name)}
+                              className={cn(
+                                'w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/50',
+                                r.name === admin.role
+                                  ? 'text-blue-600 dark:text-blue-400 font-medium'
+                                  : 'text-slate-700 dark:text-slate-200'
+                              )}
+                            >
+                              {r.name} (Lvl {r.level})
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {canUpdate && (
+                    <button
+                      onClick={() => handleToggleActive(admin)}
+                      disabled={actionLoading === admin.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      {admin.is_active ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                      {admin.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => handleRemove(admin)}
+                      disabled={actionLoading === admin.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 text-xs font-medium hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors ml-auto"
+                    >
+                      {actionLoading === admin.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      Hapus
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-800 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Shield className="w-5 h-5 text-cyan-600" />
-                {editing ? 'Edit Admin' : 'Tambah Admin Baru'}
-              </h2>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <Field label="Nama Lengkap" icon={<UserIcon className="w-4 h-4" />}>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Nama lengkap admin"
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </Field>
-
-              <Field label="Email" icon={<Mail className="w-4 h-4" />}>
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-800 shadow-xl p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tambah Admin</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Email *</label>
                 <input
                   type="email"
-                  value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  value={addEmail}
+                  onChange={e => setAddEmail(e.target.value)}
                   placeholder="admin@sekolah.sch.id"
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 />
-              </Field>
-
-              <Field label="Role" icon={<Shield className="w-4 h-4" />}>
-                <select
-                  value={form.role}
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                >
-                  <option value="">— Pilih Role —</option>
-                  {roles.filter(r => r.is_active).map(r => (
-                    <option key={r.id} value={r.name}>
-                      {r.name}{r.is_system ? ' (sistem)' : ''}{r.level != null ? ` · L${r.level}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="User ID (UUID Auth)" icon={<KeyRound className="w-4 h-4" />}>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Nama *</label>
                 <input
                   type="text"
-                  value={form.user_id}
-                  onChange={e => setForm(f => ({ ...f, user_id: e.target.value }))}
-                  placeholder="Paste UUID dari Supabase dashboard (opsional)"
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono text-xs"
+                  value={addName}
+                  onChange={e => setAddName(e.target.value)}
+                  placeholder="Nama lengkap"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 />
-              </Field>
-              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
-                Opsional. Jika dikosongkan, sistem akan mencoba mencocokkan email dengan akun yang sudah terdaftar.
-                Jika tidak ditemukan, biarkan kosong — user_id akan terhubung otomatis saat user login.
-              </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  User ID (UUID, opsional)
+                </label>
+                <input
+                  type="text"
+                  value={addUserId}
+                  onChange={e => setAddUserId(e.target.value)}
+                  placeholder="Kosongkan untuk cari otomatis"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Jika kosong, sistem akan mencari admin_users dengan email yang sama untuk menggunakan user_id-nya.
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Role *</label>
+                <select
+                  value={addRole}
+                  onChange={e => setAddRole(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="">Pilih role...</option>
+                  {roles.map(r => (
+                    <option key={r.id} value={r.name}>{r.name} (Level {r.level})</option>
+                  ))}
+                </select>
+              </div>
             </div>
-
-            <div className="flex items-center justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700 sticky bottom-0 bg-white dark:bg-slate-800">
+            <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={closeModal}
-                className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                onClick={() => setShowAdd(false)}
+                className="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
                 Batal
               </button>
               <button
-                onClick={handleSave}
+                onClick={handleAdd}
                 disabled={saving}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-cyan-600 text-white hover:bg-cyan-700 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                {editing ? 'Simpan Perubahan' : 'Tambah Admin'}
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Simpan
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function StatCard({
-  label, value, icon: Icon, color,
-}: { label: string; value: number; icon: React.ComponentType<{ className?: string }>; color: 'cyan' | 'emerald' | 'amber' | 'blue' }) {
-  const colors: Record<string, string> = {
-    cyan: 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400',
-    emerald: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
-    amber: 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400',
-    blue: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
-  };
-  return (
-    <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
-      <div className="flex items-center gap-3">
-        <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center', colors[color])}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label, icon, children,
-}: { label: string; icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-        <span className="text-slate-400">{icon}</span>
-        {label}
-      </label>
-      {children}
     </div>
   );
 }

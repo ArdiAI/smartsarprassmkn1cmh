@@ -1,16 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import { cn } from '../../utils/cn';
 import {
-  AlertTriangle, Loader2, X, MapPin, User, Mail, Phone, Clock,
+  AlertCircle, Loader2, Search, MapPin, Calendar, X, Save,
 } from 'lucide-react';
-
-interface InventoryRef {
-  id: string;
-  name: string;
-  code: string;
-}
 
 interface DamageReport {
   id: string;
@@ -18,7 +13,7 @@ interface DamageReport {
   reporter_name: string;
   description: string;
   image_url: string | null;
-  severity: 'minor' | 'moderate' | 'severe' | null;
+  severity: 'minor' | 'moderate' | 'severe';
   status: 'pending' | 'in_progress' | 'resolved';
   resolution_notes: string | null;
   created_at: string;
@@ -27,80 +22,105 @@ interface DamageReport {
   reporter_email: string | null;
   reporter_phone: string | null;
   location: string | null;
-  inventory?: InventoryRef | null;
 }
 
-type Severity = 'minor' | 'moderate' | 'severe';
-type DamageStatus = 'pending' | 'in_progress' | 'resolved';
+interface Inventory {
+  id: string;
+  name: string;
+  code: string;
+}
 
-const severityConfig: Record<Severity, { label: string; color: string }> = {
-  minor: { label: 'Ringan', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  moderate: { label: 'Sedang', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+const severityConfig: Record<string, { label: string; color: string }> = {
+  minor: { label: 'Ringan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+  moderate: { label: 'Sedang', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
   severe: { label: 'Berat', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
 };
 
-const statusConfig: Record<DamageStatus, { label: string; color: string }> = {
+const statusConfig: Record<string, { label: string; color: string }> = {
   pending: { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
   in_progress: { label: 'Diproses', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
   resolved: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
 };
 
-const statusOrder: DamageStatus[] = ['pending', 'in_progress', 'resolved'];
+const statusFlow: Record<string, string> = {
+  pending: 'in_progress',
+  in_progress: 'resolved',
+};
+
+const statusNextLabel: Record<string, string> = {
+  pending: 'Proses',
+  in_progress: 'Selesaikan',
+};
 
 export default function ReportsAdminPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('reports', 'manage');
+
   const [reports, setReports] = useState<DamageReport[]>([]);
+  const [inventory, setInventory] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [resolveModal, setResolveModal] = useState<DamageReport | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const fetchReports = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('damage_reports')
-      .select('*, inventory(id, name, code)')
-      .order('created_at', { ascending: false });
-    if (error) {
+    try {
+      const [repRes, invRes] = await Promise.all([
+        supabase.from('damage_reports').select('*').order('created_at', { ascending: false }),
+        supabase.from('inventory').select('id, name, code'),
+      ]);
+      if (repRes.error) throw repRes.error;
+      if (invRes.error) throw invRes.error;
+      setReports((repRes.data as unknown as DamageReport[]) || []);
+      const invMap: Record<string, Inventory> = {};
+      ((invRes.data as unknown as Inventory[]) || []).forEach((i) => {
+        invMap[i.id] = i;
+      });
+      setInventory(invMap);
+    } catch {
       showToast('Gagal memuat laporan kerusakan', 'error');
+    } finally {
       setLoading(false);
-      return;
     }
-    setReports((data as unknown as DamageReport[]) || []);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
+    fetchData();
+  }, [fetchData]);
 
-  const filtered = reports.filter(r => {
-    if (severityFilter !== 'all' && r.severity !== severityFilter) return false;
-    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
-    return true;
+  const filtered = reports.filter((r) => {
+    const q = search.toLowerCase();
+    const matchSearch =
+      !q ||
+      r.reporter_name?.toLowerCase().includes(q) ||
+      r.description?.toLowerCase().includes(q) ||
+      r.location?.toLowerCase().includes(q);
+    const matchSev = severityFilter === 'all' || r.severity === severityFilter;
+    const matchStatus = statusFilter === 'all' || r.status === statusFilter;
+    return matchSearch && matchSev && matchStatus;
   });
 
-  const handleAdvanceStatus = async (report: DamageReport) => {
-    const idx = statusOrder.indexOf(report.status);
-    if (idx >= statusOrder.length - 1) return;
-    const next = statusOrder[idx + 1];
-    setUpdatingId(report.id);
+  const handleAdvance = async (report: DamageReport) => {
+    const next = statusFlow[report.status];
+    if (!next) return;
+    setActionLoading(report.id);
     try {
-      const update: Record<string, unknown> = { status: next };
+      const payload: any = { status: next };
       if (next === 'resolved') {
-        update.resolved_at = new Date().toISOString();
+        payload.resolved_at = new Date().toISOString();
       }
-      const { error } = await supabase.from('damage_reports').update(update).eq('id', report.id);
+      const { error } = await supabase.from('damage_reports').update(payload).eq('id', report.id);
       if (error) throw error;
       showToast(`Status diperbarui ke "${statusConfig[next].label}"`, 'success');
-      await fetchReports();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal memperbarui status', 'error');
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message ?? 'Gagal memperbarui status', 'error');
     } finally {
-      setUpdatingId(null);
+      setActionLoading(null);
     }
   };
 
@@ -109,50 +129,52 @@ export default function ReportsAdminPage() {
     setResolutionNotes(report.resolution_notes ?? '');
   };
 
-  const handleResolve = async () => {
+  const handleSaveResolution = async () => {
     if (!resolveModal) return;
-    setSaving(true);
+    setActionLoading(resolveModal.id);
     try {
       const { error } = await supabase
         .from('damage_reports')
         .update({
-          status: 'resolved',
           resolution_notes: resolutionNotes.trim() || null,
+          status: 'resolved',
           resolved_at: new Date().toISOString(),
         })
         .eq('id', resolveModal.id);
       if (error) throw error;
       showToast('Laporan diselesaikan', 'success');
       setResolveModal(null);
-      await fetchReports();
-    } catch (e) {
-      console.error(e);
-      showToast('Gagal menyelesaikan laporan', 'error');
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message ?? 'Gagal menyimpan resolusi', 'error');
     } finally {
-      setSaving(false);
+      setActionLoading(null);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Laporan Kerusakan</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">Tinjau dan kelola laporan kerusakan sarana</p>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola laporan kerusakan sarana</p>
       </div>
 
+      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cari pelapor, deskripsi, lokasi..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
         <select
           value={severityFilter}
-          onChange={e => setSeverityFilter(e.target.value)}
-          className="input sm:max-w-xs"
+          onChange={(e) => setSeverityFilter(e.target.value)}
+          className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="all">Semua Tingkat</option>
           <option value="minor">Ringan</option>
@@ -161,8 +183,8 @@ export default function ReportsAdminPage() {
         </select>
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="input sm:max-w-xs"
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="all">Semua Status</option>
           <option value="pending">Menunggu</option>
@@ -171,90 +193,66 @@ export default function ReportsAdminPage() {
         </select>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
-            <AlertTriangle className="w-8 h-8 text-slate-300 dark:text-slate-500" />
-          </div>
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada laporan</p>
-          <p className="text-sm text-slate-400 mt-1">Belum ada laporan kerusakan yang sesuai filter</p>
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <AlertCircle className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-500 dark:text-slate-400">Tidak ada laporan</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filtered.map(r => {
-            const sc = statusConfig[r.status];
-            const sev = r.severity ? severityConfig[r.severity] : null;
-            const canAdvance = r.status !== 'resolved';
+        <div className="space-y-3">
+          {filtered.map((r) => {
+            const sev = severityConfig[r.severity] || severityConfig.minor;
+            const st = statusConfig[r.status] || statusConfig.pending;
+            const inv = r.inventory_id ? inventory[r.inventory_id] : null;
             return (
-              <div key={r.id} className="card p-5">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.inventory?.name ?? 'Item tidak diketahui'}</h3>
-                      {r.inventory?.code && (
-                        <span className="font-mono text-xs text-slate-400">{r.inventory.code}</span>
-                      )}
-                      {sev && <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sev.color)}>{sev.label}</span>}
-                      <span className={cn('px-2.5 py-0.5 rounded-full text-xs font-medium', sc.color)}>{sc.label}</span>
+              <div key={r.id} className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4">
+                <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <h3 className="font-semibold text-slate-900 dark:text-white">{r.reporter_name}</h3>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', sev.color)}>{sev.label}</span>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', st.color)}>{st.label}</span>
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">{r.description}</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 text-sm text-slate-500 dark:text-slate-400">
-                      <div className="flex items-center gap-2">
-                        <User className="w-4 h-4 text-slate-400" /> {r.reporter_name}
-                        {r.reporter_unit && <span className="text-slate-400">· {r.reporter_unit}</span>}
-                      </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300">{r.description}</p>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                      {inv && <span>Item: {inv.name} ({inv.code})</span>}
+                      {r.reporter_unit && <span>Unit: {r.reporter_unit}</span>}
                       {r.location && (
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-4 h-4 text-slate-400" /> {r.location}
-                        </div>
+                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {r.location}</span>
                       )}
-                      {r.reporter_email && (
-                        <div className="flex items-center gap-2">
-                          <Mail className="w-4 h-4 text-slate-400" /> {r.reporter_email}
-                        </div>
-                      )}
-                      {r.reporter_phone && (
-                        <div className="flex items-center gap-2">
-                          <Phone className="w-4 h-4 text-slate-400" /> {r.reporter_phone}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-slate-400" /> {new Date(r.created_at).toLocaleString('id-ID')}
-                      </div>
+                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {new Date(r.created_at).toLocaleDateString('id-ID')}</span>
                     </div>
-                    {r.image_url && (
-                      <a href={r.image_url} target="_blank" rel="noreferrer" className="text-sm text-blue-500 hover:underline mt-2 inline-block">
-                        Lihat foto kerusakan
-                      </a>
-                    )}
                     {r.resolution_notes && (
-                      <div className="mt-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-                        <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                          <span className="font-medium">Catatan penyelesaian:</span> {r.resolution_notes}
-                        </p>
+                      <div className="mt-3 p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-sm text-slate-700 dark:text-slate-300">
+                        <span className="font-medium">Resolusi: </span>{r.resolution_notes}
                       </div>
                     )}
                   </div>
-                  <div className="flex flex-col gap-2 flex-shrink-0">
-                    {canAdvance && (
-                      <>
+                  {canManage && r.status !== 'resolved' && (
+                    <div className="flex flex-col gap-2 sm:w-32">
+                      {statusFlow[r.status] && (
                         <button
-                          onClick={() => handleAdvanceStatus(r)}
-                          disabled={updatingId === r.id}
-                          className="px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                          onClick={() => handleAdvance(r)}
+                          disabled={actionLoading === r.id}
+                          className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 font-medium"
                         >
-                          {updatingId === r.id ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                          {r.status === 'pending' ? 'Proses' : 'Selesaikan'}
+                          {actionLoading === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                          {statusNextLabel[r.status]}
                         </button>
-                        <button
-                          onClick={() => openResolve(r)}
-                          className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors"
-                        >
-                          Tandai Selesai
-                        </button>
-                      </>
-                    )}
-                  </div>
+                      )}
+                      <button
+                        onClick={() => openResolve(r)}
+                        className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-sm text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 font-medium"
+                      >
+                        <Save className="w-3.5 h-3.5" /> Resolusi
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -262,40 +260,46 @@ export default function ReportsAdminPage() {
         </div>
       )}
 
-      {/* Resolve Modal */}
+      {/* Resolution Modal */}
       {resolveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="card w-full max-w-lg">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setResolveModal(null)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Selesaikan Laporan</h2>
-              <button onClick={() => setResolveModal(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Catat Resolusi</h2>
+              <button onClick={() => setResolveModal(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Item</p>
-                <p className="font-medium text-slate-900 dark:text-white">{resolveModal.inventory?.name ?? 'Item tidak diketahui'}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Pelapor</p>
+                <p className="font-medium text-slate-900 dark:text-white">{resolveModal.reporter_name}</p>
               </div>
               <div>
                 <p className="text-sm text-slate-500 dark:text-slate-400">Deskripsi Kerusakan</p>
-                <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">{resolveModal.description}</p>
+                <p className="text-slate-700 dark:text-slate-300">{resolveModal.description}</p>
               </div>
               <div>
-                <label className="label">Catatan Penyelesaian</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Catatan Resolusi</label>
                 <textarea
                   value={resolutionNotes}
-                  onChange={e => setResolutionNotes(e.target.value)}
+                  onChange={(e) => setResolutionNotes(e.target.value)}
                   rows={4}
-                  className="input"
-                  placeholder="Jelaskan tindakan perbaikan yang dilakukan..."
+                  placeholder="Tindakan yang dilakukan..."
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button onClick={() => setResolveModal(null)} className="btn-secondary">Batal</button>
-              <button onClick={handleResolve} disabled={saving} className="px-4 py-2 rounded-xl bg-emerald-500 text-white font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center gap-2">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              <button onClick={() => setResolveModal(null)} className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 font-medium">
+                Batal
+              </button>
+              <button
+                onClick={handleSaveResolution}
+                disabled={actionLoading === resolveModal.id}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {actionLoading === resolveModal.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Selesaikan
               </button>
             </div>
