@@ -177,7 +177,7 @@ export async function notifyNextApprover(payload: {
 
 export async function filterBorrowingsForAdmin(borrowings: any[], adminUser: AdminUser | null): Promise<any[]> {
   if (!adminUser) return [];
-  if (adminUser.role === 'superadmin') return borrowings;
+  if (adminUser.role === 'superadmin' || adminUser.role === 'Super Admin') return borrowings;
   const result: any[] = [];
   for (const b of borrowings) {
     const items = b.borrowing_items || [];

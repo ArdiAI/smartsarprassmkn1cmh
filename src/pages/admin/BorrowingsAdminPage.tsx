@@ -149,7 +149,7 @@ export default function BorrowingsAdminPage() {
     fetchBorrowings();
   }, [fetchBorrowings]);
 
-  const displayList = (adminUser?.role === 'superadmin' ? borrowings : filteredBorrowings).filter(b => {
+  const displayList = (adminUser?.role === 'superadmin' || adminUser?.role === 'Super Admin' ? borrowings : filteredBorrowings).filter(b => {
     if (statusFilter !== 'all' && b.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -488,7 +488,7 @@ export default function BorrowingsAdminPage() {
           </div>
           <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada pengajuan</p>
           <p className="text-sm text-slate-400 mt-1">
-            {adminUser?.role === 'superadmin'
+            {(adminUser?.role === 'superadmin' || adminUser?.role === 'Super Admin')
               ? 'Belum ada pengajuan peminjaman'
               : 'Tidak ada pengajuan yang menjadi tanggung jawab Anda saat ini'}
           </p>

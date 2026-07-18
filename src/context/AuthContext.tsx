@@ -52,14 +52,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setAdminProfile(null);
     }
-
-    console.group('%c[DEBUG] AuthContext.loadProfile() RESULT', 'color:#10b981;font-weight:bold;font-size:13px');
-    console.log('[DEBUG] AuthContext — permissions.size:', perms.size);
-    console.log('[DEBUG] AuthContext — permissions content:', Array.from(perms));
-    console.log('[DEBUG] AuthContext — roles:', roleList);
-    console.log('[DEBUG] AuthContext — adminProfile:', profile ? { ...profile, role: primaryRole ?? profile.role } : null);
-    console.log('[DEBUG] AuthContext — isAdmin (permissions.size > 0):', perms.size > 0);
-    console.groupEnd();
   }, []);
 
   const refreshAdminProfile = useCallback(async () => {
@@ -71,7 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (!mounted) return;
-      console.log('[DEBUG] AuthContext — getSession event:', { hasSession: !!data.session, userId: data.session?.user?.id ?? null });
       setSession(data.session);
       setUser(data.session?.user ?? null);
       if (data.session?.user) {
@@ -82,7 +73,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
-      console.log('[DEBUG] AuthContext — onAuthStateChange event:', { event: _event, hasSession: !!session, userId: session?.user?.id ?? null });
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -102,9 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadProfile]);
 
   const signIn = async (email: string, password: string) => {
-    console.log('[DEBUG] AuthContext.signIn() called for email:', email);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    console.log('[DEBUG] AuthContext.signIn() result:', { hasUser: !!data.user, error: error?.message ?? null });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
   };
 
@@ -123,15 +111,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // isAdmin is derived from permissions, not from a boolean column or a role string.
   const isAdmin = permissions.size > 0;
-
-  console.log('%c[DEBUG] AuthContext RENDER', 'color:#8b5cf6;font-weight:bold', {
-    loading,
-    hasUser: !!user,
-    permissionsSize: permissions.size,
-    rolesCount: roles.length,
-    adminProfile,
-    isAdmin,
-  });
 
   const value = useMemo<AuthContextType>(() => ({
     user,

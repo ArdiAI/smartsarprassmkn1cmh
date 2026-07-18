@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../context/AuthContext';
 import { showToast } from '../../components/Toast';
 import {
-  Building2, Plus, Pencil, Trash2, Loader2, Search, X, MapPin, Users,
+  Building2, Plus, Pencil, Trash2, X, Loader2, MapPin, Users,
 } from 'lucide-react';
 
 interface Facility {
@@ -13,16 +13,27 @@ interface Facility {
   location: string | null;
   capacity: number | null;
   image_url: string | null;
+  created_at: string;
   facility_type: string | null;
   category: string | null;
   department: string | null;
   status: string | null;
   manager_name: string | null;
   manager_role: string | null;
-  created_at: string;
 }
 
-const emptyForm = {
+interface FormData {
+  name: string;
+  description: string;
+  location: string;
+  capacity: string;
+  image_url: string;
+  facility_type: string;
+  category: string;
+  department: string;
+}
+
+const emptyForm: FormData = {
   name: '',
   description: '',
   location: '',
@@ -41,10 +52,9 @@ export default function FacilitiesAdminPage() {
 
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Facility | null>(null);
-  const [form, setForm] = useState<Record<string, string>>(emptyForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
 
   const fetchFacilities = useCallback(async () => {
@@ -55,7 +65,7 @@ export default function FacilitiesAdminPage() {
       setLoading(false);
       return;
     }
-    setFacilities((data as unknown as Facility[]) || []);
+    setFacilities((data as unknown as Facility[]) ?? []);
     setLoading(false);
   }, []);
 
@@ -63,24 +73,13 @@ export default function FacilitiesAdminPage() {
     fetchFacilities();
   }, [fetchFacilities]);
 
-  const filtered = facilities.filter(f => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      f.name?.toLowerCase().includes(q) ||
-      f.location?.toLowerCase().includes(q) ||
-      f.category?.toLowerCase().includes(q)
-    );
-  });
-
   const openAdd = () => {
-    setEditing(null);
     setForm(emptyForm);
+    setEditingId(null);
     setModalOpen(true);
   };
 
   const openEdit = (f: Facility) => {
-    setEditing(f);
     setForm({
       name: f.name ?? '',
       description: f.description ?? '',
@@ -91,10 +90,12 @@ export default function FacilitiesAdminPage() {
       category: f.category ?? '',
       department: f.department ?? '',
     });
+    setEditingId(f.id);
     setModalOpen(true);
   };
 
-  const handleSave = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!form.name) {
       showToast('Nama fasilitas wajib diisi', 'warning');
       return;
@@ -104,15 +105,15 @@ export default function FacilitiesAdminPage() {
       name: form.name,
       description: form.description || null,
       location: form.location || null,
-      capacity: Number(form.capacity) || 0,
+      capacity: form.capacity ? parseInt(form.capacity, 10) : null,
       image_url: form.image_url || null,
       facility_type: form.facility_type || null,
       category: form.category || null,
       department: form.department || null,
     };
     try {
-      if (editing) {
-        const { error } = await supabase.from('facilities').update(payload).eq('id', editing.id);
+      if (editingId) {
+        const { error } = await supabase.from('facilities').update(payload).eq('id', editingId);
         if (error) throw error;
         showToast('Fasilitas diperbarui', 'success');
       } else {
@@ -122,16 +123,17 @@ export default function FacilitiesAdminPage() {
       }
       setModalOpen(false);
       await fetchFacilities();
-    } catch (e: any) {
-      showToast(e.message || 'Gagal menyimpan fasilitas', 'error');
+    } catch (err) {
+      console.error(err);
+      showToast('Gagal menyimpan fasilitas', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (f: Facility) => {
-    if (!confirm(`Hapus "${f.name}"?`)) return;
-    const { error } = await supabase.from('facilities').delete().eq('id', f.id);
+  const handleDelete = async (id: string) => {
+    if (!confirm('Hapus fasilitas ini?')) return;
+    const { error } = await supabase.from('facilities').delete().eq('id', id);
     if (error) {
       showToast('Gagal menghapus fasilitas', 'error');
       return;
@@ -153,7 +155,7 @@ export default function FacilitiesAdminPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fasilitas</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data fasilitas dan ruangan</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Kelola data fasilitas</p>
         </div>
         {canCreate && (
           <button
@@ -165,18 +167,7 @@ export default function FacilitiesAdminPage() {
         )}
       </div>
 
-      <div className="relative">
-        <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Cari nama, lokasi, atau kategori..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-        />
-      </div>
-
-      {filtered.length === 0 ? (
+      {facilities.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center mx-auto mb-4">
             <Building2 className="w-8 h-8 text-slate-300 dark:text-slate-500" />
@@ -185,68 +176,46 @@ export default function FacilitiesAdminPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(f => (
+          {facilities.map((f) => (
             <div key={f.id} className="card overflow-hidden">
-              <div className="h-40 bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-slate-700 dark:to-slate-600 relative">
-                {f.image_url ? (
-                  <img src={f.image_url} alt={f.name} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <Building2 className="w-12 h-12 text-blue-300 dark:text-slate-500" />
-                  </div>
-                )}
-              </div>
+              {f.image_url ? (
+                <img src={f.image_url} alt={f.name} className="w-full h-40 object-cover" />
+              ) : (
+                <div className="w-full h-40 bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/30 dark:to-cyan-900/30 flex items-center justify-center">
+                  <Building2 className="w-12 h-12 text-blue-300 dark:text-blue-600" />
+                </div>
+              )}
               <div className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-slate-900 dark:text-white">{f.name}</h3>
-                  <div className="flex gap-1 flex-shrink-0">
+                  <div className="flex gap-1">
                     {canUpdate && (
-                      <button
-                        onClick={() => openEdit(f)}
-                        className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                      >
+                      <button onClick={() => openEdit(f)} className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20">
                         <Pencil className="w-4 h-4" />
                       </button>
                     )}
                     {canDelete && (
-                      <button
-                        onClick={() => handleDelete(f)}
-                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                      >
+                      <button onClick={() => handleDelete(f.id)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     )}
                   </div>
                 </div>
-                {f.description && (
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{f.description}</p>
-                )}
-                <div className="flex flex-wrap gap-3 mt-3 text-xs text-slate-500 dark:text-slate-400">
+                {f.description && <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{f.description}</p>}
+                <div className="mt-3 space-y-1.5 text-xs text-slate-500 dark:text-slate-400">
                   {f.location && (
-                    <span className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5" /> {f.location}
-                    </span>
+                    </div>
                   )}
                   {f.capacity != null && (
-                    <span className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" /> {f.capacity} orang
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {f.category && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                      {f.category}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" /> Kapasitas {f.capacity}
+                    </div>
                   )}
                   {f.facility_type && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+                    <span className="inline-block px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-medium">
                       {f.facility_type}
-                    </span>
-                  )}
-                  {f.department && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                      {f.department}
                     </span>
                   )}
                 </div>
@@ -259,23 +228,24 @@ export default function FacilitiesAdminPage() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setModalOpen(false)}>
           <div
-            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
-            onClick={e => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl"
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
               <h2 className="font-semibold text-slate-900 dark:text-white">
-                {editing ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
+                {editingId ? 'Edit Fasilitas' : 'Tambah Fasilitas'}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <button onClick={() => setModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Nama *</label>
                 <input
+                  type="text"
                   value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
@@ -283,17 +253,18 @@ export default function FacilitiesAdminPage() {
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Deskripsi</label>
                 <textarea
                   value={form.description}
-                  onChange={e => setForm({ ...form, description: e.target.value })}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
                   rows={2}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Lokasi</label>
                   <input
+                    type="text"
                     value={form.location}
-                    onChange={e => setForm({ ...form, location: e.target.value })}
+                    onChange={(e) => setForm({ ...form, location: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
@@ -302,7 +273,7 @@ export default function FacilitiesAdminPage() {
                   <input
                     type="number"
                     value={form.capacity}
-                    onChange={e => setForm({ ...form, capacity: e.target.value })}
+                    onChange={(e) => setForm({ ...form, capacity: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
@@ -310,54 +281,60 @@ export default function FacilitiesAdminPage() {
               <div>
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">URL Gambar</label>
                 <input
+                  type="text"
                   value={form.image_url}
-                  onChange={e => setForm({ ...form, image_url: e.target.value })}
+                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                  placeholder="https://..."
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Tipe</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Tipe Fasilitas</label>
                   <input
+                    type="text"
                     value={form.facility_type}
-                    onChange={e => setForm({ ...form, facility_type: e.target.value })}
+                    onChange={(e) => setForm({ ...form, facility_type: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Kategori</label>
                   <input
+                    type="text"
                     value={form.category}
-                    onChange={e => setForm({ ...form, category: e.target.value })}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-1">Departemen</label>
                   <input
+                    type="text"
                     value={form.department}
-                    onChange={e => setForm({ ...form, department: e.target.value })}
+                    onChange={(e) => setForm({ ...form, department: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
               </div>
-            </div>
-            <div className="flex justify-end gap-3 p-5 border-t border-slate-200 dark:border-slate-700">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {editing ? 'Simpan' : 'Tambah'}
-              </button>
-            </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {editingId ? 'Simpan' : 'Tambah'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
