@@ -109,7 +109,7 @@ export default function AboutPage() {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">Visi</h2>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              {vision?.text ?? vision ?? 'Menjadi sistem manajemen sarana dan prasarana sekolah yang terintegrasi, transparan, dan efisien.'}
+              {vision?.text ?? vision ?? 'Menjadi sistem manajemen administrasi ruang tata sarana prasarana sekolah yang terintegrasi, transparan, dan efisien.'}
             </p>
           </div>
           <div className="card">
