@@ -1,34 +1,28 @@
 import { useEffect, useState } from 'react';
 import {
-  Info,
-  Target,
-  Eye,
-  Users,
-  Mail,
-  Phone,
-  Sparkles,
-  ShieldCheck,
-  CalendarRange,
-  ClipboardList,
   Package,
   Building2,
-  AlertCircle,
+  ClipboardList,
+  CalendarDays,
+  CalendarRange,
+  ShieldCheck,
+  Users,
+  Target,
+  Eye,
+  Mail,
+  Phone,
   Loader2,
 } from 'lucide-react';
-import Navbar from '../components/Navbar';
-import Footer from '../components/Footer';
+import { supabase } from '../lib/supabase';
 import AnimatedBackground from '../components/AnimatedBackground';
 import EmptyState from '../components/EmptyState';
-import { showToast } from '../components/Toast';
-import { supabase } from '../lib/supabase';
 import { brand } from '../brand/config';
-import { cn } from '../utils/cn';
 
 interface TeamMember {
   id: string;
   name: string;
   position: string;
-  role: string | null;
+  role: string;
   photo_url: string | null;
   description: string | null;
   email: string | null;
@@ -37,61 +31,52 @@ interface TeamMember {
   is_active: boolean;
 }
 
-interface AboutSettings {
-  id: string;
-  section: string;
-  content: unknown;
+interface AboutContent {
+  vision?: string;
+  mission?: string[];
+  description?: string;
 }
 
 const features = [
-  { icon: Package, title: 'Manajemen Inventaris', desc: 'Kelola semua barang sekolah dengan pelacakan kondisi dan ketersediaan real-time.' },
-  { icon: Building2, title: 'Pemesanan Fasilitas', desc: 'Pesan dan jadwalkan penggunaan fasilitas sekolah dengan mudah.' },
-  { icon: ClipboardList, title: 'Pengajuan Peminjaman', desc: 'Ajukan peminjaman barang dengan alur persetujuan yang jelas.' },
-  { icon: CalendarRange, title: 'Timeline Kegiatan', desc: 'Pantau seluruh kegiatan dan peminjaman dalam satu kalender terpadu.' },
-  { icon: AlertCircle, title: 'Laporan Kerusakan', desc: 'Laporkan kerusakan sarana dengan upload foto sebagai bukti.' },
-  { icon: ShieldCheck, title: 'Sistem Workflow', desc: 'Alur persetujuan bertingkat untuk setiap pengajuan peminjaman.' },
+  { icon: Package, title: 'Inventaris', desc: 'Kelola barang dan inventaris sekolah dengan mudah.' },
+  { icon: Building2, title: 'Fasilitas', desc: 'Pemesanan dan manajemen fasilitas sekolah.' },
+  { icon: ClipboardList, title: 'Peminjaman', desc: 'Ajukan peminjaman barang dengan sistem approval.' },
+  { icon: CalendarDays, title: 'Agenda', desc: 'Catat kegiatan sekolah yang terjadwal.' },
+  { icon: CalendarRange, title: 'Timeline', desc: 'Lihat semua kegiatan dan peminjaman dalam satu kalender.' },
+  { icon: ShieldCheck, title: 'Laporan', desc: 'Laporkan kerusakan sarana dengan cepat.' },
 ];
-
-const AVATAR_FALLBACK = 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=400';
 
 export default function AboutPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
-  const [vision, setVision] = useState<string>('');
-  const [mission, setMission] = useState<string[]>([]);
+  const [about, setAbout] = useState<AboutContent>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const [{ data: teamData, error: teamErr }, { data: settingsData, error: settingsErr }] = await Promise.all([
+        const [teamRes, aboutRes] = await Promise.all([
           supabase
             .from('team_members')
-            .select('id, name, position, role, photo_url, description, email, phone, order, is_active')
+            .select('*')
             .eq('is_active', true)
             .order('order', { ascending: true }),
-          supabase.from('about_settings').select('id, section, content'),
+          supabase
+            .from('about_settings')
+            .select('section, content')
+            .in('section', ['vision', 'mission', 'description']),
         ]);
-        if (teamErr) throw teamErr;
-        if (settingsErr) throw settingsErr;
 
-        setTeam((teamData as unknown as TeamMember[]) ?? []);
+        if (teamRes.data) {
+          setTeam(teamRes.data as unknown as TeamMember[]);
+        }
 
-        const settings = (settingsData as unknown as AboutSettings[]) ?? [];
-        const visionSetting = settings.find((s) => s.section === 'vision');
-        const missionSetting = settings.find((s) => s.section === 'mission');
-        if (visionSetting && typeof visionSetting.content === 'object' && visionSetting.content) {
-          const c = visionSetting.content as Record<string, unknown>;
-          setVision((c.text as string) ?? (c.value as string) ?? '');
-        }
-        if (missionSetting && typeof missionSetting.content === 'object' && missionSetting.content) {
-          const c = missionSetting.content as Record<string, unknown>;
-          const items = c.items ?? c.list ?? c.points;
-          if (Array.isArray(items)) {
-            setMission(items.map((i) => String(i)));
-          }
-        }
-      } catch {
-        showToast('Gagal memuat data', 'error');
+        const content: AboutContent = {};
+        (aboutRes.data ?? []).forEach((item: any) => {
+          if (item.section === 'vision') content.vision = item.content?.text ?? '';
+          if (item.section === 'mission') content.mission = item.content?.items ?? [];
+          if (item.section === 'description') content.description = item.content?.text ?? '';
+        });
+        setAbout(content);
       } finally {
         setLoading(false);
       }
@@ -99,136 +84,148 @@ export default function AboutPage() {
   }, []);
 
   return (
-    <div className="relative min-h-screen bg-slate-50 dark:bg-slate-950">
-      <Navbar />
-      <AnimatedBackground />
-
+    <div className="relative">
       {/* Hero */}
-      <section className="relative mx-auto max-w-7xl px-4 pt-16 pb-12">
-        <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-300">
-            <Sparkles className="h-4 w-4" />
-            Tentang Kami
-          </div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-5xl">
-            <span className="bg-gradient-to-r from-brand-600 to-cyan-500 bg-clip-text text-transparent">
-              {brand.name}
-            </span>
-          </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-300">
-            {brand.description}
+      <section className="relative overflow-hidden bg-gradient-to-br from-brand-600 via-brand-700 to-cyan-700 py-20">
+        <AnimatedBackground />
+        <div className="relative mx-auto max-w-7xl px-4 text-center">
+          <h1 className="text-4xl font-bold text-white sm:text-5xl">Tentang {brand.name}</h1>
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-brand-100">
+            {about.description ?? brand.description}
           </p>
         </div>
       </section>
 
       {/* Features */}
-      <section className="relative mx-auto max-w-7xl px-4 py-8">
-        <h2 className="mb-6 text-center text-2xl font-bold text-slate-900 dark:text-white">Fitur Utama</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mx-auto max-w-7xl px-4 py-16">
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Fitur Utama</h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          Berbagai fitur untuk pengelolaan sarana dan prasarana sekolah.
+        </p>
+        <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((f) => (
-            <div key={f.title} className="card group transition hover:border-brand-300 hover:shadow-md dark:hover:border-brand-700">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-900/30">
+            <div
+              key={f.title}
+              className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-100 dark:bg-brand-900/40">
                 <f.icon className="h-6 w-6 text-brand-600 dark:text-brand-400" />
               </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">{f.title}</h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{f.desc}</p>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{f.title}</h3>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{f.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* Vision & Mission */}
-      <section className="relative mx-auto max-w-7xl px-4 py-8">
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="card">
-            <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 dark:bg-cyan-900/30">
-                <Eye className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+      <section className="bg-slate-100 py-16 dark:bg-slate-900/50">
+        <div className="mx-auto max-w-7xl px-4">
+          <div className="grid gap-8 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-900">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 dark:bg-brand-900/40">
+                  <Eye className="h-5 w-5 text-brand-600 dark:text-brand-400" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Visi</h3>
               </div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Visi</h3>
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                {about.vision ??
+                  'Menjadi platform pengelolaan sarana dan prasarana sekolah yang terintegrasi, transparan, dan efisien.'}
+              </p>
             </div>
-            {vision ? (
-              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">{vision}</p>
-            ) : (
-              <p className="text-sm text-slate-400">Menjadi platform terdepan dalam manajemen sarana dan prasarana sekolah yang efisien, transparan, dan terpadu.</p>
-            )}
-          </div>
-          <div className="card">
-            <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-900/30">
-                <Target className="h-5 w-5 text-brand-600 dark:text-brand-400" />
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-900">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-100 dark:bg-cyan-900/40">
+                  <Target className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Misi</h3>
               </div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Misi</h3>
+              {about.mission && about.mission.length > 0 ? (
+                <ul className="space-y-2">
+                  {about.mission.map((m, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-500" />
+                      {m}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className="space-y-2">
+                  {[
+                    'Memberikan kemudahan akses informasi sarana dan prasarana sekolah.',
+                    'Menyediakan sistem peminjaman yang transparan dan akuntabel.',
+                    'Meningkatkan efisiensi pengelolaan fasilitas sekolah.',
+                    'Membangun budaya responsibility dalam penggunaan sarana.',
+                  ].map((m, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-500" />
+                      {m}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-            {mission.length > 0 ? (
-              <ul className="space-y-2">
-                {mission.map((m, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-                    {m}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-                  Memberikan platform terpadu untuk seluruh kebutuhan sarana dan prasarana sekolah.
-                </li>
-                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-                  Meningkatkan efisiensi dan transparansi pengelolaan peminjaman dan pelaporan.
-                </li>
-                <li className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-                  Memfasilitasi komunikasi yang baik antara warga sekolah dan pengelola sarana.
-                </li>
-              </ul>
-            )}
           </div>
         </div>
       </section>
 
       {/* Team */}
-      <section className="relative mx-auto max-w-7xl px-4 py-8 pb-16">
-        <div className="mb-6 flex items-center gap-2">
-          <Users className="h-6 w-6 text-brand-600" />
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim Pengembang</h2>
+      <section className="mx-auto max-w-7xl px-4 py-16">
+        <div className="mb-8 flex items-center gap-3">
+          <Users className="h-6 w-6 text-brand-600 dark:text-brand-400" />
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Tim Kami</h2>
         </div>
+
         {loading ? (
-          <div className="flex items-center justify-center py-12">
+          <div className="flex justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
           </div>
         ) : team.length === 0 ? (
-          <EmptyState icon={<Users className="h-8 w-8 text-slate-400" />} title="Belum ada anggota tim" description="Anggota tim akan ditampilkan di sini." />
+          <EmptyState title="Belum ada anggota tim" description="Tim akan ditampilkan di sini." />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {team.map((m) => (
-              <div key={m.id} className="card text-center">
-                <img
-                  src={m.photo_url || AVATAR_FALLBACK}
-                  alt={m.name}
-                  className="mx-auto mb-3 h-24 w-24 rounded-full object-cover border-2 border-brand-200 dark:border-brand-800"
-                  onError={(e) => { (e.target as HTMLImageElement).src = AVATAR_FALLBACK; }}
-                />
-                <h3 className="font-bold text-slate-900 dark:text-white">{m.name}</h3>
-                <p className="text-sm font-medium text-brand-600 dark:text-brand-400">{m.position}</p>
-                {m.role && <p className="text-xs text-slate-400">{m.role}</p>}
-                {m.description && (
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 line-clamp-3">{m.description}</p>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {team.map((member) => (
+              <div
+                key={member.id}
+                className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className="mx-auto mb-4 h-24 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                  {member.photo_url ? (
+                    <img
+                      src={member.photo_url}
+                      alt={member.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-2xl font-bold text-slate-400">
+                      {member.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{member.name}</h3>
+                <p className="mt-1 text-sm font-medium text-brand-600 dark:text-brand-400">
+                  {member.position}
+                </p>
+                {member.description && (
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{member.description}</p>
                 )}
-                <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 dark:border-slate-800">
-                  {m.email && (
-                    <a href={`mailto:${m.email}`} className="flex items-center justify-center gap-1.5 text-xs text-slate-500 hover:text-brand-600 dark:text-slate-400">
-                      <Mail className="h-3.5 w-3.5" />
-                      {m.email}
+                <div className="mt-4 flex justify-center gap-3">
+                  {member.email && (
+                    <a
+                      href={`mailto:${member.email}`}
+                      className="rounded-lg bg-slate-100 p-2 text-slate-500 hover:bg-brand-100 hover:text-brand-600 dark:bg-slate-800 dark:text-slate-400"
+                    >
+                      <Mail className="h-4 w-4" />
                     </a>
                   )}
-                  {m.phone && (
-                    <p className="flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                      <Phone className="h-3.5 w-3.5" />
-                      {m.phone}
-                    </p>
+                  {member.phone && (
+                    <a
+                      href={`tel:${member.phone}`}
+                      className="rounded-lg bg-slate-100 p-2 text-slate-500 hover:bg-brand-100 hover:text-brand-600 dark:bg-slate-800 dark:text-slate-400"
+                    >
+                      <Phone className="h-4 w-4" />
+                    </a>
                   )}
                 </div>
               </div>
@@ -236,8 +233,6 @@ export default function AboutPage() {
           </div>
         )}
       </section>
-
-      <Footer />
     </div>
   );
 }
