@@ -5,5 +5,5 @@ export const brand = {
     'Platform terpadu untuk pengelolaan sarana dan prasarana sekolah: peminjaman barang, fasilitas, pelaporan kerusakan, agenda kegiatan, dan timeline kegiatan.',
   primary: '#2563eb',
   accent: '#06b6d4',
-  school: 'SMK Negeri 1 Contoh',
+  school: 'SMK Negeri 1 Cimahi',
 };
