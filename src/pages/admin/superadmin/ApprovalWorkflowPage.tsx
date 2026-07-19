@@ -1,9 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Trash2, Workflow, X, GripVertical, ArrowRight, Info } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { cn } from '../../../utils/cn';
 import { showToast } from '../../../components/Toast';
 import { useAuth } from '../../../context/AuthContext';
-import { cn } from '../../../utils/cn';
+import {
+  Workflow,
+  Plus,
+  Trash2,
+  X,
+  Loader2,
+  ChevronRight,
+  ArrowDown,
+  Info,
+  Eye,
+} from 'lucide-react';
 
 interface WorkflowTemplate {
   id: string;
@@ -20,16 +30,20 @@ interface WorkflowStep {
   role_id: string;
   step_label: string;
   is_info_only: boolean;
-  created_at: string;
-  role?: { name: string } | null;
 }
 
 interface Role {
   id: string;
   name: string;
+  level: number;
+}
+
+interface TemplateWithSteps extends WorkflowTemplate {
+  workflow_steps: WorkflowStep[];
 }
 
 interface StepDraft {
+  step_order: number;
   role_id: string;
   step_label: string;
   is_info_only: boolean;
@@ -39,289 +53,265 @@ export default function ApprovalWorkflowPage() {
   const { hasPermission } = useAuth();
   const canManage = hasPermission('workflows', 'manage');
 
-  const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
-  const [stepsByTemplate, setStepsByTemplate] = useState<Record<string, WorkflowStep[]>>({});
+  const [templates, setTemplates] = useState<TemplateWithSteps[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [showModal, setShowModal] = useState(false);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [steps, setSteps] = useState<StepDraft[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const loadRoles = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('roles')
-      .select('id, name')
-      .eq('is_active', true)
-      .order('level', { ascending: false });
-    if (error) {
-      showToast('Gagal memuat daftar role', 'error');
-      return;
-    }
-    setRoles((data ?? []) as unknown as Role[]);
-  }, []);
+  // Form state
+  const [tplName, setTplName] = useState('');
+  const [tplDesc, setTplDesc] = useState('');
+  const [steps, setSteps] = useState<StepDraft[]>([]);
 
-  const loadTemplates = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('workflow_templates')
-      .select('id, name, description, is_active, created_at')
-      .order('created_at', { ascending: false });
-    if (error) {
+    try {
+      const [tplRes, roleRes] = await Promise.all([
+        supabase
+          .from('workflow_templates')
+          .select('id, name, description, is_active, created_at, workflow_steps(*)')
+          .order('created_at', { ascending: false }),
+        supabase.from('roles').select('id, name, level').eq('is_active', true).order('level', { ascending: false }),
+      ]);
+      if (tplRes.error) throw tplRes.error;
+      if (roleRes.error) throw roleRes.error;
+      setTemplates((tplRes.data ?? []) as unknown as TemplateWithSteps[]);
+      setRoles((roleRes.data ?? []) as unknown as Role[]);
+    } catch {
+      showToast('Gagal memuat data workflow', 'error');
+    } finally {
       setLoading(false);
-      showToast('Gagal memuat workflow templates', 'error');
-      return;
-    }
-    const rows = (data ?? []) as unknown as WorkflowTemplate[];
-    setTemplates(rows);
-
-    if (rows.length > 0) {
-      const { data: stepData, error: stepErr } = await supabase
-        .from('workflow_steps')
-        .select('id, workflow_template_id, step_order, role_id, step_label, is_info_only, created_at, role:roles(name)')
-        .in(
-          'workflow_template_id',
-          rows.map((t) => t.id),
-        )
-        .order('step_order', { ascending: true });
-      setLoading(false);
-      if (stepErr) {
-        showToast('Gagal memuat workflow steps', 'error');
-        return;
-      }
-      const grouped: Record<string, WorkflowStep[]> = {};
-      (stepData ?? []).forEach((s) => {
-        const step = s as unknown as WorkflowStep;
-        if (!grouped[step.workflow_template_id]) grouped[step.workflow_template_id] = [];
-        grouped[step.workflow_template_id].push(step);
-      });
-      setStepsByTemplate(grouped);
-    } else {
-      setLoading(false);
-      setStepsByTemplate({});
     }
   }, []);
 
   useEffect(() => {
-    loadTemplates();
-    loadRoles();
-  }, [loadTemplates, loadRoles]);
-
-  const openCreate = () => {
-    setName('');
-    setDescription('');
-    setSteps([{ role_id: '', step_label: '', is_info_only: false }]);
-    setShowModal(true);
-  };
+    fetchData();
+  }, [fetchData]);
 
   const addStep = () => {
-    setSteps([...steps, { role_id: '', step_label: '', is_info_only: false }]);
+    setSteps((prev) => [
+      ...prev,
+      {
+        step_order: prev.length + 1,
+        role_id: '',
+        step_label: '',
+        is_info_only: false,
+      },
+    ]);
+  };
+
+  const updateStep = (index: number, field: keyof StepDraft, value: string | boolean) => {
+    setSteps((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, [field]: value } : s))
+    );
   };
 
   const removeStep = (index: number) => {
-    setSteps(steps.filter((_, i) => i !== index));
+    setSteps((prev) =>
+      prev
+        .filter((_, i) => i !== index)
+        .map((s, i) => ({ ...s, step_order: i + 1 }))
+    );
   };
 
-  const updateStep = (index: number, patch: Partial<StepDraft>) => {
-    setSteps(steps.map((s, i) => (i === index ? { ...s, ...patch } : s)));
-  };
-
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      showToast('Nama workflow wajib diisi', 'warning');
+  const handleSave = async () => {
+    if (!tplName.trim()) {
+      showToast('Nama template wajib diisi', 'warning');
       return;
     }
-    const validSteps = steps.filter((s) => s.role_id && s.step_label.trim());
-    if (validSteps.length === 0) {
-      showToast('Minimal satu langkah valid diperlukan', 'warning');
+    if (steps.length === 0) {
+      showToast('Tambahkan minimal satu langkah', 'warning');
       return;
+    }
+    for (const s of steps) {
+      if (!s.role_id || !s.step_label.trim()) {
+        showToast('Setiap langkah harus memiliki role dan label', 'warning');
+        return;
+      }
     }
     setSaving(true);
     try {
       const { data: tpl, error: tplErr } = await supabase
         .from('workflow_templates')
         .insert({
-          name: name.trim(),
-          description: description.trim() || null,
+          name: tplName.trim(),
+          description: tplDesc.trim() || null,
           is_active: true,
         })
         .select('id')
         .single();
       if (tplErr) throw tplErr;
-      const newTpl = tpl as unknown as { id: string };
 
-      const stepInserts = validSteps.map((s, i) => ({
-        workflow_template_id: newTpl.id,
+      const stepRows = steps.map((s, i) => ({
+        workflow_template_id: tpl.id,
         step_order: i + 1,
         role_id: s.role_id,
         step_label: s.step_label.trim(),
         is_info_only: s.is_info_only,
       }));
-      const { error: stepErr } = await supabase.from('workflow_steps').insert(stepInserts);
+
+      const { error: stepErr } = await supabase.from('workflow_steps').insert(stepRows);
       if (stepErr) throw stepErr;
 
-      showToast('Workflow berhasil dibuat', 'success');
-      await loadTemplates();
+      showToast('Template workflow berhasil dibuat', 'success');
       setShowModal(false);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal membuat workflow';
+      setTplName('');
+      setTplDesc('');
+      setSteps([]);
+      fetchData();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal membuat workflow';
       showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleActive = async (tpl: WorkflowTemplate) => {
+  const handleToggleActive = async (t: WorkflowTemplate) => {
     try {
       const { error } = await supabase
         .from('workflow_templates')
-        .update({ is_active: !tpl.is_active })
-        .eq('id', tpl.id);
+        .update({ is_active: !t.is_active, updated_at: new Date().toISOString() })
+        .eq('id', t.id);
       if (error) throw error;
-      showToast(tpl.is_active ? 'Workflow dinonaktifkan' : 'Workflow diaktifkan', 'success');
-      await loadTemplates();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal mengubah status';
-      showToast(msg, 'error');
+      showToast(t.is_active ? 'Template dinonaktifkan' : 'Template diaktifkan', 'success');
+      fetchData();
+    } catch {
+      showToast('Gagal mengubah status template', 'error');
     }
   };
 
-  const handleDelete = async (tpl: WorkflowTemplate) => {
-    if (!confirm(`Hapus workflow "${tpl.name}" beserta langkah-langkahnya?`)) return;
+  const handleDelete = async (t: WorkflowTemplate) => {
+    if (!confirm(`Hapus template "${t.name}"? Semua langkah akan ikut terhapus.`)) return;
     try {
+      // Delete steps first
       const { error: stepErr } = await supabase
         .from('workflow_steps')
         .delete()
-        .eq('workflow_template_id', tpl.id);
+        .eq('workflow_template_id', t.id);
       if (stepErr) throw stepErr;
-      const { error: tplErr } = await supabase.from('workflow_templates').delete().eq('id', tpl.id);
-      if (tplErr) throw tplErr;
-      showToast('Workflow berhasil dihapus', 'success');
-      await loadTemplates();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal menghapus workflow';
-      showToast(msg, 'error');
+
+      const { error } = await supabase.from('workflow_templates').delete().eq('id', t.id);
+      if (error) throw error;
+      showToast('Template berhasil dihapus', 'success');
+      fetchData();
+    } catch {
+      showToast('Gagal menghapus template', 'error');
     }
   };
 
+  const roleName = (roleId: string) => roles.find((r) => r.id === roleId)?.name ?? 'Role tidak ditemukan';
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Approval Workflow</h2>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Approval Workflow</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Kelola template alur persetujuan dan rantai langkahnya.
+            Kelola template alur persetujuan
           </p>
         </div>
         {canManage && (
-          <button className="btn-primary" onClick={openCreate}>
+          <button
+            onClick={() => setShowModal(true)}
+            className="inline-flex items-center gap-2 rounded-2xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
+          >
             <Plus className="h-4 w-4" />
-            Buat Workflow
+            Tambah Template
           </button>
         )}
       </div>
 
       {loading ? (
-        <p className="py-8 text-center text-sm text-slate-500">Memuat...</p>
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
+        </div>
       ) : templates.length === 0 ? (
-        <div className="card text-center text-sm text-slate-500">Belum ada workflow template.</div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center dark:border-slate-700 dark:bg-slate-800">
+          <Workflow className="mx-auto h-10 w-10 text-slate-300" />
+          <p className="mt-3 text-sm text-slate-500">Belum ada template workflow</p>
+        </div>
       ) : (
         <div className="space-y-4">
-          {templates.map((tpl) => {
-            const tSteps = stepsByTemplate[tpl.id] ?? [];
-            return (
-              <div key={tpl.id} className="card">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
-                      <Workflow className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 dark:text-white">{tpl.name}</h3>
-                      <p className="text-sm text-slate-500 dark:text-slate-400">
-                        {tpl.description ?? '-'}
-                      </p>
-                    </div>
-                  </div>
+          {templates.map((t) => (
+            <div
+              key={t.id}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+            >
+              <div className="flex items-start justify-between">
+                <div>
                   <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-slate-900 dark:text-white">{t.name}</h3>
                     <span
                       className={cn(
-                        'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-                        tpl.is_active
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+                        'rounded-full px-2.5 py-0.5 text-xs font-medium',
+                        t.is_active
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
                       )}
                     >
-                      {tpl.is_active ? 'Aktif' : 'Nonaktif'}
+                      {t.is_active ? 'Aktif' : 'Nonaktif'}
                     </span>
-                    {canManage && (
-                      <>
-                        <button
-                          onClick={() => handleToggleActive(tpl)}
-                          className="rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                        >
-                          {tpl.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                        </button>
-                        <button
-                          onClick={() => handleDelete(tpl)}
-                          className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                          aria-label="Hapus workflow"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </>
-                    )}
                   </div>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    {t.description ?? 'Tanpa deskripsi'}
+                  </p>
                 </div>
-
-                {tSteps.length > 0 ? (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {tSteps.map((s, idx) => (
-                      <div key={s.id} className="flex items-center gap-2">
-                        <div
-                          className={cn(
-                            'flex items-center gap-2 rounded-xl border px-3 py-2 text-sm',
-                            s.is_info_only
-                              ? 'border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300'
-                              : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
-                          )}
-                        >
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
-                            {idx + 1}
-                          </span>
-                          <span className="font-medium">{s.step_label}</span>
-                          <span className="text-xs text-slate-400">
-                            {s.role?.name ?? '-'}
-                          </span>
-                          {s.is_info_only && (
-                            <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-                              info
-                            </span>
-                          )}
-                        </div>
-                        {idx < tSteps.length - 1 && (
-                          <ArrowRight className="h-4 w-4 text-slate-300 dark:text-slate-600" />
-                        )}
-                      </div>
-                    ))}
+                {canManage && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleToggleActive(t)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                    >
+                      {t.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Hapus
+                    </button>
                   </div>
-                ) : (
-                  <p className="mt-4 text-xs text-slate-400">Belum ada langkah pada workflow ini.</p>
                 )}
               </div>
-            );
-          })}
+
+              {t.workflow_steps && t.workflow_steps.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {[...t.workflow_steps]
+                    .sort((a, b) => a.step_order - b.step_order)
+                    .map((step, i, arr) => (
+                      <div key={step.id} className="flex items-center gap-2">
+                        <div
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium',
+                            step.is_info_only
+                              ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'
+                              : 'bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400'
+                          )}
+                        >
+                          {step.is_info_only && <Eye className="h-3 w-3" />}
+                          <span className="text-slate-500 dark:text-slate-400">#{step.step_order}</span>
+                          <span>{step.step_label}</span>
+                          <span className="text-slate-400">·</span>
+                          <span className="text-slate-500 dark:text-slate-400">{roleName(step.role_id)}</span>
+                        </div>
+                        {i < arr.length - 1 && <ChevronRight className="h-4 w-4 text-slate-300" />}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Create Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-800 max-h-[90vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Buat Workflow</h3>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Tambah Template Workflow</h2>
               <button
                 onClick={() => setShowModal(false)}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -329,116 +319,121 @@ export default function ApprovalWorkflowPage() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-
             <div className="space-y-4">
               <div>
-                <label className="label">Nama Workflow</label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Nama Template</label>
                 <input
                   type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="input"
-                  placeholder="contoh: Persetujuan Peminjaman"
+                  value={tplName}
+                  onChange={(e) => setTplName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                  placeholder="Contoh: Approval Pengajuan Barang"
                 />
               </div>
               <div>
-                <label className="label">Deskripsi</label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Deskripsi</label>
                 <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="input"
+                  value={tplDesc}
+                  onChange={(e) => setTplDesc(e.target.value)}
                   rows={2}
-                  placeholder="Deskripsi workflow (opsional)"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                  placeholder="Deskripsi singkat workflow"
                 />
               </div>
 
               <div>
                 <div className="mb-2 flex items-center justify-between">
-                  <label className="label mb-0">Langkah-langkah</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Langkah-langkah</label>
                   <button
                     onClick={addStep}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700"
+                    className="inline-flex items-center gap-1 rounded-xl bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-600 hover:bg-brand-100 dark:bg-brand-900/20 dark:text-brand-400"
                   >
-                    <Plus className="h-4 w-4" />
+                    <Plus className="h-3.5 w-3.5" />
                     Tambah Langkah
                   </button>
                 </div>
 
-                <div className="space-y-3">
-                  {steps.map((s, i) => (
-                    <div
-                      key={i}
-                      className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700"
-                    >
-                      <div className="flex items-center gap-2 pt-2">
-                        <GripVertical className="h-4 w-4 text-slate-300 dark:text-slate-600" />
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
-                          {i + 1}
-                        </span>
-                      </div>
-                      <div className="grid flex-1 gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="label">Label Langkah</label>
-                          <input
-                            type="text"
-                            value={s.step_label}
-                            onChange={(e) => updateStep(i, { step_label: e.target.value })}
-                            className="input"
-                            placeholder="contoh: Review Pengajuan"
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Role Approver</label>
-                          <select
-                            value={s.role_id}
-                            onChange={(e) => updateStep(i, { role_id: e.target.value })}
-                            className="input"
-                          >
-                            <option value="">Pilih role...</option>
-                            {roles.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={s.is_info_only}
-                            onChange={(e) => updateStep(i, { is_info_only: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                          />
-                          Info only
-                        </label>
-                        {steps.length > 1 && (
+                {steps.length === 0 ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-400 dark:border-slate-600">
+                    <Info className="h-4 w-4" />
+                    Belum ada langkah. Klik "Tambah Langkah" untuk mulai.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {steps.map((s, i) => (
+                      <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-700/50">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
+                            {i + 1}
+                          </span>
+                          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Langkah {i + 1}</span>
                           <button
                             onClick={() => removeStep(i)}
-                            className="rounded-lg p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                            aria-label="Hapus langkah"
+                            className="ml-auto text-red-500 hover:text-red-700"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
-                        )}
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-0.5 block text-xs text-slate-500 dark:text-slate-400">Role Approver</label>
+                            <select
+                              value={s.role_id}
+                              onChange={(e) => updateStep(i, 'role_id', e.target.value)}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                            >
+                              <option value="">Pilih role...</option>
+                              {roles.map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.name} (Level {r.level})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-xs text-slate-500 dark:text-slate-400">Label Langkah</label>
+                            <input
+                              type="text"
+                              value={s.step_label}
+                              onChange={(e) => updateStep(i, 'step_label', e.target.value)}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                              placeholder="Contoh: Review oleh Kepala"
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id={`info-only-${i}`}
+                            checked={s.is_info_only}
+                            onChange={(e) => updateStep(i, 'is_info_only', e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                          />
+                          <label htmlFor={`info-only-${i}`} className="text-xs text-slate-600 dark:text-slate-400">
+                            Hanya informasi (tidak perlu approval)
+                          </label>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
-                  <Info className="h-3.5 w-3.5" />
-                  Langkah dengan "Info only" hanya menampilkan informasi tanpa memerlukan persetujuan.
-                </p>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="btn-secondary">
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setShowModal(false)}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
                 Batal
               </button>
-              <button onClick={handleCreate} disabled={saving} className="btn-primary">
-                {saving ? 'Menyimpan...' : 'Buat Workflow'}
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                Simpan
               </button>
             </div>
           </div>

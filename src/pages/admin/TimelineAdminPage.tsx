@@ -1,14 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  Calendar as CalendarIcon,
-  X,
-  MapPin,
-  Clock,
-  User,
-} from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   fetchTimelineEvents,
   colorCategoryStyles,
@@ -16,7 +6,17 @@ import {
   type EventColorCategory,
 } from '../../lib/timeline';
 import { showToast } from '../../components/Toast';
-import { cn } from '../../utils/cn';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Loader2,
+  CalendarDays,
+  MapPin,
+  Clock,
+  User,
+  RotateCcw,
+} from 'lucide-react';
 
 const MONTH_NAMES = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -25,12 +25,10 @@ const MONTH_NAMES = [
 const DAY_NAMES = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 
 const JENIS_OPTIONS = ['all', 'Agenda', 'Peminjaman'];
-const STATUS_OPTIONS = ['all', 'pending', 'approved', 'rejected', 'returned', 'scheduled', 'completed'];
+const STATUS_OPTIONS = ['all', 'pending', 'approved', 'rejected', 'returned', 'completed', 'scheduled', 'borrowed'];
 
 export default function TimelineAdminPage() {
-  const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -39,32 +37,32 @@ export default function TimelineAdminPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [orgFilter, setOrgFilter] = useState('all');
 
-  const loadEvents = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchTimelineEvents(year, month);
-      setEvents(data);
-    } catch {
-      showToast('Gagal memuat timeline', 'error');
-      setEvents([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [year, month]);
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
 
   useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await fetchTimelineEvents(year, month);
+        setEvents(data);
+      } catch {
+        showToast('Gagal memuat timeline', 'error');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [year, month]);
 
-  const orgOptions = useMemo(() => {
+  const organisations = useMemo(() => {
     const set = new Set<string>();
     events.forEach((e) => { if (e.organisasi) set.add(e.organisasi); });
-    return ['all', ...Array.from(set).sort()];
+    return Array.from(set).sort();
   }, [events]);
 
   const filteredEvents = useMemo(() => {
     return events.filter((e) => {
-      const matchSearch = !search || e.title.toLowerCase().includes(search.toLowerCase());
+      const matchSearch = !search || (e.title ?? '').toLowerCase().includes(search.toLowerCase());
       const matchJenis = jenisFilter === 'all' || e.jenis === jenisFilter;
       const matchStatus = statusFilter === 'all' || e.status === statusFilter;
       const matchOrg = orgFilter === 'all' || e.organisasi === orgFilter;
@@ -84,25 +82,23 @@ export default function TimelineAdminPage() {
   const calendarDays = useMemo(() => {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
-    const startWeekday = firstDay.getDay();
-    const daysInMonth = lastDay.getDate();
+    const startOffset = firstDay.getDay();
+    const totalDays = lastDay.getDate();
     const days: (string | null)[] = [];
-    for (let i = 0; i < startWeekday; i++) days.push(null);
-    for (let d = 1; d <= daysInMonth; d++) {
+    for (let i = 0; i < startOffset; i++) days.push(null);
+    for (let d = 1; d <= totalDays; d++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       days.push(dateStr);
     }
     return days;
   }, [year, month]);
 
-  const prevMonth = () => {
-    if (month === 0) { setMonth(11); setYear((y) => y - 1); }
-    else setMonth((m) => m - 1);
+  const todayStr = () => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
   };
-  const nextMonth = () => {
-    if (month === 11) { setMonth(0); setYear((y) => y + 1); }
-    else setMonth((m) => m + 1);
-  };
+
+  const selectedEvents = selectedDate ? (eventsByDate[selectedDate] ?? []) : [];
 
   const resetFilters = () => {
     setSearch('');
@@ -111,30 +107,29 @@ export default function TimelineAdminPage() {
     setOrgFilter('all');
   };
 
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const selectedEvents = selectedDate ? (eventsByDate[selectedDate] ?? []) : [];
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Timeline Kegiatan</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Kalender kegiatan sekolah, agenda, dan peminjaman.
-        </p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Kalender agenda dan peminjaman</p>
       </div>
 
       {/* Filters */}
-      <div className="card space-y-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            className="input pl-9"
-            placeholder="Cari kegiatan..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="card">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="relative sm:col-span-2">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              className="input pl-10"
+              placeholder="Cari kegiatan..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
           <select className="input" value={jenisFilter} onChange={(e) => setJenisFilter(e.target.value)}>
             {JENIS_OPTIONS.map((j) => (
               <option key={j} value={j}>{j === 'all' ? 'Semua Jenis' : j}</option>
@@ -146,13 +141,16 @@ export default function TimelineAdminPage() {
             ))}
           </select>
           <select className="input" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
-            {orgOptions.map((o) => (
-              <option key={o} value={o}>{o === 'all' ? 'Semua Organisasi' : o}</option>
+            <option value="all">Semua Organisasi</option>
+            {organisations.map((o) => (
+              <option key={o} value={o}>{o}</option>
             ))}
           </select>
+        </div>
+        <div className="mt-3 flex justify-end">
           <button onClick={resetFilters} className="btn-secondary">
-            <X className="h-4 w-4" />
-            Reset
+            <RotateCcw className="h-4 w-4" />
+            Reset Filter
           </button>
         </div>
       </div>
@@ -161,164 +159,146 @@ export default function TimelineAdminPage() {
         {/* Calendar */}
         <div className="lg:col-span-2">
           <div className="card">
-            {/* Month nav */}
             <div className="mb-4 flex items-center justify-between">
-              <button onClick={prevMonth} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
-                <ChevronLeft className="h-5 w-5" />
-              </button>
               <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
                 {MONTH_NAMES[month]} {year}
               </h2>
-              <button onClick={nextMonth} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Day headers */}
-            <div className="mb-2 grid grid-cols-7 gap-1">
-              {DAY_NAMES.map((d) => (
-                <div key={d} className="text-center text-xs font-medium text-slate-400">
-                  {d}
-                </div>
-              ))}
-            </div>
-
-            {/* Calendar grid */}
-            <div className="grid grid-cols-7 gap-1">
-              {calendarDays.map((dateStr, i) => {
-                if (!dateStr) return <div key={`empty-${i}`} />;
-                const dayEvents = eventsByDate[dateStr] ?? [];
-                const isToday = dateStr === todayStr;
-                const isSelected = dateStr === selectedDate;
-                const dayNum = parseInt(dateStr.split('-')[2], 10);
-                return (
-                  <button
-                    key={dateStr}
-                    onClick={() => setSelectedDate(dateStr)}
-                    className={cn(
-                      'min-h-[80px] rounded-lg border p-1.5 text-left transition',
-                      isToday && 'border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20',
-                      isSelected && !isToday && 'border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20',
-                      !isToday && !isSelected && 'border-slate-100 hover:border-brand-200 dark:border-slate-800 dark:hover:border-brand-700',
-                    )}
-                  >
-                    <span className={cn(
-                      'text-xs font-medium',
-                      isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-600 dark:text-slate-400',
-                    )}>
-                      {dayNum}
-                    </span>
-                    <div className="mt-1 space-y-0.5">
-                      {dayEvents.slice(0, 3).map((e) => {
-                        const style = colorCategoryStyles[e.colorCategory];
-                        return (
-                          <div
-                            key={e.id}
-                            className={cn('truncate rounded px-1 py-0.5 text-[10px] font-medium', style.bg, style.text)}
-                          >
-                            {e.title}
-                          </div>
-                        );
-                      })}
-                      {dayEvents.length > 3 && (
-                        <div className="px-1 text-[10px] text-slate-400">
-                          +{dayEvents.length - 3} lainnya
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Legend */}
-            <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-              {(Object.keys(colorCategoryStyles) as EventColorCategory[]).map((cat) => (
-                <div key={cat} className="flex items-center gap-1.5">
-                  <span className={cn('h-2.5 w-2.5 rounded-full', colorCategoryStyles[cat].dot)} />
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    {colorCategoryStyles[cat].label}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right panel: selected date events */}
-        <div className="card">
-          {selectedDate ? (
-            <>
-              <div className="mb-4 flex items-center gap-2">
-                <CalendarIcon className="h-5 w-5 text-brand-500" />
-                <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
-                  {new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </h3>
+              <div className="flex items-center gap-2">
+                <button onClick={prevMonth} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <button onClick={nextMonth} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <ChevronRight className="h-5 w-5" />
+                </button>
               </div>
-              {selectedEvents.length === 0 ? (
-                <p className="py-8 text-center text-sm text-slate-400">Tidak ada kegiatan pada tanggal ini.</p>
-              ) : (
-                <div className="space-y-3">
-                  {selectedEvents.map((e) => {
-                    const style = colorCategoryStyles[e.colorCategory];
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-7 gap-1">
+                  {DAY_NAMES.map((d) => (
+                    <div key={d} className="pb-2 text-center text-xs font-semibold text-slate-400">
+                      {d}
+                    </div>
+                  ))}
+                  {calendarDays.map((dateStr, i) => {
+                    if (!dateStr) return <div key={i} className="min-h-[80px]" />;
+                    const dayEvents = eventsByDate[dateStr] ?? [];
+                    const isToday = dateStr === todayStr();
+                    const isSelected = selectedDate === dateStr;
                     return (
-                      <div
-                        key={e.id}
-                        className={cn('rounded-xl border p-3', style.bg, 'border-transparent')}
+                      <button
+                        key={i}
+                        onClick={() => setSelectedDate(dateStr)}
+                        className={`min-h-[80px] rounded-lg border p-1.5 text-left transition ${
+                          isSelected
+                            ? 'border-brand-500 bg-brand-50 dark:border-brand-400 dark:bg-brand-900/30'
+                            : isToday
+                            ? 'border-brand-300 bg-brand-50/50 dark:border-brand-700 dark:bg-brand-900/20'
+                            : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
+                        }`}
                       >
-                        <div className="flex items-center gap-2">
-                          <span className={cn('h-2 w-2 rounded-full', style.dot)} />
-                          <span className={cn('text-xs font-medium', style.text)}>{e.jenis}</span>
-                          <span className="ml-auto text-xs text-slate-400">{e.status}</span>
+                        <div className={`mb-1 text-xs font-medium ${isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-600 dark:text-slate-300'}`}>
+                          {parseInt(dateStr.split('-')[2], 10)}
                         </div>
-                        <h4 className="mt-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                          {e.title}
-                        </h4>
-                        <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          {e.startTime && (
-                            <div className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {e.startTime}{e.endTime ? ` - ${e.endTime}` : ''}
-                            </div>
-                          )}
-                          {e.location && (
-                            <div className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              {e.location}
-                            </div>
-                          )}
-                          {e.penanggungJawab && (
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              {e.penanggungJawab}
+                        <div className="space-y-0.5">
+                          {dayEvents.slice(0, 3).map((e) => {
+                            const style = colorCategoryStyles[e.colorCategory];
+                            return (
+                              <div
+                                key={e.id}
+                                className={`truncate rounded px-1 py-0.5 text-[10px] font-medium ${style.bg} ${style.text}`}
+                              >
+                                {e.title}
+                              </div>
+                            );
+                          })}
+                          {dayEvents.length > 3 && (
+                            <div className="text-[10px] text-slate-400">
+                              +{dayEvents.length - 3} lainnya
                             </div>
                           )}
                         </div>
-                        {e.description && (
-                          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{e.description}</p>
-                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                  {(Object.keys(colorCategoryStyles) as EventColorCategory[]).map((cat) => {
+                    const style = colorCategoryStyles[cat];
+                    return (
+                      <div key={cat} className="flex items-center gap-1.5">
+                        <span className={`h-3 w-3 rounded-full ${style.dot}`} />
+                        <span className="text-xs text-slate-500 dark:text-slate-400">{style.label}</span>
                       </div>
                     );
                   })}
                 </div>
-              )}
-            </>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Right panel - selected date events */}
+        <div className="card">
+          <div className="mb-4 flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-brand-600 dark:text-brand-400" />
+            <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+              {selectedDate ?? 'Pilih Tanggal'}
+            </h2>
+          </div>
+          {!selectedDate ? (
+            <p className="py-8 text-center text-sm text-slate-400">Klik tanggal pada kalender untuk melihat detail</p>
+          ) : selectedEvents.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">Tidak ada kegiatan pada tanggal ini</p>
           ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <CalendarIcon className="h-10 w-10 text-slate-300 dark:text-slate-600" />
-              <p className="mt-3 text-sm text-slate-400">
-                Pilih tanggal untuk melihat detail kegiatan.
-              </p>
+            <div className="space-y-3">
+              {selectedEvents.map((e) => {
+                const style = colorCategoryStyles[e.colorCategory];
+                return (
+                  <div key={e.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
+                      <span className={`text-xs font-medium ${style.text}`}>{e.jenis}</span>
+                      <span className="ml-auto text-xs text-slate-400">{e.status}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{e.title}</p>
+                    <div className="mt-2 space-y-1">
+                      {(e.startTime || e.endTime) && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          <Clock className="h-3 w-3" />
+                          {e.startTime ?? '-'}{e.endTime ? ` - ${e.endTime}` : ''}
+                        </div>
+                      )}
+                      {e.location && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          <MapPin className="h-3 w-3" />
+                          {e.location}
+                        </div>
+                      )}
+                      {e.penanggungJawab && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          <User className="h-3 w-3" />
+                          {e.penanggungJawab}
+                        </div>
+                      )}
+                      {e.description && (
+                        <p className="mt-1 text-xs text-slate-400">{e.description}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
-
-      {loading && (
-        <div className="fixed inset-0 flex items-center justify-center bg-white/50 dark:bg-slate-900/50">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
-        </div>
-      )}
     </div>
   );
 }

@@ -1,20 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Building2,
-  Package,
-  ClipboardList,
-  CalendarDays,
-  CalendarRange,
-  History,
-  Info,
-  FileText,
-  ArrowRight,
-  Megaphone,
-  Loader2,
-  Boxes,
-  Users,
-  ShoppingCart,
+  ClipboardList, Building2, Package, CalendarDays, CalendarRange,
+  History, Flag, Info, ArrowRight, Megaphone, PackageCheck, Boxes, BookOpen,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AnimatedBackground from '../components/AnimatedBackground';
@@ -31,21 +19,23 @@ interface Announcement {
 }
 
 const quickLinks = [
-  { to: '/fasilitas', label: 'Fasilitas', desc: 'Lihat fasilitas sekolah', icon: Building2, color: 'from-blue-500 to-cyan-500' },
+  { to: '/fasilitas', label: 'Fasilitas', desc: 'Pemesanan ruangan & area', icon: Building2, color: 'from-blue-500 to-cyan-500' },
   { to: '/inventaris', label: 'Inventaris', desc: 'Daftar barang tersedia', icon: Package, color: 'from-cyan-500 to-teal-500' },
-  { to: '/pinjam', label: 'Pengajuan', desc: 'Ajukan peminjaman', icon: ClipboardList, color: 'from-brand-500 to-brand-600' },
-  { to: '/agenda', label: 'Agenda', desc: 'Catat kegiatan sekolah', icon: CalendarDays, color: 'from-indigo-500 to-blue-500' },
+  { to: '/pinjam', label: 'Pengajuan Pinjam', desc: 'Ajukan peminjaman barang', icon: ClipboardList, color: 'from-brand-500 to-blue-600' },
+  { to: '/agenda', label: 'Agenda', desc: 'Catat kegiatan sekolah', icon: CalendarDays, color: 'from-indigo-500 to-brand-500' },
   { to: '/timeline', label: 'Timeline', desc: 'Kalender kegiatan', icon: CalendarRange, color: 'from-purple-500 to-indigo-500' },
-  { to: '/laporan', label: 'Laporan', desc: 'Laporkan kerusakan', icon: FileText, color: 'from-amber-500 to-orange-500' },
-  { to: '/history', label: 'Riwayat', desc: 'Riwayat peminjaman', icon: History, color: 'from-slate-500 to-slate-600' },
-  { to: '/tentang', label: 'Tentang', desc: 'Tentang platform', icon: Info, color: 'from-teal-500 to-cyan-500' },
+  { to: '/laporan', label: 'Laporan', desc: 'Laporkan kerusakan', icon: Flag, color: 'from-rose-500 to-red-500' },
+  { to: '/history', label: 'Riwayat', desc: 'Riwayat peminjaman', icon: History, color: 'from-amber-500 to-orange-500' },
+  { to: '/tentang', label: 'Tentang', desc: 'Tentang SMART SARPRAS', icon: Info, color: 'from-slate-500 to-slate-600' },
 ];
 
-const priorityStyles: Record<string, string> = {
-  tinggi: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-  sedang: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  rendah: 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300',
-};
+function priorityBadge(p: string | null) {
+  switch (p) {
+    case 'tinggi': return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
+    case 'sedang': return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
+    default: return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+  }
+}
 
 export default function LandingPage() {
   const [stats, setStats] = useState({ inventory: 0, facilities: 0, borrowings: 0 });
@@ -55,92 +45,72 @@ export default function LandingPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [invCount, facCount, borrowCount, annRes] = await Promise.all([
+        const [inv, fac, bor, ann] = await Promise.all([
           supabase.from('inventory').select('id', { count: 'exact', head: true }),
           supabase.from('facilities').select('id', { count: 'exact', head: true }),
           supabase.from('borrowings').select('id', { count: 'exact', head: true }),
-          supabase
-            .from('announcements')
-            .select('id, title, description, priority, published_at, created_at')
-            .eq('status', 'aktif')
-            .order('created_at', { ascending: false })
-            .limit(5),
+          supabase.from('announcements').select('id, title, description, priority, published_at, created_at').eq('status', 'aktif').order('created_at', { ascending: false }).limit(5),
         ]);
-
         setStats({
-          inventory: invCount.count ?? 0,
-          facilities: facCount.count ?? 0,
-          borrowings: borrowCount.count ?? 0,
+          inventory: inv.count ?? 0,
+          facilities: fac.count ?? 0,
+          borrowings: bor.count ?? 0,
         });
-        setAnnouncements((annRes.data as unknown as Announcement[]) ?? []);
+        setAnnouncements((ann.data as unknown as Announcement[]) ?? []);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  const statCards = [
-    { label: 'Inventaris', value: stats.inventory, icon: Boxes, color: 'text-brand-600 dark:text-brand-400' },
-    { label: 'Fasilitas', value: stats.facilities, icon: Building2, color: 'text-cyan-600 dark:text-cyan-400' },
-    { label: 'Peminjaman', value: stats.borrowings, icon: ShoppingCart, color: 'text-purple-600 dark:text-purple-400' },
-  ];
-
   return (
     <>
-      {/* Hero Section — exactly ONE */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-brand-600 via-brand-700 to-cyan-700 py-20">
+      {/* Hero */}
+      <section className="relative overflow-hidden py-24">
         <AnimatedBackground />
         <div className="relative mx-auto max-w-7xl px-4 text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-            <Building2 className="h-10 w-10 text-white" />
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-600/30">
+            <Building2 className="h-8 w-8" />
           </div>
-          <h1 className="text-4xl font-bold text-white sm:text-5xl lg:text-6xl">{brand.name}</h1>
-          <p className="mx-auto mt-4 max-w-2xl text-lg text-brand-100 sm:text-xl">
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl dark:text-white">
+            {brand.name}
+          </h1>
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-300">
             {brand.tagline}
           </p>
-          <p className="mx-auto mt-3 max-w-3xl text-sm text-brand-200">
+          <p className="mx-auto mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
             {brand.description}
           </p>
-
-          {/* CTA Buttons */}
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Link
-              to="/pinjam"
-              className="flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50"
-            >
-              <ClipboardList className="h-5 w-5" />
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link to="/pinjam" className="btn-primary">
+              <ClipboardList className="h-4 w-4" />
               Ajukan Peminjaman
-              <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link
-              to="/fasilitas"
-              className="flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-6 py-3 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/20"
-            >
-              <Building2 className="h-5 w-5" />
+            <Link to="/fasilitas" className="btn-secondary">
+              <Building2 className="h-4 w-4" />
               Lihat Fasilitas
             </Link>
           </div>
         </div>
       </section>
 
-      {/* Stats Overview */}
-      <section className="mx-auto -mt-10 max-w-5xl px-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {statCards.map((stat) => (
-            <div
-              key={stat.label}
-              className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-lg dark:border-slate-800 dark:bg-slate-900"
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800">
-                <stat.icon className={cn('h-6 w-6', stat.color)} />
+      {/* Stats */}
+      <section className="mx-auto max-w-7xl px-4 py-8">
+        <div className="grid gap-4 sm:grid-cols-3">
+          {[
+            { label: 'Total Inventaris', value: stats.inventory, icon: Boxes, color: 'text-brand-600' },
+            { label: 'Fasilitas Tersedia', value: stats.facilities, icon: Building2, color: 'text-cyan-600' },
+            { label: 'Total Peminjaman', value: stats.borrowings, icon: PackageCheck, color: 'text-emerald-600' },
+          ].map((s) => (
+            <div key={s.label} className="card flex items-center gap-4">
+              <div className="rounded-xl bg-brand-50 p-3 dark:bg-slate-800">
+                <s.icon className={cn('h-6 w-6', s.color)} />
               </div>
               <div>
-                {loading ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                ) : (
-                  <p className="text-2xl font-bold text-slate-900 dark:text-white">{stat.value}</p>
-                )}
-                <p className="text-xs text-slate-500 dark:text-slate-400">{stat.label}</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white">
+                  {loading ? '...' : s.value}
+                </p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{s.label}</p>
               </div>
             </div>
           ))}
@@ -148,50 +118,31 @@ export default function LandingPage() {
       </section>
 
       {/* Announcements */}
-      <section className="mx-auto max-w-7xl px-4 py-12">
-        <div className="mb-6 flex items-center gap-2">
-          <Megaphone className="h-6 w-6 text-brand-600 dark:text-brand-400" />
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Pengumuman</h2>
+      <section className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-4 flex items-center gap-2">
+          <Megaphone className="h-5 w-5 text-brand-600" />
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Pengumuman</h2>
         </div>
-
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+          <div className="space-y-2">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
+            ))}
           </div>
         ) : announcements.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900">
-            Belum ada pengumuman.
-          </div>
+          <div className="card text-sm text-slate-500 dark:text-slate-400">Belum ada pengumuman aktif.</div>
         ) : (
           <div className="space-y-3">
-            {announcements.map((ann) => (
-              <div
-                key={ann.id}
-                className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-              >
-                <div className="flex-1">
-                  <div className="mb-1 flex items-center gap-2">
-                    <h3 className="font-semibold text-slate-900 dark:text-white">{ann.title}</h3>
-                    {ann.priority && (
-                      <span
-                        className={cn(
-                          'rounded-full px-2 py-0.5 text-xs font-semibold',
-                          priorityStyles[ann.priority.toLowerCase()] ?? priorityStyles.rendah,
-                        )}
-                      >
-                        {ann.priority}
-                      </span>
-                    )}
-                  </div>
-                  {ann.description && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">{ann.description}</p>
-                  )}
+            {announcements.map((a) => (
+              <div key={a.id} className="card flex items-start gap-3">
+                <span className={cn('mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold', priorityBadge(a.priority))}>
+                  {a.priority ?? 'normal'}
+                </span>
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-slate-900 dark:text-white">{a.title}</h3>
+                  {a.description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{a.description}</p>}
                   <p className="mt-1 text-xs text-slate-400">
-                    {new Date(ann.published_at ?? ann.created_at).toLocaleDateString('id-ID', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
+                    {new Date(a.published_at ?? a.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                   </p>
                 </div>
               </div>
@@ -201,26 +152,22 @@ export default function LandingPage() {
       </section>
 
       {/* Quick Links */}
-      <section className="mx-auto max-w-7xl px-4 pb-16">
-        <div className="mb-6 flex items-center gap-2">
-          <Users className="h-6 w-6 text-brand-600 dark:text-brand-400" />
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Akses Cepat</h2>
+      <section className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-4 flex items-center gap-2">
+          <BookOpen className="h-5 w-5 text-brand-600" />
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Akses Cepat</h2>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {quickLinks.map((link) => (
-            <Link
-              key={link.to}
-              to={link.to}
-              className="group overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-lg dark:border-slate-800 dark:bg-slate-900"
-            >
-              <div className={cn('mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br text-white', link.color)}>
-                <link.icon className="h-6 w-6" />
+          {quickLinks.map((q) => (
+            <Link key={q.to} to={q.to} className="card group transition hover:shadow-md hover:-translate-y-0.5">
+              <div className={cn('mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white', q.color)}>
+                <q.icon className="h-5 w-5" />
               </div>
-              <h3 className="flex items-center gap-1 text-base font-semibold text-slate-900 dark:text-white">
-                {link.label}
-                <ArrowRight className="h-4 w-4 opacity-0 transition group-hover:translate-x-1 group-hover:opacity-100" />
-              </h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{link.desc}</p>
+              <h3 className="font-semibold text-slate-900 dark:text-white">{q.label}</h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{q.desc}</p>
+              <span className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand-600 group-hover:gap-2 transition-all">
+                Buka <ArrowRight className="h-3.5 w-3.5" />
+              </span>
             </Link>
           ))}
         </div>

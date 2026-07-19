@@ -1,15 +1,5 @@
 import { useState } from 'react';
-import {
-  CalendarDays,
-  Loader2,
-  Upload,
-  X,
-  CheckCircle2,
-  RotateCcw,
-  FileText,
-  Image as ImageIcon,
-  Save,
-} from 'lucide-react';
+import { CalendarDays, Save, RotateCcw, CheckCircle2, Loader2, Upload, X, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { uploadFileToDrive } from '../lib/upload';
 import { showToast } from '../components/Toast';
@@ -28,25 +18,16 @@ interface AgendaForm {
   deskripsi: string;
 }
 
-const jenisOptions = [
-  'Rapat',
-  'Upacara',
-  'Lomba',
-  'Seminar',
-  'Workshop',
-  'Ekstrakurikuler',
-  'Senam',
-  'Peringatan',
-  'Sosial',
-  'Lainnya',
+const JENIS_OPTIONS = [
+  'Rapat', 'Upacara', 'Lomba', 'Seminar', 'Workshop',
+  'Ekstrakurikuler', 'Senam', 'Peringatan', 'Sosial', 'Lainnya',
 ];
 
 function todayStr() {
   const d = new Date();
-  const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 const emptyForm: AgendaForm = {
@@ -64,87 +45,57 @@ const emptyForm: AgendaForm = {
 
 export default function AgendaPage() {
   const [form, setForm] = useState<AgendaForm>(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState<AgendaForm | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [lampiranUrl, setLampiranUrl] = useState<string | null>(null);
   const [lampiranNama, setLampiranNama] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [savedAgenda, setSavedAgenda] = useState<AgendaForm | null>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const set = (k: keyof AgendaForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setUploading(true);
-    try {
-      const result = await uploadFileToDrive(file);
-      if (result) {
-        setLampiranUrl(result.url);
-        setLampiranNama(file.name);
-        showToast('Lampiran berhasil diunggah', 'success');
-      } else {
-        showToast('Gagal mengunggah lampiran', 'error');
-      }
-    } finally {
-      setUploading(false);
-      e.target.value = '';
+    const result = await uploadFileToDrive(file, file.name);
+    setUploading(false);
+    if (result) {
+      setLampiranUrl(result.url);
+      setLampiranNama(file.name);
+      showToast('Lampiran berhasil diunggah', 'success');
+    } else {
+      showToast('Gagal mengunggah lampiran', 'error');
     }
+    e.target.value = '';
   };
 
-  const handleRemoveLampiran = () => {
+  const removeLampiran = () => {
     setLampiranUrl(null);
     setLampiranNama(null);
   };
 
-  const validate = (): boolean => {
-    if (!form.nama_kegiatan.trim()) {
-      showToast('Nama kegiatan wajib diisi', 'error');
-      return false;
-    }
-    if (!form.jenis_kegiatan) {
-      showToast('Jenis kegiatan wajib dipilih', 'error');
-      return false;
-    }
-    if (!form.organisasi_jurusan.trim()) {
-      showToast('Organisasi/Jurusan wajib diisi', 'error');
-      return false;
-    }
-    if (!form.penanggung_jawab.trim()) {
-      showToast('Penanggung jawab wajib diisi', 'error');
-      return false;
-    }
-    const peserta = parseInt(form.jumlah_peserta, 10);
-    if (!form.jumlah_peserta || isNaN(peserta) || peserta < 1) {
-      showToast('Jumlah peserta minimal 1', 'error');
-      return false;
-    }
-    if (!form.tanggal) {
-      showToast('Tanggal wajib diisi', 'error');
-      return false;
-    }
-    if (!form.waktu_mulai) {
-      showToast('Waktu mulai wajib diisi', 'error');
-      return false;
-    }
-    if (!form.waktu_selesai) {
-      showToast('Waktu selesai wajib diisi', 'error');
-      return false;
-    }
-    if (form.waktu_selesai <= form.waktu_mulai) {
-      showToast('Waktu selesai harus setelah waktu mulai', 'error');
-      return false;
-    }
-    if (!form.lokasi.trim()) {
-      showToast('Lokasi wajib diisi', 'error');
-      return false;
-    }
-    return true;
+  const validate = (): string | null => {
+    if (!form.nama_kegiatan.trim()) return 'Nama kegiatan wajib diisi';
+    if (!form.jenis_kegiatan) return 'Jenis kegiatan wajib dipilih';
+    if (!form.organisasi_jurusan.trim()) return 'Organisasi/Jurusan wajib diisi';
+    if (!form.penanggung_jawab.trim()) return 'Penanggung jawab wajib diisi';
+    const jml = Number(form.jumlah_peserta);
+    if (!form.jumlah_peserta || isNaN(jml) || jml < 1) return 'Jumlah peserta minimal 1';
+    if (!form.tanggal) return 'Tanggal wajib diisi';
+    if (!form.waktu_mulai) return 'Waktu mulai wajib diisi';
+    if (!form.waktu_selesai) return 'Waktu selesai wajib diisi';
+    if (form.waktu_selesai <= form.waktu_mulai) return 'Waktu selesai harus setelah waktu mulai';
+    if (!form.lokasi.trim()) return 'Lokasi wajib diisi';
+    return null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
-
+    const err = validate();
+    if (err) {
+      showToast(err, 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = {
@@ -152,7 +103,7 @@ export default function AgendaPage() {
         jenis_kegiatan: form.jenis_kegiatan,
         organisasi_jurusan: form.organisasi_jurusan.trim(),
         penanggung_jawab: form.penanggung_jawab.trim(),
-        jumlah_peserta: parseInt(form.jumlah_peserta, 10),
+        jumlah_peserta: Number(form.jumlah_peserta),
         tanggal: form.tanggal,
         waktu_mulai: form.waktu_mulai,
         waktu_selesai: form.waktu_selesai,
@@ -163,17 +114,12 @@ export default function AgendaPage() {
         status: 'scheduled',
         penyelenggara: form.organisasi_jurusan.trim(),
       };
-
       const { error } = await supabase.from('agendas').insert(payload);
-
-      if (error) {
-        showToast('Gagal menyimpan agenda: ' + error.message, 'error');
-        return;
-      }
-
-      setSavedAgenda({ ...form });
-      setSuccess(true);
-      showToast('Agenda berhasil disimpan!', 'success');
+      if (error) throw error;
+      setSuccess({ ...form });
+      showToast('Agenda berhasil disimpan', 'success');
+    } catch {
+      showToast('Gagal menyimpan agenda', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -183,72 +129,35 @@ export default function AgendaPage() {
     setForm(emptyForm);
     setLampiranUrl(null);
     setLampiranNama(null);
-    setSuccess(false);
-    setSavedAgenda(null);
+    setSuccess(null);
   };
 
-  if (success && savedAgenda) {
+  if (success) {
     return (
-      <div className="mx-auto max-w-2xl px-4 py-8">
-        <div className="rounded-2xl border border-emerald-200 bg-white p-8 text-center dark:border-emerald-800 dark:bg-slate-900">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
+      <div className="mx-auto max-w-2xl px-4 py-12">
+        <div className="card text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
             <CheckCircle2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Agenda Tersimpan</h2>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Agenda kegiatan Anda telah berhasil disimpan dan akan otomatis muncul di Timeline.
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Agenda Berhasil Disimpan</h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Agenda akan otomatis muncul di halaman Timeline.
           </p>
-
           <div className="mt-6 space-y-2 rounded-xl bg-slate-50 p-4 text-left text-sm dark:bg-slate-800/50">
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Nama Kegiatan</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.nama_kegiatan}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Jenis</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.jenis_kegiatan}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Organisasi</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.organisasi_jurusan}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Penanggung Jawab</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.penanggung_jawab}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Tanggal</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">
-                {new Date(savedAgenda.tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Waktu</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">
-                {savedAgenda.waktu_mulai} - {savedAgenda.waktu_selesai}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Lokasi</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.lokasi}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Peserta</span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">{savedAgenda.jumlah_peserta} orang</span>
-            </div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Nama</span><span className="font-semibold text-slate-900 dark:text-white">{success.nama_kegiatan}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Jenis</span><span className="font-semibold text-slate-900 dark:text-white">{success.jenis_kegiatan}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Organisasi</span><span className="font-semibold text-slate-900 dark:text-white">{success.organisasi_jurusan}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">PJ</span><span className="font-semibold text-slate-900 dark:text-white">{success.penanggung_jawab}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Peserta</span><span className="font-semibold text-slate-900 dark:text-white">{success.jumlah_peserta}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Tanggal</span><span className="font-semibold text-slate-900 dark:text-white">{success.tanggal}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Waktu</span><span className="font-semibold text-slate-900 dark:text-white">{success.waktu_mulai} - {success.waktu_selesai}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">Lokasi</span><span className="font-semibold text-slate-900 dark:text-white">{success.lokasi}</span></div>
             {lampiranNama && (
-              <div className="flex justify-between">
-                <span className="text-slate-500 dark:text-slate-400">Lampiran</span>
-                <span className="truncate font-medium text-slate-800 dark:text-slate-200">{lampiranNama}</span>
-              </div>
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Lampiran</span><span className="font-semibold text-slate-900 dark:text-white">{lampiranNama}</span></div>
             )}
           </div>
-
-          <button
-            onClick={resetForm}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
-          >
-            <RotateCcw className="h-4 w-4" />
+          <button onClick={resetForm} className="btn-primary mt-6">
+            <CalendarDays className="h-4 w-4" />
             Buat Agenda Lain
           </button>
         </div>
@@ -257,247 +166,127 @@ export default function AgendaPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="flex items-center gap-2 text-3xl font-bold text-slate-900 dark:text-white">
-          <CalendarDays className="h-7 w-7 text-brand-600 dark:text-brand-400" />
-          Buat Agenda Kegiatan
-        </h1>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+    <div className="mx-auto max-w-3xl px-4 py-10">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Buat Agenda Kegiatan</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Catat kegiatan sekolah yang tidak meminjam barang atau fasilitas. Agenda akan otomatis muncul di Timeline.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Informasi Kegiatan */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold uppercase text-slate-400">Informasi Kegiatan</h2>
+        <div className="card">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+            <CalendarDays className="h-5 w-5 text-brand-600" />
+            Informasi Kegiatan
+          </h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Nama Kegiatan <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.nama_kegiatan}
-                onChange={(e) => setForm({ ...form, nama_kegiatan: e.target.value })}
-                placeholder="Contoh: Rapat Pleno Awal Tahun Ajaran"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Nama Kegiatan <span className="text-red-500">*</span></label>
+              <input className="input" value={form.nama_kegiatan} onChange={(e) => set('nama_kegiatan', e.target.value)} placeholder="Mis. Rapat Koordinasi Guru" />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Jenis Kegiatan <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={form.jenis_kegiatan}
-                onChange={(e) => setForm({ ...form, jenis_kegiatan: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              >
-                <option value="">Pilih jenis kegiatan</option>
-                {jenisOptions.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
+              <label className="label">Jenis Kegiatan <span className="text-red-500">*</span></label>
+              <select className="input" value={form.jenis_kegiatan} onChange={(e) => set('jenis_kegiatan', e.target.value)}>
+                <option value="">Pilih jenis...</option>
+                {JENIS_OPTIONS.map((j) => <option key={j} value={j}>{j}</option>)}
               </select>
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Organisasi / Jurusan <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.organisasi_jurusan}
-                onChange={(e) => setForm({ ...form, organisasi_jurusan: e.target.value })}
-                placeholder="Contoh: OSIS, Jurusan RPL"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Organisasi / Jurusan <span className="text-red-500">*</span></label>
+              <input className="input" value={form.organisasi_jurusan} onChange={(e) => set('organisasi_jurusan', e.target.value)} placeholder="Mis. OSIS / TKR" />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Penanggung Jawab <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.penanggung_jawab}
-                onChange={(e) => setForm({ ...form, penanggung_jawab: e.target.value })}
-                placeholder="Nama penanggung jawab"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Penanggung Jawab <span className="text-red-500">*</span></label>
+              <input className="input" value={form.penanggung_jawab} onChange={(e) => set('penanggung_jawab', e.target.value)} placeholder="Nama PJ" />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Jumlah Peserta <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                value={form.jumlah_peserta}
-                onChange={(e) => setForm({ ...form, jumlah_peserta: e.target.value })}
-                min={1}
-                placeholder="Contoh: 50"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Jumlah Peserta <span className="text-red-500">*</span></label>
+              <input type="number" min={1} className="input" value={form.jumlah_peserta} onChange={(e) => set('jumlah_peserta', e.target.value)} placeholder="50" />
             </div>
           </div>
         </div>
 
         {/* Waktu */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold uppercase text-slate-400">Waktu</h2>
+        <div className="card">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+            <CalendarDays className="h-5 w-5 text-brand-600" />
+            Waktu
+          </h2>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Tanggal <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={form.tanggal}
-                onChange={(e) => setForm({ ...form, tanggal: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Tanggal <span className="text-red-500">*</span></label>
+              <input type="date" className="input" value={form.tanggal} onChange={(e) => set('tanggal', e.target.value)} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Waktu Mulai <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                value={form.waktu_mulai}
-                onChange={(e) => setForm({ ...form, waktu_mulai: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Waktu Mulai <span className="text-red-500">*</span></label>
+              <input type="time" className="input" value={form.waktu_mulai} onChange={(e) => set('waktu_mulai', e.target.value)} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Waktu Selesai <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                value={form.waktu_selesai}
-                onChange={(e) => setForm({ ...form, waktu_selesai: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              />
+              <label className="label">Waktu Selesai <span className="text-red-500">*</span></label>
+              <input type="time" className="input" value={form.waktu_selesai} onChange={(e) => set('waktu_selesai', e.target.value)} />
             </div>
           </div>
         </div>
 
         {/* Lokasi */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold uppercase text-slate-400">Lokasi</h2>
+        <div className="card">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+            <CalendarDays className="h-5 w-5 text-brand-600" />
+            Lokasi
+          </h2>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-              Lokasi Kegiatan <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={form.lokasi}
-              onChange={(e) => setForm({ ...form, lokasi: e.target.value })}
-              placeholder="Contoh: Aula Utama, Lapangan Sekolah, atau lokasi di luar sekolah"
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              required
-            />
+            <label className="label">Lokasi Kegiatan <span className="text-red-500">*</span></label>
+            <input className="input" value={form.lokasi} onChange={(e) => set('lokasi', e.target.value)} placeholder="Mis. Aula / Lapangan / Luar sekolah" />
           </div>
         </div>
 
         {/* Deskripsi */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold uppercase text-slate-400">Deskripsi</h2>
+        <div className="card">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+            <FileText className="h-5 w-5 text-brand-600" />
+            Deskripsi
+          </h2>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-              Deskripsi <span className="text-slate-400">(opsional)</span>
-            </label>
-            <textarea
-              value={form.deskripsi}
-              onChange={(e) => setForm({ ...form, deskripsi: e.target.value })}
-              rows={4}
-              placeholder="Deskripsi singkat tentang kegiatan..."
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            />
+            <label className="label">Deskripsi (opsional)</label>
+            <textarea className="input min-h-[100px]" value={form.deskripsi} onChange={(e) => set('deskripsi', e.target.value)} placeholder="Deskripsi singkat kegiatan..." />
           </div>
         </div>
 
         {/* Lampiran */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold uppercase text-slate-400">
-            Lampiran <span className="text-slate-400 normal-case">(Opsional)</span>
+        <div className="card">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+            <Upload className="h-5 w-5 text-brand-600" />
+            Lampiran (Opsional)
           </h2>
-          {lampiranUrl ? (
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-                {lampiranNama?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-                  <ImageIcon className="h-8 w-8 text-brand-500" />
-                ) : (
-                  <FileText className="h-8 w-8 text-brand-500" />
-                )}
+          {lampiranNama ? (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-5 w-5 shrink-0 text-brand-600" />
+                <span className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{lampiranNama}</span>
               </div>
-              <div className="flex-1">
-                <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{lampiranNama}</p>
-                <button
-                  type="button"
-                  onClick={handleRemoveLampiran}
-                  className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Hapus Lampiran
-                </button>
-              </div>
+              <button type="button" onClick={removeLampiran} className="shrink-0 rounded-lg p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30">
+                <X className="h-4 w-4" />
+              </button>
             </div>
           ) : (
-            <label
-              className={cn(
-                'flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 px-6 py-8 text-center transition hover:border-brand-500 hover:bg-brand-50 dark:border-slate-700 dark:hover:border-brand-500 dark:hover:bg-brand-900/20',
-                uploading && 'pointer-events-none opacity-60',
-              )}
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Mengunggah lampiran...</p>
-                </>
-              ) : (
-                <>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 dark:bg-brand-900/40">
-                    <Upload className="h-6 w-6 text-brand-600 dark:text-brand-400" />
-                  </div>
-                  <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Upload File atau Foto
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">Dokumen atau gambar (maks. 10MB)</p>
-                </>
-              )}
-              <input
-                type="file"
-                onChange={handleFileUpload}
-                className="hidden"
-                disabled={uploading}
-              />
+            <label className={cn('btn-secondary cursor-pointer', uploading && 'pointer-events-none opacity-60')}>
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {uploading ? 'Mengunggah...' : 'Upload File / Foto'}
+              <input type="file" className="hidden" onChange={handleFile} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" />
             </label>
           )}
         </div>
 
         {/* Buttons */}
         <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <button type="submit" className="btn-primary" disabled={submitting || uploading}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Simpan Agenda
+            {submitting ? 'Menyimpan...' : 'Simpan Agenda'}
           </button>
-          <button
-            type="button"
-            onClick={resetForm}
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
+          <button type="button" onClick={resetForm} className="btn-secondary">
+            <RotateCcw className="h-4 w-4" />
             Reset
           </button>
         </div>
