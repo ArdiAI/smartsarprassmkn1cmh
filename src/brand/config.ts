@@ -1,6 +1,6 @@
 export const brand = {
   name: 'SMART SARPRAS',
-  tagline: 'Sistem Manajemen Sarana dan Prasarana Sekolah',
+  tagline: 'Sistem Manajemen Administrasi Ruang Tata Sarana Prasarana SMKN 1 Cimahi',
   description:
     'Platform terpadu untuk pengelolaan sarana dan prasarana sekolah: peminjaman barang, pemesanan fasilitas, pelaporan kerusakan, agenda kegiatan, dan timeline kegiatan.',
   primary: '#2563eb',
