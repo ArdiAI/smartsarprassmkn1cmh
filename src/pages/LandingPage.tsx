@@ -20,7 +20,7 @@ interface Announcement {
 
 const quickLinks = [
   { to: '/fasilitas', label: 'Fasilitas', desc: 'Daftar Fasilitas', icon: Building2, color: 'from-blue-500 to-cyan-500' },
-  { to: '/inventaris', label: 'Inventaris', desc: 'Daftar barang tersedia', icon: Package, color: 'from-cyan-500 to-teal-500' },
+  { to: '/inventaris', label: 'Inventaris', desc: 'Daftar barang', icon: Package, color: 'from-cyan-500 to-teal-500' },
   { to: '/pinjam', label: 'Pengajuan Pinjam', desc: 'Ajukan peminjaman Sarana Prasarana', icon: ClipboardList, color: 'from-brand-500 to-blue-600' },
   { to: '/agenda', label: 'Agenda', desc: 'Catat kegiatan sekolah', icon: CalendarDays, color: 'from-indigo-500 to-brand-500' },
   { to: '/timeline', label: 'Timeline', desc: 'Kalender kegiatan', icon: CalendarRange, color: 'from-purple-500 to-indigo-500' },
